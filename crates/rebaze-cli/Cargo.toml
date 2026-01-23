@@ -1,0 +1,27 @@
+[package]
+name = "rebaze-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "CLI for rebaze - migrate build systems to Bazel"
+
+[[bin]]
+name = "rebaze"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+rebaze-core.workspace = true
+rebaze-gradle.workspace = true
+rebaze-bazel.workspace = true
+
+clap.workspace = true
+anyhow.workspace = true
+colored.workspace = true
+indicatif.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

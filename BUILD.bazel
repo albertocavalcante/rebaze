@@ -1,0 +1,6 @@
+# Root BUILD file for rebaze
+
+exports_files([
+    "Cargo.toml",
+    "Cargo.lock",
+])

@@ -1,0 +1,26 @@
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "*.rs"
+      run: cargo fmt --check
+
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --all-targets -- -D warnings
+
+    bazel-build:
+      glob: "*.{rs,bazel,bzl}"
+      run: bazel build //... 2>/dev/null || true
+
+commit-msg:
+  commands:
+    conventional-commit:
+      run: |
+        msg=$(cat {1})
+        pattern="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .{1,}"
+        if ! echo "$msg" | grep -qE "$pattern"; then
+          echo "Commit message must follow Conventional Commits format"
+          echo "Example: feat(parser): add gradle kotlin dsl support"
+          exit 1
+        fi

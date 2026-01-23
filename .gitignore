@@ -1,0 +1,21 @@
+# Bazel
+/bazel-*
+.bazelrc.user
+user.bazelrc
+
+# Cargo
+/target/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~

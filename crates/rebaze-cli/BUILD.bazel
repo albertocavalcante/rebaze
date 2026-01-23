@@ -1,0 +1,19 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+rust_binary(
+    name = "rebaze",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/rebaze-bazel",
+        "//crates/rebaze-core",
+        "//crates/rebaze-gradle",
+        "@crates//:anyhow",
+        "@crates//:clap",
+        "@crates//:colored",
+        "@crates//:indicatif",
+        "@crates//:tracing",
+        "@crates//:tracing-subscriber",
+    ],
+)

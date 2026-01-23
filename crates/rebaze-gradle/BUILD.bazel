@@ -1,0 +1,16 @@
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "rebaze-gradle",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@crates//:anyhow",
+        "@crates//:globset",
+        "@crates//:serde",
+        "@crates//:thiserror",
+        "@crates//:tracing",
+        "@crates//:walkdir",
+    ],
+)

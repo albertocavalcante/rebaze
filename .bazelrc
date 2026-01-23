@@ -1,0 +1,86 @@
+# rebaze - Bazel 9 configuration for Rust CLI
+#
+# Configs:
+#   bazel build //...              # Default build
+#   bazel build --config=release   # Optimized release build
+#   bazel build --config=ci        # CI mode
+#   bazel build --config=debug     # Verbose debugging
+
+###############################
+# Caching
+###############################
+
+common --disk_cache=~/.cache/bazel-disk
+common --repository_cache=~/.cache/bazel-repo
+common --experimental_repository_cache_hardlinks
+
+# Auto-GC disk cache: 5GB max, 14 days retention
+common --experimental_disk_cache_gc_max_size=5G
+common --experimental_disk_cache_gc_max_age=14d
+
+###############################
+# Hermetic Builds
+###############################
+
+common --incompatible_strict_action_env=true
+
+###############################
+# Rust
+###############################
+
+# Compile Rust with all CPU features for the host
+build --@rules_rust//rust/settings:experimental_use_cc_common_link=false
+
+# Clippy integration (when running bazel build --aspects)
+build --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
+build --output_groups=+clippy_checks
+
+###############################
+# Build
+###############################
+
+build --jobs=auto
+build --verbose_failures
+
+###############################
+# Test
+###############################
+
+test --test_output=errors
+test --test_summary=terse
+
+###############################
+# Release
+###############################
+
+build:release --compilation_mode=opt
+build:release -c opt
+build:release --strip=always
+
+###############################
+# Debug
+###############################
+
+build:debug --compilation_mode=dbg
+build:debug --sandbox_debug
+build:debug --subcommands=pretty_print
+build:debug --verbose_failures
+
+###############################
+# CI
+###############################
+
+build:ci --color=yes
+build:ci --curses=no
+build:ci --keep_going
+build:ci --show_timestamps
+build:ci --announce_rc
+
+test:ci --test_output=all
+test:ci --test_summary=detailed
+
+###############################
+# User overrides
+###############################
+
+try-import %workspace%/user.bazelrc

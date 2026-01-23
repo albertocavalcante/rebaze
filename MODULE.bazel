@@ -1,0 +1,33 @@
+"""rebaze - Migrate from Gradle, CMake, and other build tools to Bazel."""
+
+module(
+    name = "rebaze",
+    version = "0.1.0",
+)
+
+# Rust toolchain - https://registry.bazel.build/modules/rules_rust
+bazel_dep(name = "rules_rust", version = "0.68.1")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.84.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+# Crate dependencies from Cargo.lock
+crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//:Cargo.lock",
+    manifests = [
+        "//:Cargo.toml",
+        "//crates/rebaze-cli:Cargo.toml",
+        "//crates/rebaze-core:Cargo.toml",
+        "//crates/rebaze-gradle:Cargo.toml",
+        "//crates/rebaze-bazel:Cargo.toml",
+    ],
+)
+use_repo(crate, "crates")
