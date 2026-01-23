@@ -70,8 +70,7 @@ pub fn migrate(path: &str, from: Option<&str>, dry_run: bool) -> Result<()> {
             }
         }
         "gradle" => {
-            let project =
-                rebaze_gradle::parse(path).context("Failed to parse Gradle project")?;
+            let project = rebaze_gradle::parse(path).context("Failed to parse Gradle project")?;
             let bazel_files = rebaze_bazel::generate(&project);
 
             if dry_run {

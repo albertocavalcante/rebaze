@@ -18,34 +18,28 @@ pub fn parse(src: &str) -> (Option<CMakeFile>, Vec<Simple<char>>) {
 
 /// Parser for a complete CMake file.
 fn cmake_file() -> impl Parser<char, Vec<Command>, Error = Simple<char>> {
-    command()
-        .padded_by(trivia())
-        .repeated()
-        .then_ignore(end())
+    command().padded_by(trivia()).repeated().then_ignore(end())
 }
 
 /// Parser for trivia (whitespace and comments).
 fn trivia() -> impl Parser<char, (), Error = Simple<char>> + Clone {
-    let line_comment = just('#')
-        .then(none_of("\n\r").repeated())
-        .ignored();
+    let line_comment = just('#').then(none_of("\n\r").repeated()).ignored();
 
-    let bracket_comment = just("#[[")
-        .then(take_until(just("]]")))
-        .ignored();
+    let bracket_comment = just("#[[").then(take_until(just("]]"))).ignored();
 
-    choice((
-        bracket_comment,
-        line_comment,
-        one_of(" \t\n\r").ignored(),
-    ))
-    .repeated()
-    .ignored()
+    choice((bracket_comment, line_comment, one_of(" \t\n\r").ignored()))
+        .repeated()
+        .ignored()
 }
 
-/// Parser for whitespace within argument lists (no newlines in some contexts).
+/// Parser for separators between arguments (whitespace, newlines, semicolons, comments).
 fn arg_separator() -> impl Parser<char, (), Error = Simple<char>> + Clone {
-    one_of(" \t;")
+    // CMake allows any whitespace (including newlines), semicolons, and comments between arguments
+    let ws_or_semi = one_of(" \t\n\r;").ignored();
+    let line_comment = just('#').then(none_of("\n\r").repeated()).ignored();
+    let bracket_comment = just("#[[").then(take_until(just("]]"))).ignored();
+
+    choice((ws_or_semi, line_comment, bracket_comment))
         .repeated()
         .at_least(1)
         .ignored()
@@ -83,18 +77,14 @@ fn command() -> impl Parser<char, Command, Error = Simple<char>> {
 /// Parser for a list of arguments.
 fn argument_list() -> impl Parser<char, Vec<Argument>, Error = Simple<char>> {
     argument()
-        .separated_by(arg_separator().or(trivia()))
+        .separated_by(arg_separator())
         .allow_leading()
         .allow_trailing()
 }
 
 /// Parser for a single argument.
 fn argument() -> impl Parser<char, Argument, Error = Simple<char>> {
-    choice((
-        bracket_argument(),
-        quoted_argument(),
-        unquoted_argument(),
-    ))
+    choice((bracket_argument(), quoted_argument(), unquoted_argument()))
 }
 
 /// Parser for bracket-quoted arguments: [[content]] or [=[content]=]
@@ -106,11 +96,10 @@ fn bracket_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
         .then_with(move |equals: String| {
             // Build the closing pattern: ]===] where = count matches
             let close_pattern: String = format!("]{equals}]");
-            take_until(just(close_pattern))
-                .map(move |(chars, _): (Vec<char>, _)| {
-                    let content: String = chars.into_iter().collect();
-                    Argument::Bracket(content)
-                })
+            take_until(just(close_pattern)).map(move |(chars, _): (Vec<char>, _)| {
+                let content: String = chars.into_iter().collect();
+                Argument::Bracket(content)
+            })
         })
 }
 
@@ -146,8 +135,7 @@ fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>
 
     let var_ref = variable_reference();
 
-    choice((var_ref, text))
-        .repeated()
+    choice((var_ref, text)).repeated()
 }
 
 /// Parser for unquoted arguments.
@@ -201,11 +189,7 @@ fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>>
 
     // Generator expressions: $<...> - simplified, just capture content
     let gen_expr = just("$<")
-        .ignore_then(
-            none_of(">")
-                .repeated()
-                .collect::<String>()
-        )
+        .ignore_then(none_of(">").repeated().collect::<String>())
         .then_ignore(just('>'))
         .map(ArgumentPart::GeneratorExpr);
 

@@ -79,7 +79,10 @@ fn generate_cc_library(lib: &Library) -> String {
 
     if is_header_only {
         // Header-only library
-        let _ = writeln!(content, "    hdrs = glob([\"include/**/*.h\", \"include/**/*.hpp\"]),");
+        let _ = writeln!(
+            content,
+            "    hdrs = glob([\"include/**/*.h\", \"include/**/*.hpp\"]),"
+        );
         let _ = writeln!(content, "    includes = [\"include\"],");
     } else {
         // Regular library with sources
@@ -90,7 +93,10 @@ fn generate_cc_library(lib: &Library) -> String {
         content.push_str("    ],\n");
 
         // Add headers
-        let _ = writeln!(content, "    hdrs = glob([\"include/**/*.h\", \"include/**/*.hpp\"]),");
+        let _ = writeln!(
+            content,
+            "    hdrs = glob([\"include/**/*.h\", \"include/**/*.hpp\"]),"
+        );
 
         if lib.include_directories.is_empty() {
             let _ = writeln!(content, "    includes = [\"include\"],");

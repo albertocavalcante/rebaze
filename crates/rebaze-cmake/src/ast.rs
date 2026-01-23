@@ -138,7 +138,10 @@ impl Command {
     /// Get all arguments as literal strings (skipping any with variables).
     #[must_use]
     pub fn args_literals(&self) -> Vec<&str> {
-        self.arguments.iter().filter_map(Argument::as_literal).collect()
+        self.arguments
+            .iter()
+            .filter_map(Argument::as_literal)
+            .collect()
     }
 }
 

@@ -19,3 +19,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Test fixtures (cloned third-party repos)
+/test-fixtures/

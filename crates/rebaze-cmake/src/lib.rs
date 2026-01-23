@@ -85,10 +85,7 @@ fn report_errors(filename: &str, src: &str, errors: &[chumsky::error::Simple<cha
         };
 
         // Print to stderr
-        report
-            .finish()
-            .eprint((filename, Source::from(src)))
-            .ok();
+        report.finish().eprint((filename, Source::from(src))).ok();
     }
 }
 

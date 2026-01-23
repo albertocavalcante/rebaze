@@ -158,7 +158,12 @@ fn extract_executable(cmd: &Command, project: &mut CMakeProject) {
     let name = args[0].to_string();
     let sources: Vec<String> = args[1..]
         .iter()
-        .filter(|s| !matches!(s.to_uppercase().as_str(), "WIN32" | "MACOSX_BUNDLE" | "EXCLUDE_FROM_ALL"))
+        .filter(|s| {
+            !matches!(
+                s.to_uppercase().as_str(),
+                "WIN32" | "MACOSX_BUNDLE" | "EXCLUDE_FROM_ALL"
+            )
+        })
         .map(|s| (*s).to_string())
         .collect();
 
@@ -256,7 +261,12 @@ fn apply_link_libraries(cmd: &Command, project: &mut CMakeProject) {
     let target = args[0];
     let libs: Vec<String> = args[1..]
         .iter()
-        .filter(|s| !matches!(s.to_uppercase().as_str(), "PUBLIC" | "PRIVATE" | "INTERFACE"))
+        .filter(|s| {
+            !matches!(
+                s.to_uppercase().as_str(),
+                "PUBLIC" | "PRIVATE" | "INTERFACE"
+            )
+        })
         .map(|s| (*s).to_string())
         .collect();
 
@@ -277,7 +287,11 @@ fn apply_link_libraries(cmd: &Command, project: &mut CMakeProject) {
 
 fn apply_include_directories(cmd: &Command, project: &mut CMakeProject) {
     // target_include_directories(target [PUBLIC|PRIVATE|INTERFACE] dir1 dir2...)
-    let args: Vec<&str> = cmd.arguments.iter().filter_map(Argument::as_literal).collect();
+    let args: Vec<&str> = cmd
+        .arguments
+        .iter()
+        .filter_map(Argument::as_literal)
+        .collect();
     if args.len() < 2 {
         return;
     }
@@ -285,7 +299,12 @@ fn apply_include_directories(cmd: &Command, project: &mut CMakeProject) {
     let target = args[0];
     let dirs: Vec<String> = args[1..]
         .iter()
-        .filter(|s| !matches!(s.to_uppercase().as_str(), "PUBLIC" | "PRIVATE" | "INTERFACE" | "SYSTEM" | "BEFORE" | "AFTER"))
+        .filter(|s| {
+            !matches!(
+                s.to_uppercase().as_str(),
+                "PUBLIC" | "PRIVATE" | "INTERFACE" | "SYSTEM" | "BEFORE" | "AFTER"
+            )
+        })
         .map(|s| (*s).to_string())
         .collect();
 
