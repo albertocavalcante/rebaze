@@ -82,9 +82,76 @@ fn argument_list() -> impl Parser<char, Vec<Argument>, Error = Simple<char>> {
         .allow_trailing()
 }
 
-/// Parser for a single argument.
+/// Parser for a single argument (including nested parentheses with mixed arg types).
 fn argument() -> impl Parser<char, Argument, Error = Simple<char>> {
-    choice((bracket_argument(), quoted_argument(), unquoted_argument()))
+    recursive(|arg| {
+        // Parenthesis group that can contain any argument type
+        let paren_group = just('(')
+            .ignore_then(
+                arg.clone()
+                    .separated_by(arg_separator())
+                    .allow_leading()
+                    .allow_trailing()
+                    .map(|args: Vec<Argument>| {
+                        // Flatten all arguments into a single string with parens
+                        let mut content = String::from("(");
+                        for (i, a) in args.iter().enumerate() {
+                            if i > 0 {
+                                content.push(' ');
+                            }
+                            // Reconstruct quoted strings with quotes
+                            match a {
+                                Argument::Quoted(_) => {
+                                    content.push('"');
+                                    content.push_str(&a.to_string_lossy());
+                                    content.push('"');
+                                }
+                                _ => content.push_str(&a.to_string_lossy()),
+                            }
+                        }
+                        content.push(')');
+                        Argument::Unquoted(ArgumentValue {
+                            parts: vec![ArgumentPart::Text(content)],
+                        })
+                    }),
+            )
+            .then_ignore(just(')'));
+
+        choice((
+            bracket_argument(),
+            quoted_argument(),
+            paren_group,
+            unquoted_argument_simple(),
+        ))
+    })
+}
+
+/// Parser for unquoted arguments (simple version without nested parens - those are handled at argument level).
+fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char>> {
+    // Escape sequences
+    let escape_sequence = just('\\').ignore_then(any()).map(|c| vec![c]);
+
+    // Regular characters (no whitespace, quotes, #, $, ;, or parens)
+    let regular_chars = filter(|c: &char| {
+        !c.is_whitespace() && !matches!(c, '(' | ')' | '#' | '"' | '\\' | '$' | ';')
+    })
+    .repeated()
+    .at_least(1)
+    .collect::<Vec<char>>();
+
+    let text_part = choice((escape_sequence, regular_chars))
+        .repeated()
+        .at_least(1)
+        .flatten()
+        .collect::<String>()
+        .map(ArgumentPart::Text);
+
+    let var_ref = variable_reference();
+
+    choice((var_ref, text_part))
+        .repeated()
+        .at_least(1)
+        .map(|parts| Argument::Unquoted(ArgumentValue { parts }))
 }
 
 /// Parser for bracket-quoted arguments: [[content]] or [=[content]=]
@@ -138,62 +205,84 @@ fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>
     choice((var_ref, text)).repeated()
 }
 
-/// Parser for unquoted arguments.
-fn unquoted_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
-    // Unquoted arguments cannot contain: whitespace, (), #, ", \, or ${ without escape
-    let escape_sequence = just('\\').ignore_then(any()).map(|c| vec![c]);
+/// Parser for variable references: ${VAR}, $ENV{VAR}, $CACHE{VAR}, $<GENEXPR>
+/// Supports nested variables like ${${VARNAME}}
+fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>> {
+    recursive(|var_ref| {
+        // Variable content can be: alphanumeric, underscore, or nested ${...}
+        let plain_chars = filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_')
+            .repeated()
+            .at_least(1)
+            .collect::<String>();
 
-    let regular_chars = filter(|c: &char| {
-        !c.is_whitespace() && !matches!(c, '(' | ')' | '#' | '"' | '\\' | '$' | ';')
+        // Nested variable reference - capture as string including ${}
+        let nested_var = just("${")
+            .then(
+                var_ref
+                    .clone()
+                    .map(|part: ArgumentPart| match part {
+                        ArgumentPart::Variable(s) => format!("${{{s}}}"),
+                        ArgumentPart::EnvVariable(s) => format!("$ENV{{{s}}}"),
+                        ArgumentPart::CacheVariable(s) => format!("$CACHE{{{s}}}"),
+                        ArgumentPart::GeneratorExpr(s) => format!("$<{s}>"),
+                        ArgumentPart::Text(s) => s,
+                    })
+                    .or(plain_chars)
+                    .repeated()
+                    .at_least(1)
+                    .collect::<Vec<String>>(),
+            )
+            .then_ignore(just('}'))
+            .map(|(_, parts)| parts.join(""));
+
+        // Content inside ${} can be plain chars or nested refs
+        let var_content = plain_chars
+            .or(nested_var.clone())
+            .repeated()
+            .at_least(1)
+            .collect::<Vec<String>>()
+            .map(|parts| parts.join(""));
+
+        let normal_var = just("${")
+            .ignore_then(var_content.clone())
+            .then_ignore(just('}'))
+            .map(ArgumentPart::Variable);
+
+        let env_var = just("$ENV{")
+            .ignore_then(var_content.clone())
+            .then_ignore(just('}'))
+            .map(ArgumentPart::EnvVariable);
+
+        let cache_var = just("$CACHE{")
+            .ignore_then(var_content)
+            .then_ignore(just('}'))
+            .map(ArgumentPart::CacheVariable);
+
+        // Generator expressions: $<...> - handle nested <> properly
+        let gen_expr = just("$<")
+            .ignore_then(gen_expr_content())
+            .then_ignore(just('>'))
+            .map(ArgumentPart::GeneratorExpr);
+
+        choice((env_var, cache_var, normal_var, gen_expr))
     })
-    .repeated()
-    .at_least(1)
-    .collect::<Vec<char>>();
-
-    let text_part = choice((escape_sequence, regular_chars))
-        .repeated()
-        .at_least(1)
-        .flatten()
-        .collect::<String>()
-        .map(ArgumentPart::Text);
-
-    let var_ref = variable_reference();
-
-    choice((var_ref, text_part))
-        .repeated()
-        .at_least(1)
-        .map(|parts| Argument::Unquoted(ArgumentValue { parts }))
 }
 
-/// Parser for variable references: ${VAR}, $ENV{VAR}, $CACHE{VAR}, $<GENEXPR>
-fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>> {
-    let var_name = filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_')
-        .repeated()
-        .at_least(1)
-        .collect::<String>();
+/// Parser for generator expression content (handles nested <>)
+fn gen_expr_content() -> impl Parser<char, String, Error = Simple<char>> {
+    recursive(|content| {
+        let nested = just('<')
+            .then(content.clone())
+            .then(just('>'))
+            .map(|((open, inner), close): ((char, String), char)| format!("{open}{inner}{close}"));
 
-    let normal_var = just("${")
-        .ignore_then(var_name)
-        .then_ignore(just('}'))
-        .map(ArgumentPart::Variable);
+        let plain = none_of("<>").map(|c: char| c.to_string());
 
-    let env_var = just("$ENV{")
-        .ignore_then(var_name)
-        .then_ignore(just('}'))
-        .map(ArgumentPart::EnvVariable);
-
-    let cache_var = just("$CACHE{")
-        .ignore_then(var_name)
-        .then_ignore(just('}'))
-        .map(ArgumentPart::CacheVariable);
-
-    // Generator expressions: $<...> - simplified, just capture content
-    let gen_expr = just("$<")
-        .ignore_then(none_of(">").repeated().collect::<String>())
-        .then_ignore(just('>'))
-        .map(ArgumentPart::GeneratorExpr);
-
-    choice((env_var, cache_var, normal_var, gen_expr))
+        choice((nested, plain))
+            .repeated()
+            .collect::<Vec<String>>()
+            .map(|parts: Vec<String>| parts.join(""))
+    })
 }
 
 #[cfg(test)]
@@ -205,6 +294,47 @@ mod tests {
         let (result, errors) = parse(src);
         assert!(errors.is_empty(), "Parse errors: {errors:?}");
         result.unwrap_or_else(|| panic!("Parse failed"))
+    }
+
+    #[test]
+    fn test_nested_parentheses() {
+        // This is a common pattern in CMake if() conditions
+        let file = parse_ok("if(${MAIN_PROJECT} AND (${CMAKE_VERSION} VERSION_EQUAL 3.13 OR ${CMAKE_VERSION} VERSION_GREATER 3.13))");
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("if"));
+        // Should have parsed the nested parens as part of the arguments
+        assert!(file.commands[0].arguments.len() >= 2);
+    }
+
+    #[test]
+    fn test_deeply_nested_parentheses() {
+        let file = parse_ok("if(A AND (B OR (C AND D)))");
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("if"));
+    }
+
+    #[test]
+    fn test_nested_variable_reference() {
+        // Common pattern: ${${VARNAME}}
+        let file = parse_ok(r#"string(REPLACE " " ";" BUILD_FLAGS_AS_LIST "${${VARNAME}}")"#);
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("string"));
+    }
+
+    #[test]
+    fn test_nested_gen_expr() {
+        // Nested generator expressions: $<$<CONFIG:Debug>:value>
+        let file = parse_ok(r#"target_compile_definitions(foo $<$<CONFIG:Debug>:DEBUG_MODE>)"#);
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("target_compile_definitions"));
+    }
+
+    #[test]
+    fn test_regex_in_quoted_string() {
+        // Regex patterns with square brackets in quoted strings
+        let file = parse_ok(r#"if (NOT ("XX${flag}" MATCHES "XX-O[0123s]"))"#);
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("if"));
     }
 
     #[test]
