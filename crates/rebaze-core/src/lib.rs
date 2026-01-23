@@ -15,6 +15,11 @@ pub fn analyze(path: &str) -> Result<String> {
 
     let mut detected = Vec::new();
 
+    // Check for CMake (priority for C/C++ projects)
+    if path.join("CMakeLists.txt").exists() {
+        detected.push("cmake");
+    }
+
     // Check for Gradle
     if path.join("build.gradle").exists() || path.join("build.gradle.kts").exists() {
         detected.push("gradle");
@@ -23,11 +28,6 @@ pub fn analyze(path: &str) -> Result<String> {
     // Check for Maven
     if path.join("pom.xml").exists() {
         detected.push("maven");
-    }
-
-    // Check for CMake
-    if path.join("CMakeLists.txt").exists() {
-        detected.push("cmake");
     }
 
     // Check for Makefile
@@ -56,18 +56,26 @@ pub fn migrate(path: &str, from: Option<&str>, dry_run: bool) -> Result<()> {
         None => detect_build_system(path)?,
     };
 
-    tracing::info!("Migrating from {} to Bazel", build_system);
+    tracing::info!("Migrating from {build_system} to Bazel");
 
     match build_system.as_str() {
+        "cmake" => {
+            let project = rebaze_cmake::parse(path).context("Failed to parse CMake project")?;
+            let bazel_files = rebaze_bazel::generate_from_cmake(&project);
+
+            if dry_run {
+                print_files(&bazel_files);
+            } else {
+                rebaze_bazel::write_files(path, &bazel_files)?;
+            }
+        }
         "gradle" => {
-            let project = rebaze_gradle::parse(path).context("Failed to parse Gradle project")?;
+            let project =
+                rebaze_gradle::parse(path).context("Failed to parse Gradle project")?;
             let bazel_files = rebaze_bazel::generate(&project);
 
             if dry_run {
-                for (file_path, content) in &bazel_files {
-                    println!("--- {file_path} ---");
-                    println!("{content}");
-                }
+                print_files(&bazel_files);
             } else {
                 rebaze_bazel::write_files(path, &bazel_files)?;
             }
@@ -78,6 +86,13 @@ pub fn migrate(path: &str, from: Option<&str>, dry_run: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_files(files: &std::collections::HashMap<String, String>) {
+    for (file_path, content) in files {
+        println!("--- {file_path} ---");
+        println!("{content}");
+    }
 }
 
 /// Validate generated Bazel files.
@@ -93,14 +108,15 @@ pub fn validate(path: &str) -> Result<()> {
 }
 
 fn detect_build_system(path: &Path) -> Result<String> {
+    // CMake first (C/C++ projects)
+    if path.join("CMakeLists.txt").exists() {
+        return Ok("cmake".to_string());
+    }
     if path.join("build.gradle").exists() || path.join("build.gradle.kts").exists() {
         return Ok("gradle".to_string());
     }
     if path.join("pom.xml").exists() {
         return Ok("maven".to_string());
-    }
-    if path.join("CMakeLists.txt").exists() {
-        return Ok("cmake".to_string());
     }
 
     anyhow::bail!("Could not detect build system at {}", path.display())

@@ -1,23 +1,19 @@
 [package]
-name = "rebaze-core"
+name = "rebaze-cmake"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Core migration logic for rebaze"
+description = "CMake file parser for rebaze"
 
 [lints]
 workspace = true
 
 [dependencies]
-rebaze-cmake.workspace = true
-rebaze-gradle.workspace = true
-rebaze-bazel.workspace = true
-
+chumsky.workspace = true
+ariadne.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-walkdir.workspace = true
 tracing.workspace = true

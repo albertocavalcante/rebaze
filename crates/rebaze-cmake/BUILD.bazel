@@ -1,0 +1,20 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "rebaze-cmake",
+    srcs = glob(["src/**/*.rs"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@crates//:chumsky",
+        "@crates//:ariadne",
+        "@crates//:anyhow",
+        "@crates//:thiserror",
+        "@crates//:serde",
+        "@crates//:tracing",
+    ],
+)
+
+rust_test(
+    name = "rebaze-cmake_test",
+    crate = ":rebaze-cmake",
+)

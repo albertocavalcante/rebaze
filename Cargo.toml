@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/rebaze-cli",
     "crates/rebaze-core",
+    "crates/rebaze-cmake",
     "crates/rebaze-gradle",
     "crates/rebaze-bazel",
 ]
@@ -39,7 +40,12 @@ indicatif = "0.18"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Parsing
+chumsky = "0.9"
+ariadne = "0.4"
+
 # Internal crates
+rebaze-cmake = { path = "crates/rebaze-cmake" }
 rebaze-core = { path = "crates/rebaze-core" }
 rebaze-gradle = { path = "crates/rebaze-gradle" }
 rebaze-bazel = { path = "crates/rebaze-bazel" }
@@ -64,3 +70,4 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+doc_markdown = "allow"

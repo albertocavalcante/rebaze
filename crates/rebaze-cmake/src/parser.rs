@@ -1,0 +1,318 @@
+//! CMake parser using chumsky.
+//!
+//! This parser handles CMakeLists.txt and .cmake files, extracting
+//! commands with their arguments for analysis.
+
+use chumsky::prelude::*;
+
+use crate::ast::{Argument, ArgumentPart, ArgumentValue, CMakeFile, Command};
+
+/// Parse a CMake file from source text.
+///
+/// # Errors
+/// Returns parsing errors with source spans for error reporting.
+pub fn parse(src: &str) -> (Option<CMakeFile>, Vec<Simple<char>>) {
+    let (commands, errors) = cmake_file().parse_recovery(src);
+    (commands.map(|commands| CMakeFile { commands }), errors)
+}
+
+/// Parser for a complete CMake file.
+fn cmake_file() -> impl Parser<char, Vec<Command>, Error = Simple<char>> {
+    command()
+        .padded_by(trivia())
+        .repeated()
+        .then_ignore(end())
+}
+
+/// Parser for trivia (whitespace and comments).
+fn trivia() -> impl Parser<char, (), Error = Simple<char>> + Clone {
+    let line_comment = just('#')
+        .then(none_of("\n\r").repeated())
+        .ignored();
+
+    let bracket_comment = just("#[[")
+        .then(take_until(just("]]")))
+        .ignored();
+
+    choice((
+        bracket_comment,
+        line_comment,
+        one_of(" \t\n\r").ignored(),
+    ))
+    .repeated()
+    .ignored()
+}
+
+/// Parser for whitespace within argument lists (no newlines in some contexts).
+fn arg_separator() -> impl Parser<char, (), Error = Simple<char>> + Clone {
+    one_of(" \t;")
+        .repeated()
+        .at_least(1)
+        .ignored()
+}
+
+/// Parser for a CMake command.
+fn command() -> impl Parser<char, Command, Error = Simple<char>> {
+    let name = filter(|c: &char| c.is_ascii_alphabetic() || *c == '_')
+        .then(filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_').repeated())
+        .map(|(first, rest): (char, Vec<char>)| {
+            let mut s = String::with_capacity(1 + rest.len());
+            s.push(first);
+            s.extend(rest);
+            s
+        });
+
+    name.map_with_span(|n, span| (n, span))
+        .then_ignore(trivia())
+        .then_ignore(just('('))
+        .then_ignore(trivia())
+        .then(argument_list())
+        .then_ignore(trivia())
+        .then_ignore(just(')'))
+        .map_with_span(|((name_original, name_span), arguments), span| {
+            let name = name_original.to_lowercase();
+            Command {
+                name,
+                name_original,
+                arguments,
+                span: name_span.start..span.end,
+            }
+        })
+}
+
+/// Parser for a list of arguments.
+fn argument_list() -> impl Parser<char, Vec<Argument>, Error = Simple<char>> {
+    argument()
+        .separated_by(arg_separator().or(trivia()))
+        .allow_leading()
+        .allow_trailing()
+}
+
+/// Parser for a single argument.
+fn argument() -> impl Parser<char, Argument, Error = Simple<char>> {
+    choice((
+        bracket_argument(),
+        quoted_argument(),
+        unquoted_argument(),
+    ))
+}
+
+/// Parser for bracket-quoted arguments: [[content]] or [=[content]=]
+fn bracket_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
+    // Match opening bracket with optional = signs
+    just('[')
+        .ignore_then(just('=').repeated().collect::<String>())
+        .then_ignore(just('['))
+        .then_with(move |equals: String| {
+            // Build the closing pattern: ]===] where = count matches
+            let close_pattern: String = format!("]{equals}]");
+            take_until(just(close_pattern))
+                .map(move |(chars, _): (Vec<char>, _)| {
+                    let content: String = chars.into_iter().collect();
+                    Argument::Bracket(content)
+                })
+        })
+}
+
+/// Parser for double-quoted arguments: "content"
+fn quoted_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
+    just('"')
+        .ignore_then(quoted_content())
+        .then_ignore(just('"'))
+        .map(|parts| Argument::Quoted(ArgumentValue { parts }))
+}
+
+/// Parser for content inside double quotes.
+fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> {
+    let escape_sequence = just('\\').ignore_then(choice((
+        just('\\').to('\\'),
+        just('"').to('"'),
+        just('n').to('\n'),
+        just('t').to('\t'),
+        just('r').to('\r'),
+        just(';').to(';'),
+        just('$').to('$'),
+    )));
+
+    let regular_char = none_of("\"\\$");
+
+    let text_char = escape_sequence.or(regular_char);
+
+    let text = text_char
+        .repeated()
+        .at_least(1)
+        .collect::<String>()
+        .map(ArgumentPart::Text);
+
+    let var_ref = variable_reference();
+
+    choice((var_ref, text))
+        .repeated()
+}
+
+/// Parser for unquoted arguments.
+fn unquoted_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
+    // Unquoted arguments cannot contain: whitespace, (), #, ", \, or ${ without escape
+    let escape_sequence = just('\\').ignore_then(any()).map(|c| vec![c]);
+
+    let regular_chars = filter(|c: &char| {
+        !c.is_whitespace() && !matches!(c, '(' | ')' | '#' | '"' | '\\' | '$' | ';')
+    })
+    .repeated()
+    .at_least(1)
+    .collect::<Vec<char>>();
+
+    let text_part = choice((escape_sequence, regular_chars))
+        .repeated()
+        .at_least(1)
+        .flatten()
+        .collect::<String>()
+        .map(ArgumentPart::Text);
+
+    let var_ref = variable_reference();
+
+    choice((var_ref, text_part))
+        .repeated()
+        .at_least(1)
+        .map(|parts| Argument::Unquoted(ArgumentValue { parts }))
+}
+
+/// Parser for variable references: ${VAR}, $ENV{VAR}, $CACHE{VAR}, $<GENEXPR>
+fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>> {
+    let var_name = filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_')
+        .repeated()
+        .at_least(1)
+        .collect::<String>();
+
+    let normal_var = just("${")
+        .ignore_then(var_name)
+        .then_ignore(just('}'))
+        .map(ArgumentPart::Variable);
+
+    let env_var = just("$ENV{")
+        .ignore_then(var_name)
+        .then_ignore(just('}'))
+        .map(ArgumentPart::EnvVariable);
+
+    let cache_var = just("$CACHE{")
+        .ignore_then(var_name)
+        .then_ignore(just('}'))
+        .map(ArgumentPart::CacheVariable);
+
+    // Generator expressions: $<...> - simplified, just capture content
+    let gen_expr = just("$<")
+        .ignore_then(
+            none_of(">")
+                .repeated()
+                .collect::<String>()
+        )
+        .then_ignore(just('>'))
+        .map(ArgumentPart::GeneratorExpr);
+
+    choice((env_var, cache_var, normal_var, gen_expr))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn parse_ok(src: &str) -> CMakeFile {
+        let (result, errors) = parse(src);
+        assert!(errors.is_empty(), "Parse errors: {errors:?}");
+        result.unwrap_or_else(|| panic!("Parse failed"))
+    }
+
+    #[test]
+    fn test_simple_command() {
+        let file = parse_ok("project(myapp)");
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("project"));
+        assert_eq!(file.commands[0].arg_literal(0), Some("myapp"));
+    }
+
+    #[test]
+    fn test_command_case_insensitive() {
+        let file = parse_ok("PROJECT(MyApp)");
+        assert!(file.commands[0].is("project"));
+        assert_eq!(file.commands[0].name_original, "PROJECT");
+    }
+
+    #[test]
+    fn test_multiple_arguments() {
+        let file = parse_ok("add_executable(myapp main.cpp util.cpp)");
+        assert_eq!(file.commands.len(), 1);
+        let args = file.commands[0].args_literals();
+        assert_eq!(args, vec!["myapp", "main.cpp", "util.cpp"]);
+    }
+
+    #[test]
+    fn test_quoted_argument() {
+        let file = parse_ok(r#"message("Hello, World!")"#);
+        let arg = &file.commands[0].arguments[0];
+        assert_eq!(arg.to_string_lossy(), "Hello, World!");
+    }
+
+    #[test]
+    fn test_variable_reference() {
+        let file = parse_ok("set(VAR ${OTHER_VAR})");
+        assert_eq!(file.commands.len(), 1);
+        let args = &file.commands[0].arguments;
+        assert_eq!(args.len(), 2);
+
+        if let Argument::Unquoted(val) = &args[1] {
+            assert_eq!(val.parts.len(), 1);
+            assert!(matches!(&val.parts[0], ArgumentPart::Variable(v) if v == "OTHER_VAR"));
+        } else {
+            panic!("Expected unquoted argument");
+        }
+    }
+
+    #[test]
+    fn test_comments() {
+        let file = parse_ok(
+            "
+            # This is a comment
+            project(myapp)
+            # Another comment
+        ",
+        );
+        assert_eq!(file.commands.len(), 1);
+    }
+
+    #[test]
+    fn test_multiline() {
+        let file = parse_ok(
+            "
+cmake_minimum_required(VERSION 3.20)
+project(myapp VERSION 1.0.0)
+add_executable(myapp
+    main.cpp
+    util.cpp
+    helper.cpp
+)
+",
+        );
+        assert_eq!(file.commands.len(), 3);
+        assert!(file.commands[0].is("cmake_minimum_required"));
+        assert!(file.commands[1].is("project"));
+        assert!(file.commands[2].is("add_executable"));
+    }
+
+    #[test]
+    fn test_bracket_argument() {
+        let file = parse_ok(r#"message([[Raw content with "quotes" and ${vars}]])"#);
+        if let Argument::Bracket(content) = &file.commands[0].arguments[0] {
+            assert!(content.contains("\"quotes\""));
+            assert!(content.contains("${vars}"));
+        } else {
+            panic!("Expected bracket argument");
+        }
+    }
+
+    #[test]
+    fn test_generator_expression() {
+        let file = parse_ok("target_include_directories(mylib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)");
+        assert_eq!(file.commands.len(), 1);
+    }
+}
