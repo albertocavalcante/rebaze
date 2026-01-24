@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 rebaze-cmake.workspace = true
+rebaze-cmake-file-api.workspace = true
 rebaze-gradle.workspace = true
 rebaze-bazel.workspace = true
 

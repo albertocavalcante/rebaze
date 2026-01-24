@@ -1,0 +1,19 @@
+# Base directory for outputs. Leave empty to use REBAZE_CMAKE_CORPUS_DIR,
+# then a repo-local ".rebaze/cmake-corpus", then XDG_CACHE_HOME,
+# then the OS temp directory.
+corpus_dir = ""
+count = 100
+start_year = 2010
+# Optional overrides (leave empty to use corpus_dir).
+workdir = ""
+out = ""
+max_per_repo = 3
+per_page = 100
+query_extra = ""
+no_fetch = false
+wait = false
+sleep = 0.0
+allow_license = []
+deny_license = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
+skip_unknown_license = false
+license_cache = ""

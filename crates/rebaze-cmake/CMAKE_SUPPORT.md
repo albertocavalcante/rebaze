@@ -1,5 +1,24 @@
 # CMake Syntax Support
 
+## File API Integration (Experimental)
+
+rebaze can optionally read CMake's File API output from an existing build directory
+to get a richer, build-system-accurate target graph (sources, includes, dependencies).
+
+```bash
+# After configuring with CMake
+cmake -S . -B build
+
+# Use the File API reply during migration
+rebaze migrate . --from cmake --cmake-build-dir build
+
+# Require File API and select a configuration
+rebaze migrate . --from cmake --cmake-build-dir build --cmake-config Debug --cmake-file-api-only
+
+# Skip pre/post build validation
+rebaze migrate . --from cmake --unsafe-mode
+```
+
 ## Parsing Status
 
 ### ✅ Fully Supported (Parsing)
@@ -22,7 +41,6 @@
 
 | Feature | Example | Issue |
 |---------|---------|-------|
-| Nested generator exprs | `$<$<CONFIG:Debug>:value>` | Single `>` terminates early |
 | Complex generator exprs | `$<TARGET_FILE:target>` | Works, but no semantic understanding |
 
 ### ✅ Recently Added Support
@@ -72,6 +90,6 @@
 
 ## Priority Fixes Needed
 
-1. **Nested parentheses** - Required for real-world CMake files
-2. **Nested generator expressions** - Common in modern CMake
-3. **Variable expansion** - Needed for accurate source file lists
+1. **Variable expansion/list handling** - Needed for accurate source lists (set/foreach)
+2. **Recursive include/add_subdirectory** - Required for multi-directory projects
+3. **Generator expression evaluation** - Needed for accurate Bazel mapping

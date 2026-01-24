@@ -102,6 +102,5 @@ fn test_parse_all_fixtures() {
         }
     }
 
-    // For now, don't fail the test - just report
-    // assert_eq!(failed, 0, "Some CMake files failed to parse");
+    assert_eq!(failed, 0, "Some CMake files failed to parse");
 }

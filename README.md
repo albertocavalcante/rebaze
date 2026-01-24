@@ -6,13 +6,15 @@ Migrate from Gradle, CMake, and other build tools to Bazel.
 
 **Early development** - not ready for production use.
 
+**Bazel 9 only** - rebaze currently validates against Bazel 9.x.
+
 ## Supported Migrations
 
 | Source | Status |
 |--------|--------|
 | Gradle | In progress |
 | Maven | Planned |
-| CMake | Planned |
+| CMake | In progress |
 | Makefile | Planned |
 | Cargo | Planned |
 
@@ -28,9 +30,29 @@ rebaze migrate /path/to/project --dry-run
 # Migrate to Bazel
 rebaze migrate /path/to/project
 
+# Use CMake File API data from an existing build dir
+rebaze migrate /path/to/project --from cmake --cmake-build-dir /path/to/build
+
+# Select a configuration and require File API data
+rebaze migrate /path/to/project --from cmake --cmake-build-dir /path/to/build --cmake-config Debug --cmake-file-api-only
+
+# Use bazelle (gazelle) for BUILD file generation (preferred default)
+rebaze migrate /path/to/project --from cmake --build-generator bazelle --bazelle-root /path/to/bazelle
+
+# Choose the generator explicitly (auto|native|bazelle)
+rebaze migrate /path/to/project --from cmake --build-generator native
+
+# Skip pre/post build validation
+rebaze migrate /path/to/project --from cmake --unsafe-mode
+
 # Validate generated files
 rebaze validate /path/to/project
+
+# Skip Bazel build validation
+rebaze validate /path/to/project --unsafe-mode
 ```
+
+`rebaze validate` runs `bazel build //...` and enforces Bazel 9 unless `--unsafe-mode` is set.
 
 ## Building
 

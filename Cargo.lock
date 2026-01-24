@@ -187,6 +187,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
+name = "cmake-file-api"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d9aa58456f0c04e68c47d27120bd7004751be8243c7e50d1895e9db2018fca9"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shlex",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -401,7 +413,7 @@ dependencies = [
  "rebaze-cmake",
  "rebaze-gradle",
  "serde",
- "thiserror",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -428,9 +440,18 @@ dependencies = [
  "ariadne",
  "chumsky",
  "serde",
- "thiserror",
+ "thiserror 2.0.18",
  "tracing",
  "walkdir",
+]
+
+[[package]]
+name = "rebaze-cmake-file-api"
+version = "0.1.0"
+dependencies = [
+ "cmake-file-api",
+ "rebaze-cmake",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -440,10 +461,11 @@ dependencies = [
  "anyhow",
  "rebaze-bazel",
  "rebaze-cmake",
+ "rebaze-cmake-file-api",
  "rebaze-gradle",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.18",
  "tracing",
  "walkdir",
 ]
@@ -455,7 +477,7 @@ dependencies = [
  "anyhow",
  "globset",
  "serde",
- "thiserror",
+ "thiserror 2.0.18",
  "tracing",
  "walkdir",
 ]
@@ -588,11 +610,31 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.18",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

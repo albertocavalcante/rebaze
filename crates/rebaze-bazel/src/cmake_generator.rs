@@ -122,6 +122,22 @@ fn generate_cc_library(lib: &Library) -> String {
         content.push_str("    ],\n");
     }
 
+    if !lib.compile_definitions.is_empty() {
+        let _ = writeln!(content, "    defines = [");
+        for define in &lib.compile_definitions {
+            let _ = writeln!(content, "        \"{define}\",");
+        }
+        content.push_str("    ],\n");
+    }
+
+    if !lib.compile_options.is_empty() {
+        let _ = writeln!(content, "    copts = [");
+        for opt in &lib.compile_options {
+            let _ = writeln!(content, "        \"{opt}\",");
+        }
+        content.push_str("    ],\n");
+    }
+
     // Add linkopts for specific library types
     if lib.kind == LibraryKind::Shared {
         let _ = writeln!(content, "    linkshared = True,");
@@ -145,6 +161,15 @@ fn generate_cc_binary(exe: &Executable, libs: &[Library]) -> String {
     }
     content.push_str("    ],\n");
 
+    if !exe.include_directories.is_empty() {
+        let _ = writeln!(content, "    includes = [");
+        for dir in &exe.include_directories {
+            let dir = normalize_include_dir(dir);
+            let _ = writeln!(content, "        \"{dir}\",");
+        }
+        content.push_str("    ],\n");
+    }
+
     // Collect dependencies
     let mut deps = Vec::new();
 
@@ -162,6 +187,22 @@ fn generate_cc_binary(exe: &Executable, libs: &[Library]) -> String {
         let _ = writeln!(content, "    deps = [");
         for dep in &deps {
             let _ = writeln!(content, "        \"{dep}\",");
+        }
+        content.push_str("    ],\n");
+    }
+
+    if !exe.compile_definitions.is_empty() {
+        let _ = writeln!(content, "    defines = [");
+        for define in &exe.compile_definitions {
+            let _ = writeln!(content, "        \"{define}\",");
+        }
+        content.push_str("    ],\n");
+    }
+
+    if !exe.compile_options.is_empty() {
+        let _ = writeln!(content, "    copts = [");
+        for opt in &exe.compile_options {
+            let _ = writeln!(content, "        \"{opt}\",");
         }
         content.push_str("    ],\n");
     }
@@ -225,6 +266,8 @@ mod tests {
                 sources: vec!["src/main.cpp".to_string()],
                 link_libraries: vec!["mylib".to_string()],
                 include_directories: vec![],
+                compile_definitions: vec!["APP_DEF".to_string()],
+                compile_options: vec!["-g".to_string()],
             }],
             libraries: vec![Library {
                 name: "mylib".to_string(),
@@ -232,6 +275,8 @@ mod tests {
                 sources: vec!["src/lib.cpp".to_string()],
                 link_libraries: vec![],
                 include_directories: vec!["include".to_string()],
+                compile_definitions: vec!["LIB_DEF".to_string()],
+                compile_options: vec!["-O2".to_string()],
             }],
             packages: vec![Package {
                 name: "Boost".to_string(),
@@ -262,5 +307,9 @@ mod tests {
         assert!(content.contains("cc_binary("));
         assert!(content.contains("mylib"));
         assert!(content.contains("myapp"));
+        assert!(content.contains("LIB_DEF"));
+        assert!(content.contains("APP_DEF"));
+        assert!(content.contains("-O2"));
+        assert!(content.contains("-g"));
     }
 }

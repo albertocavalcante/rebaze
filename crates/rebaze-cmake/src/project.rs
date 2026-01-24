@@ -37,6 +37,8 @@ pub struct Executable {
     pub sources: Vec<String>,
     pub link_libraries: Vec<String>,
     pub include_directories: Vec<String>,
+    pub compile_definitions: Vec<String>,
+    pub compile_options: Vec<String>,
 }
 
 /// A library target.
@@ -47,6 +49,8 @@ pub struct Library {
     pub sources: Vec<String>,
     pub link_libraries: Vec<String>,
     pub include_directories: Vec<String>,
+    pub compile_definitions: Vec<String>,
+    pub compile_options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +97,8 @@ pub fn extract_project(file: &CMakeFile, path: PathBuf) -> CMakeProject {
         match cmd.name.as_str() {
             "target_link_libraries" => apply_link_libraries(cmd, &mut project),
             "target_include_directories" => apply_include_directories(cmd, &mut project),
+            "target_compile_definitions" => apply_compile_definitions(cmd, &mut project),
+            "target_compile_options" => apply_compile_options(cmd, &mut project),
             _ => {}
         }
     }
@@ -102,11 +108,17 @@ pub fn extract_project(file: &CMakeFile, path: PathBuf) -> CMakeProject {
 
 fn extract_cmake_version(cmd: &Command, project: &mut CMakeProject) {
     // cmake_minimum_required(VERSION x.y.z)
-    let args = cmd.args_literals();
-    for (i, arg) in args.iter().enumerate() {
+    for i in 0..cmd.arguments.len() {
+        let Some(arg) = cmd.arguments[i].as_literal() else {
+            continue;
+        };
         if arg.eq_ignore_ascii_case("VERSION") {
-            if let Some(version) = args.get(i + 1) {
-                project.cmake_minimum_version = Some((*version).to_string());
+            if let Some(version) = cmd
+                .arguments
+                .get(i + 1)
+                .and_then(Argument::as_literal)
+            {
+                project.cmake_minimum_version = Some(version.to_string());
                 return;
             }
         }
@@ -115,26 +127,41 @@ fn extract_cmake_version(cmd: &Command, project: &mut CMakeProject) {
 
 fn extract_project_info(cmd: &Command, project: &mut CMakeProject) {
     // project(name [VERSION x.y.z] [LANGUAGES lang1 lang2...])
-    let args = cmd.args_literals();
-    if args.is_empty() {
-        return;
+    let name = cmd.arguments.get(0).and_then(Argument::as_literal);
+    if let Some(name) = name {
+        project.name = name.to_string();
+    } else {
+        tracing::debug!("Skipping non-literal project name");
     }
 
-    project.name = args[0].to_string();
-
     let mut i = 1;
-    while i < args.len() {
-        match args[i].to_uppercase().as_str() {
+    while i < cmd.arguments.len() {
+        let Some(arg) = cmd.arguments[i].as_literal() else {
+            i += 1;
+            continue;
+        };
+        match arg.to_uppercase().as_str() {
             "VERSION" => {
-                if let Some(ver) = args.get(i + 1) {
-                    project.version = Some((*ver).to_string());
+                if let Some(ver) = cmd
+                    .arguments
+                    .get(i + 1)
+                    .and_then(Argument::as_literal)
+                {
+                    project.version = Some(ver.to_string());
                 }
                 i += 2;
             }
             "LANGUAGES" => {
                 i += 1;
-                while i < args.len() && !is_keyword(args[i]) {
-                    project.languages.push(args[i].to_string());
+                while i < cmd.arguments.len() {
+                    let Some(lang) = cmd.arguments[i].as_literal() else {
+                        i += 1;
+                        continue;
+                    };
+                    if is_keyword(lang) {
+                        break;
+                    }
+                    project.languages.push(lang.to_string());
                     i += 1;
                 }
             }
@@ -150,52 +177,74 @@ fn extract_project_info(cmd: &Command, project: &mut CMakeProject) {
 
 fn extract_executable(cmd: &Command, project: &mut CMakeProject) {
     // add_executable(name [WIN32] [MACOSX_BUNDLE] source1 source2...)
-    let args = cmd.args_literals();
-    if args.is_empty() {
-        return;
-    }
+    let name = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+        Some(name) => name.to_string(),
+        None => {
+            tracing::debug!("Skipping add_executable with non-literal target name");
+            return;
+        }
+    };
 
-    let name = args[0].to_string();
-    let sources: Vec<String> = args[1..]
-        .iter()
-        .filter(|s| {
-            !matches!(
-                s.to_uppercase().as_str(),
-                "WIN32" | "MACOSX_BUNDLE" | "EXCLUDE_FROM_ALL"
-            )
-        })
-        .map(|s| (*s).to_string())
-        .collect();
+    let mut sources = Vec::new();
+    for arg in cmd.arguments.iter().skip(1) {
+        let Some(lit) = arg.as_literal() else {
+            continue;
+        };
+        if matches!(
+            lit.to_uppercase().as_str(),
+            "WIN32" | "MACOSX_BUNDLE" | "EXCLUDE_FROM_ALL"
+        ) {
+            continue;
+        }
+        sources.push(lit.to_string());
+    }
 
     project.executables.push(Executable {
         name,
         sources,
         link_libraries: Vec::new(),
         include_directories: Vec::new(),
+        compile_definitions: Vec::new(),
+        compile_options: Vec::new(),
     });
 }
 
 fn extract_library(cmd: &Command, project: &mut CMakeProject) {
     // add_library(name [STATIC|SHARED|MODULE|OBJECT|INTERFACE] source1 source2...)
-    let args = cmd.args_literals();
-    if args.is_empty() {
-        return;
-    }
+    let name = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+        Some(name) => name.to_string(),
+        None => {
+            tracing::debug!("Skipping add_library with non-literal target name");
+            return;
+        }
+    };
 
-    let name = args[0].to_string();
     let mut kind = LibraryKind::Unknown;
     let mut sources = Vec::new();
+    let mut skip_target = false;
 
-    for arg in &args[1..] {
-        match arg.to_uppercase().as_str() {
+    for arg in cmd.arguments.iter().skip(1) {
+        let Some(lit) = arg.as_literal() else {
+            continue;
+        };
+        match lit.to_uppercase().as_str() {
             "STATIC" => kind = LibraryKind::Static,
             "SHARED" => kind = LibraryKind::Shared,
             "MODULE" => kind = LibraryKind::Module,
             "OBJECT" => kind = LibraryKind::Object,
             "INTERFACE" => kind = LibraryKind::Interface,
-            "EXCLUDE_FROM_ALL" | "IMPORTED" | "ALIAS" => {}
-            _ => sources.push((*arg).to_string()),
+            "EXCLUDE_FROM_ALL" => {}
+            "IMPORTED" | "ALIAS" => {
+                skip_target = true;
+                break;
+            }
+            _ => sources.push(lit.to_string()),
         }
+    }
+
+    if skip_target {
+        tracing::debug!("Skipping imported or alias library target '{name}'");
+        return;
     }
 
     project.libraries.push(Library {
@@ -204,34 +253,41 @@ fn extract_library(cmd: &Command, project: &mut CMakeProject) {
         sources,
         link_libraries: Vec::new(),
         include_directories: Vec::new(),
+        compile_definitions: Vec::new(),
+        compile_options: Vec::new(),
     });
 }
 
 fn extract_package(cmd: &Command, project: &mut CMakeProject) {
     // find_package(PackageName [version] [REQUIRED] [COMPONENTS comp1...])
-    let args = cmd.args_literals();
-    if args.is_empty() {
-        return;
-    }
+    let name = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+        Some(name) => name.to_string(),
+        None => {
+            tracing::debug!("Skipping find_package with non-literal package name");
+            return;
+        }
+    };
 
-    let name = args[0].to_string();
     let mut version = None;
     let mut required = false;
     let mut components = Vec::new();
     let mut in_components = false;
 
-    for (i, arg) in args[1..].iter().enumerate() {
-        let upper = arg.to_uppercase();
+    for arg in cmd.arguments.iter().skip(1) {
+        let Some(lit) = arg.as_literal() else {
+            continue;
+        };
+        let upper = lit.to_uppercase();
         match upper.as_str() {
             "REQUIRED" => required = true,
             "COMPONENTS" | "OPTIONAL_COMPONENTS" => in_components = true,
-            "CONFIG" | "MODULE" | "NO_MODULE" | "QUIET" => in_components = false,
+            "CONFIG" | "MODULE" | "NO_MODULE" | "QUIET" | "EXACT" => in_components = false,
             _ => {
                 if in_components {
-                    components.push((*arg).to_string());
-                } else if i == 0 && !is_keyword(arg) {
-                    // First non-keyword arg after name might be version
-                    version = Some((*arg).to_string());
+                    components.push(lit.to_string());
+                } else if version.is_none() {
+                    // First non-keyword arg after name might be version.
+                    version = Some(lit.to_string());
                 }
             }
         }
@@ -253,22 +309,28 @@ fn extract_subdirectory(cmd: &Command, project: &mut CMakeProject) {
 
 fn apply_link_libraries(cmd: &Command, project: &mut CMakeProject) {
     // target_link_libraries(target [PUBLIC|PRIVATE|INTERFACE] lib1 lib2...)
-    let args = cmd.args_literals();
-    if args.len() < 2 {
-        return;
+    let target = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+        Some(target) => target,
+        None => return,
+    };
+
+    let mut libs = Vec::new();
+    for arg in cmd.arguments.iter().skip(1) {
+        let Some(lit) = arg.as_literal() else {
+            continue;
+        };
+        if matches!(
+            lit.to_uppercase().as_str(),
+            "PUBLIC" | "PRIVATE" | "INTERFACE"
+        ) {
+            continue;
+        }
+        libs.push(lit.to_string());
     }
 
-    let target = args[0];
-    let libs: Vec<String> = args[1..]
-        .iter()
-        .filter(|s| {
-            !matches!(
-                s.to_uppercase().as_str(),
-                "PUBLIC" | "PRIVATE" | "INTERFACE"
-            )
-        })
-        .map(|s| (*s).to_string())
-        .collect();
+    if libs.is_empty() {
+        return;
+    }
 
     // Find and update the target
     for exe in &mut project.executables {
@@ -287,26 +349,28 @@ fn apply_link_libraries(cmd: &Command, project: &mut CMakeProject) {
 
 fn apply_include_directories(cmd: &Command, project: &mut CMakeProject) {
     // target_include_directories(target [PUBLIC|PRIVATE|INTERFACE] dir1 dir2...)
-    let args: Vec<&str> = cmd
-        .arguments
-        .iter()
-        .filter_map(Argument::as_literal)
-        .collect();
-    if args.len() < 2 {
-        return;
+    let target = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+        Some(target) => target,
+        None => return,
+    };
+
+    let mut dirs = Vec::new();
+    for arg in cmd.arguments.iter().skip(1) {
+        let Some(lit) = arg.as_literal() else {
+            continue;
+        };
+        if matches!(
+            lit.to_uppercase().as_str(),
+            "PUBLIC" | "PRIVATE" | "INTERFACE" | "SYSTEM" | "BEFORE" | "AFTER"
+        ) {
+            continue;
+        }
+        dirs.push(lit.to_string());
     }
 
-    let target = args[0];
-    let dirs: Vec<String> = args[1..]
-        .iter()
-        .filter(|s| {
-            !matches!(
-                s.to_uppercase().as_str(),
-                "PUBLIC" | "PRIVATE" | "INTERFACE" | "SYSTEM" | "BEFORE" | "AFTER"
-            )
-        })
-        .map(|s| (*s).to_string())
-        .collect();
+    if dirs.is_empty() {
+        return;
+    }
 
     for exe in &mut project.executables {
         if exe.name == target {
@@ -322,11 +386,132 @@ fn apply_include_directories(cmd: &Command, project: &mut CMakeProject) {
     }
 }
 
+fn apply_compile_definitions(cmd: &Command, project: &mut CMakeProject) {
+    // target_compile_definitions(target [PUBLIC|PRIVATE|INTERFACE] def1 def2...)
+    let target = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+        Some(target) => target,
+        None => return,
+    };
+
+    let mut defs = Vec::new();
+    for arg in cmd.arguments.iter().skip(1) {
+        let Some(lit) = arg.as_literal() else {
+            continue;
+        };
+        if matches!(
+            lit.to_uppercase().as_str(),
+            "PUBLIC" | "PRIVATE" | "INTERFACE"
+        ) {
+            continue;
+        }
+
+        let def = strip_define_prefix(lit);
+        if !def.is_empty() {
+            defs.push(def);
+        }
+    }
+
+    if defs.is_empty() {
+        return;
+    }
+
+    for exe in &mut project.executables {
+        if exe.name == target {
+            extend_unique(&mut exe.compile_definitions, defs);
+            return;
+        }
+    }
+    for lib in &mut project.libraries {
+        if lib.name == target {
+            extend_unique(&mut lib.compile_definitions, defs);
+            return;
+        }
+    }
+}
+
+fn apply_compile_options(cmd: &Command, project: &mut CMakeProject) {
+    // target_compile_options(target [BEFORE] [SYSTEM] [PUBLIC|PRIVATE|INTERFACE] opt1 opt2...)
+    let target = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+        Some(target) => target,
+        None => return,
+    };
+
+    let mut opts = Vec::new();
+    let mut skip_next = false;
+    for arg in cmd.arguments.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        let Some(lit) = arg.as_literal() else {
+            continue;
+        };
+        if matches!(
+            lit.to_uppercase().as_str(),
+            "PUBLIC" | "PRIVATE" | "INTERFACE" | "SYSTEM" | "BEFORE"
+        ) {
+            continue;
+        }
+        if matches!(lit, "-I" | "-isystem" | "/I") {
+            skip_next = true;
+            continue;
+        }
+        if is_include_flag(lit) {
+            continue;
+        }
+        if !lit.is_empty() {
+            opts.push(lit.to_string());
+        }
+    }
+
+    if opts.is_empty() {
+        return;
+    }
+
+    for exe in &mut project.executables {
+        if exe.name == target {
+            extend_unique(&mut exe.compile_options, opts);
+            return;
+        }
+    }
+    for lib in &mut project.libraries {
+        if lib.name == target {
+            extend_unique(&mut lib.compile_options, opts);
+            return;
+        }
+    }
+}
+
 fn is_keyword(s: &str) -> bool {
     matches!(
         s.to_uppercase().as_str(),
         "VERSION" | "LANGUAGES" | "DESCRIPTION" | "HOMEPAGE_URL"
     )
+}
+
+fn strip_define_prefix(value: &str) -> String {
+    if let Some(stripped) = value.strip_prefix("-D") {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = value.strip_prefix("/D") {
+        return stripped.to_string();
+    }
+    value.to_string()
+}
+
+fn is_include_flag(value: &str) -> bool {
+    matches!(value, "-I" | "-isystem" | "/I")
+        || value.starts_with("-I")
+        || value.starts_with("-isystem")
+        || value.starts_with("/I")
+}
+
+fn extend_unique(target: &mut Vec<String>, items: Vec<String>) {
+    for item in items {
+        if !target.contains(&item) {
+            target.push(item);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -409,5 +594,57 @@ mod tests {
         let ssl = &project.packages[1];
         assert_eq!(ssl.name, "OpenSSL");
         assert!(ssl.required);
+    }
+
+    #[test]
+    fn test_compile_flags_extraction() {
+        let project = parse_and_extract(
+            "
+            project(myapp)
+            add_library(mylib STATIC lib.cpp)
+            add_executable(myapp main.cpp)
+            target_compile_definitions(mylib PRIVATE FOO BAR=1 -DBAZ /DWIN32)
+            target_compile_options(mylib PUBLIC -O2 -Wall -Iinclude -isystem /sys /Iwin)
+            target_compile_definitions(myapp INTERFACE APPDEF)
+            target_compile_options(myapp PRIVATE -g)
+        ",
+        );
+
+        let lib = &project.libraries[0];
+        assert_eq!(
+            lib.compile_definitions,
+            vec!["FOO", "BAR=1", "BAZ", "WIN32"]
+        );
+        assert_eq!(lib.compile_options, vec!["-O2", "-Wall"]);
+
+        let exe = &project.executables[0];
+        assert_eq!(exe.compile_definitions, vec!["APPDEF"]);
+        assert_eq!(exe.compile_options, vec!["-g"]);
+    }
+
+    #[test]
+    fn test_skip_alias_library() {
+        let project = parse_and_extract(
+            "
+            project(myapp)
+            add_library(alias_lib ALIAS real_lib)
+            add_library(real_lib STATIC lib.cpp)
+        ",
+        );
+
+        assert_eq!(project.libraries.len(), 1);
+        assert_eq!(project.libraries[0].name, "real_lib");
+    }
+
+    #[test]
+    fn test_skip_dynamic_target_name() {
+        let project = parse_and_extract(
+            "
+            project(myapp)
+            add_executable(${PROJECT_NAME} main.cpp)
+        ",
+        );
+
+        assert!(project.executables.is_empty());
     }
 }

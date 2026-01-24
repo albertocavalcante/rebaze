@@ -20,5 +20,8 @@ Thumbs.db
 *.swo
 *~
 
+# Rebaze
+.rebaze/
+
 # Test fixtures (cloned third-party repos)
 /test-fixtures/

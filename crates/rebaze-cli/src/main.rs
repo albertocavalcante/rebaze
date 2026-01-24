@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -13,6 +13,23 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum BuildGeneratorArg {
+    Auto,
+    Native,
+    Bazelle,
+}
+
+impl From<BuildGeneratorArg> for rebaze_core::BuildGenerator {
+    fn from(value: BuildGeneratorArg) -> Self {
+        match value {
+            BuildGeneratorArg::Auto => Self::Auto,
+            BuildGeneratorArg::Native => Self::Native,
+            BuildGeneratorArg::Bazelle => Self::Bazelle,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -37,6 +54,34 @@ enum Commands {
         /// Dry run - show what would be generated without writing files
         #[arg(long)]
         dry_run: bool,
+
+        /// CMake build directory containing cmake-file-api replies
+        #[arg(long)]
+        cmake_build_dir: Option<String>,
+
+        /// CMake configuration name to select from the File API codemodel (e.g. Debug)
+        #[arg(long)]
+        cmake_config: Option<String>,
+
+        /// Fail if cmake-file-api is unavailable instead of falling back to parsing
+        #[arg(long)]
+        cmake_file_api_only: bool,
+
+        /// Build file generator (auto prefers bazelle when available)
+        #[arg(long, value_enum, default_value = "auto")]
+        build_generator: BuildGeneratorArg,
+
+        /// Path to a bazelle workspace to build the bazelle binary
+        #[arg(long)]
+        bazelle_root: Option<String>,
+
+        /// Path to a bazelle binary
+        #[arg(long)]
+        bazelle_bin: Option<String>,
+
+        /// Skip pre/post build validation checks
+        #[arg(long)]
+        unsafe_mode: bool,
     },
 
     /// Validate generated Bazel files
@@ -44,6 +89,10 @@ enum Commands {
         /// Path to the project root
         #[arg(default_value = ".")]
         path: String,
+
+        /// Skip Bazel build validation (only checks workspace presence)
+        #[arg(long)]
+        unsafe_mode: bool,
     },
 }
 
@@ -72,16 +121,39 @@ fn main() -> Result<()> {
             path,
             from,
             dry_run,
+            cmake_build_dir,
+            cmake_config,
+            cmake_file_api_only,
+            build_generator,
+            bazelle_root,
+            bazelle_bin,
+            unsafe_mode,
         } => {
             tracing::info!("Migrating project at: {}", path);
             if dry_run {
                 tracing::info!("Dry run mode - no files will be written");
             }
-            rebaze_core::migrate(&path, from.as_deref(), dry_run)?;
+            let options = rebaze_core::MigrateOptions {
+                path: &path,
+                from: from.as_deref(),
+                dry_run,
+                cmake_build_dir: cmake_build_dir.as_deref(),
+                cmake_config: cmake_config.as_deref(),
+                cmake_file_api_only,
+                build_generator: build_generator.into(),
+                bazelle_root: bazelle_root.as_deref(),
+                bazelle_bin: bazelle_bin.as_deref(),
+                unsafe_mode,
+            };
+            rebaze_core::migrate(options)?;
         }
-        Commands::Validate { path } => {
+        Commands::Validate { path, unsafe_mode } => {
             tracing::info!("Validating Bazel files at: {}", path);
-            rebaze_core::validate(&path)?;
+            let options = rebaze_core::ValidateOptions {
+                path: &path,
+                unsafe_mode,
+            };
+            rebaze_core::validate(options)?;
         }
     }
 

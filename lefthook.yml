@@ -9,6 +9,26 @@ pre-commit:
       glob: "*.rs"
       run: cargo clippy --all-targets -- -D warnings
 
+    ruff-format:
+      glob: "*.py"
+      run: |
+        if command -v ruff >/dev/null 2>&1; then
+          files=$(git ls-files '*.py')
+          if [ -n "$files" ]; then
+            ruff format --check $files
+          fi
+        fi
+
+    ruff-check:
+      glob: "*.py"
+      run: |
+        if command -v ruff >/dev/null 2>&1; then
+          files=$(git ls-files '*.py')
+          if [ -n "$files" ]; then
+            ruff check $files
+          fi
+        fi
+
     bazel-build:
       glob: "*.{rs,bazel,bzl}"
       run: bazel build //... 2>/dev/null || true

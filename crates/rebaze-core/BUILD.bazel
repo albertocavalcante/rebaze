@@ -7,6 +7,7 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = [
         "//crates/rebaze-bazel",
+        "//crates/rebaze-cmake-file-api",
         "//crates/rebaze-gradle",
         "@crates//:anyhow",
         "@crates//:serde",

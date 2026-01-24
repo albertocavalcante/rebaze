@@ -25,7 +25,7 @@ fn cmake_file() -> impl Parser<char, Vec<Command>, Error = Simple<char>> {
 fn trivia() -> impl Parser<char, (), Error = Simple<char>> + Clone {
     let line_comment = just('#').then(none_of("\n\r").repeated()).ignored();
 
-    let bracket_comment = just("#[[").then(take_until(just("]]"))).ignored();
+    let bracket_comment = just('#').ignore_then(bracket_content()).ignored();
 
     choice((bracket_comment, line_comment, one_of(" \t\n\r").ignored()))
         .repeated()
@@ -37,7 +37,7 @@ fn arg_separator() -> impl Parser<char, (), Error = Simple<char>> + Clone {
     // CMake allows any whitespace (including newlines), semicolons, and comments between arguments
     let ws_or_semi = one_of(" \t\n\r;").ignored();
     let line_comment = just('#').then(none_of("\n\r").repeated()).ignored();
-    let bracket_comment = just("#[[").then(take_until(just("]]"))).ignored();
+    let bracket_comment = just('#').ignore_then(bracket_content()).ignored();
 
     choice((ws_or_semi, line_comment, bracket_comment))
         .repeated()
@@ -80,6 +80,8 @@ fn argument_list() -> impl Parser<char, Vec<Argument>, Error = Simple<char>> {
         .separated_by(arg_separator())
         .allow_leading()
         .allow_trailing()
+        .or_not()
+        .map(|args| args.unwrap_or_default())
 }
 
 /// Parser for a single argument (including nested parentheses with mixed arg types).
@@ -103,10 +105,10 @@ fn argument() -> impl Parser<char, Argument, Error = Simple<char>> {
                             match a {
                                 Argument::Quoted(_) => {
                                     content.push('"');
-                                    content.push_str(&a.to_string_lossy());
+                                    content.push_str(&a.to_string_with_vars());
                                     content.push('"');
                                 }
-                                _ => content.push_str(&a.to_string_lossy()),
+                                _ => content.push_str(&a.to_string_with_vars()),
                             }
                         }
                         content.push(')');
@@ -156,7 +158,11 @@ fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char
 
 /// Parser for bracket-quoted arguments: [[content]] or [=[content]=]
 fn bracket_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
-    // Match opening bracket with optional = signs
+    bracket_content().map(Argument::Bracket)
+}
+
+/// Parser for bracket-quoted content: [[content]] or [=[content]=]
+fn bracket_content() -> impl Parser<char, String, Error = Simple<char>> + Clone {
     just('[')
         .ignore_then(just('=').repeated().collect::<String>())
         .then_ignore(just('['))
@@ -165,7 +171,7 @@ fn bracket_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
             let close_pattern: String = format!("]{equals}]");
             take_until(just(close_pattern)).map(move |(chars, _): (Vec<char>, _)| {
                 let content: String = chars.into_iter().collect();
-                Argument::Bracket(content)
+                content
             })
         })
 }
@@ -338,6 +344,14 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_argument_list() {
+        let file = parse_ok("endif()");
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("endif"));
+        assert!(file.commands[0].arguments.is_empty());
+    }
+
+    #[test]
     fn test_simple_command() {
         let file = parse_ok("project(myapp)");
         assert_eq!(file.commands.len(), 1);
@@ -388,6 +402,7 @@ mod tests {
             "
             # This is a comment
             project(myapp)
+            #[=[ Bracket comment with equals ]=]
             # Another comment
         ",
         );

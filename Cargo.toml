@@ -4,6 +4,7 @@ members = [
     "crates/rebaze-cli",
     "crates/rebaze-core",
     "crates/rebaze-cmake",
+    "crates/rebaze-cmake-file-api",
     "crates/rebaze-gradle",
     "crates/rebaze-bazel",
 ]
@@ -43,9 +44,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Parsing
 chumsky = "0.9"
 ariadne = "0.4"
+cmake-file-api = "0.1.2"
 
 # Internal crates
 rebaze-cmake = { path = "crates/rebaze-cmake" }
+rebaze-cmake-file-api = { path = "crates/rebaze-cmake-file-api" }
 rebaze-core = { path = "crates/rebaze-core" }
 rebaze-gradle = { path = "crates/rebaze-gradle" }
 rebaze-bazel = { path = "crates/rebaze-bazel" }

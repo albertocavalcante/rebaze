@@ -26,6 +26,7 @@ crate.from_cargo(
         "//:Cargo.toml",
         "//crates/rebaze-cli:Cargo.toml",
         "//crates/rebaze-core:Cargo.toml",
+        "//crates/rebaze-cmake-file-api:Cargo.toml",
         "//crates/rebaze-gradle:Cargo.toml",
         "//crates/rebaze-bazel:Cargo.toml",
     ],

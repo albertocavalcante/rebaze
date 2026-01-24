@@ -104,6 +104,25 @@ impl Argument {
                 .collect(),
         }
     }
+
+    /// Get the argument as a string, preserving variable references.
+    #[must_use]
+    pub fn to_string_with_vars(&self) -> String {
+        match self {
+            Self::Bracket(s) => s.clone(),
+            Self::Quoted(v) | Self::Unquoted(v) => v
+                .parts
+                .iter()
+                .map(|p| match p {
+                    ArgumentPart::Text(s) => s.clone(),
+                    ArgumentPart::Variable(s) => format!("${{{s}}}"),
+                    ArgumentPart::EnvVariable(s) => format!("$ENV{{{s}}}"),
+                    ArgumentPart::CacheVariable(s) => format!("$CACHE{{{s}}}"),
+                    ArgumentPart::GeneratorExpr(s) => format!("$<{s}>"),
+                })
+                .collect(),
+        }
+    }
 }
 
 impl ArgumentValue {
@@ -162,6 +181,7 @@ mod tests {
         });
         assert_eq!(arg_with_var.as_literal(), None);
         assert_eq!(arg_with_var.to_string_lossy(), "prefix_");
+        assert_eq!(arg_with_var.to_string_with_vars(), "prefix_${VAR}");
     }
 
     #[test]
