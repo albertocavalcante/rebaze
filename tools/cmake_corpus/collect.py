@@ -34,6 +34,16 @@ class SearchItem:
 
 RATE_LIMIT_WAIT = False
 RATE_LIMIT_SLEEP = 0.0
+RATE_LIMIT_MIN_INTERVAL = 10.0
+RATE_LIMIT_LAST_CHECK = 0.0
+RATE_LIMIT_LAST_DATA: dict | None = None
+
+SEARCH_CACHE_ENABLED = True
+SEARCH_CACHE_TTL_SECONDS = 0
+SEARCH_CACHE_PATH: Path | None = None
+SEARCH_CACHE: dict[str, dict] = {}
+SEARCH_CACHE_HITS = 0
+SEARCH_CACHE_MISSES = 0
 
 DEFAULT_DENY_LICENSES = {
     "AGPL-3.0",
@@ -54,6 +64,8 @@ DEFAULT_CONFIG = {
     "skip_unknown_license": False,
     "exact_basename": True,
     "filter_invalid": True,
+    "cache_enabled": True,
+    "cache_ttl_seconds": 86_400,
 }
 
 
@@ -92,7 +104,39 @@ def default_corpus_dir() -> Path:
     return Path(tempfile.gettempdir()) / "rebaze-cmake-corpus"
 
 
+def cache_get(key: str) -> dict | None:
+    global SEARCH_CACHE_HITS
+    global SEARCH_CACHE_MISSES
+    if not SEARCH_CACHE_ENABLED:
+        return None
+    entry = SEARCH_CACHE.get(key)
+    if not entry:
+        SEARCH_CACHE_MISSES += 1
+        return None
+    ts = entry.get("ts")
+    data = entry.get("data")
+    if not isinstance(ts, (int, float)) or data is None:
+        SEARCH_CACHE_MISSES += 1
+        return None
+    if SEARCH_CACHE_TTL_SECONDS > 0:
+        if time.time() - float(ts) > SEARCH_CACHE_TTL_SECONDS:
+            SEARCH_CACHE_MISSES += 1
+            return None
+    SEARCH_CACHE_HITS += 1
+    return data
+
+
+def cache_set(key: str, data: dict) -> None:
+    if not SEARCH_CACHE_ENABLED:
+        return
+    SEARCH_CACHE[key] = {"ts": int(time.time()), "data": data}
+
+
 def gh_search(query: str, page: int, per_page: int) -> dict:
+    cache_key = f"{query}|page={page}|per_page={per_page}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     while True:
         ensure_search_budget(RATE_LIMIT_WAIT, RATE_LIMIT_SLEEP)
         try:
@@ -111,7 +155,9 @@ def gh_search(query: str, page: int, per_page: int) -> dict:
                     f"page={page}",
                 ]
             )
-            return json.loads(result.stdout)
+            data = json.loads(result.stdout)
+            cache_set(cache_key, data)
+            return data
         except subprocess.CalledProcessError as exc:
             if RATE_LIMIT_WAIT and is_rate_limit_error(exc):
                 ensure_search_budget(True, RATE_LIMIT_SLEEP)
@@ -142,7 +188,16 @@ def gh_rate_limit() -> dict:
 
 
 def ensure_search_budget(wait: bool, sleep_seconds: float) -> None:
-    data = gh_rate_limit()
+    global RATE_LIMIT_LAST_CHECK
+    global RATE_LIMIT_LAST_DATA
+
+    now = time.time()
+    if RATE_LIMIT_LAST_DATA and now - RATE_LIMIT_LAST_CHECK < RATE_LIMIT_MIN_INTERVAL:
+        data = RATE_LIMIT_LAST_DATA
+    else:
+        data = gh_rate_limit()
+        RATE_LIMIT_LAST_DATA = data
+        RATE_LIMIT_LAST_CHECK = now
     resources = data.get("resources", {})
     search = resources.get("code_search") or resources.get("search", {})
     remaining = int(search.get("remaining", 0))
@@ -624,6 +679,15 @@ def main() -> int:
         default=None,
         help="TOML file listing repos/paths to skip.",
     )
+    parser.add_argument("--cache-ttl", type=int, default=None)
+    parser.add_argument("--no-cache", dest="cache_enabled", action="store_false")
+    parser.add_argument("--cache", dest="cache_enabled", action="store_true")
+    parser.add_argument(
+        "--search-cache",
+        type=Path,
+        default=None,
+        help="Path to store GitHub search results cache.",
+    )
     args = parser.parse_args()
 
     base_dir = config_path.parent if config_path else None
@@ -686,9 +750,23 @@ def main() -> int:
         args.filter_invalid = bool(
             cfg("filter_invalid", DEFAULT_CONFIG["filter_invalid"])
         )
+    if args.cache_enabled is None:
+        args.cache_enabled = bool(
+            cfg("cache_enabled", DEFAULT_CONFIG["cache_enabled"])
+        )
+    if args.cache_ttl is None:
+        args.cache_ttl = normalize_optional_int(
+            cfg("cache_ttl_seconds", DEFAULT_CONFIG["cache_ttl_seconds"])
+        )
+    if args.cache_ttl is None:
+        args.cache_ttl = DEFAULT_CONFIG["cache_ttl_seconds"]
     skiplist_path = args.skiplist
     if skiplist_path is None:
         skiplist_path = normalize_optional_path(cfg("skiplist", None), base_dir)
+
+    search_cache_path = args.search_cache
+    if search_cache_path is None:
+        search_cache_path = normalize_optional_path(cfg("search_cache", None), base_dir)
 
     size_min = normalize_optional_int(args.size_min)
     if size_min is None:
@@ -707,8 +785,31 @@ def main() -> int:
 
     global RATE_LIMIT_WAIT
     global RATE_LIMIT_SLEEP
+    global SEARCH_CACHE_ENABLED
+    global SEARCH_CACHE_TTL_SECONDS
+    global SEARCH_CACHE_PATH
+    global SEARCH_CACHE
+    global SEARCH_CACHE_HITS
+    global SEARCH_CACHE_MISSES
     RATE_LIMIT_WAIT = args.wait
     RATE_LIMIT_SLEEP = args.sleep
+    SEARCH_CACHE_ENABLED = args.cache_enabled
+    SEARCH_CACHE_TTL_SECONDS = args.cache_ttl
+    if search_cache_path is None:
+        SEARCH_CACHE_PATH = workdir / "search_cache.json"
+    else:
+        SEARCH_CACHE_PATH = normalize_optional_path(search_cache_path, base_dir)
+    SEARCH_CACHE = {}
+    SEARCH_CACHE_HITS = 0
+    SEARCH_CACHE_MISSES = 0
+
+    if SEARCH_CACHE_ENABLED and SEARCH_CACHE_PATH and SEARCH_CACHE_PATH.exists():
+        try:
+            SEARCH_CACHE = json.loads(
+                SEARCH_CACHE_PATH.read_text(encoding="utf-8")
+            )
+        except json.JSONDecodeError:
+            SEARCH_CACHE = {}
 
     if args.count <= 0:
         print("count must be > 0", file=sys.stderr)
@@ -821,6 +922,20 @@ def main() -> int:
         print("Skipped by skiplist:")
         for name, count in sorted(skipped_by_skiplist.items()):
             print(f"  {name}: {count}")
+
+    if SEARCH_CACHE_ENABLED and SEARCH_CACHE_PATH:
+        SEARCH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SEARCH_CACHE_PATH.write_text(
+            json.dumps(SEARCH_CACHE, indent=2), encoding="utf-8"
+        )
+        print(
+            "Search cache: hits {}, misses {}, entries {}, path {}".format(
+                SEARCH_CACHE_HITS,
+                SEARCH_CACHE_MISSES,
+                len(SEARCH_CACHE),
+                SEARCH_CACHE_PATH,
+            )
+        )
     return 0
 
 

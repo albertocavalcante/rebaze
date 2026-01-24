@@ -69,6 +69,10 @@ The collector also applies a lightweight heuristic to skip files that do not loo
 like CMake (first non-trivia token must be a command name followed by `(`). Disable
 with `--no-filter-invalid` if you need raw results.
 
+Search results are cached locally to reduce GitHub API usage. Configure with:
+- `cache_enabled`, `cache_ttl_seconds`, and `search_cache`
+- CLI: `--no-cache`, `--cache-ttl`, `--search-cache`
+
 Skiplist support:
 - `tools/cmake_corpus/skiplist.toml` lets you skip known-bad repos/paths.
 - Entries can be `owner/repo/path` or a GitHub file URL.

@@ -20,6 +20,10 @@ deny_license = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 skip_unknown_license = false
 exact_basename = true
 filter_invalid = true
+# Cache settings for GitHub search results.
+cache_enabled = true
+cache_ttl_seconds = 86400
+search_cache = ""
 # Skiplist TOML with `repos`/`paths` entries.
 skiplist = "skiplist.toml"
 license_cache = ""
