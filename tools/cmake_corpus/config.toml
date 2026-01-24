@@ -3,7 +3,9 @@
 # then the OS temp directory.
 corpus_dir = ""
 count = 100
-start_year = 2010
+# CMakeLists size filters (bytes). Leave empty to auto-expand until enough results.
+size_min = 0
+size_max = ""
 # Optional overrides (leave empty to use corpus_dir).
 workdir = ""
 out = ""
@@ -16,4 +18,8 @@ sleep = 0.0
 allow_license = []
 deny_license = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 skip_unknown_license = false
+exact_basename = true
+filter_invalid = true
+# Skiplist TOML with `repos`/`paths` entries.
+skiplist = "skiplist.toml"
 license_cache = ""

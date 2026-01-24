@@ -1,0 +1,11 @@
+# Skiplist for known-bad corpus entries.
+# Use repo/path entries or GitHub file URLs.
+
+repos = [
+  # "owner/repo",
+]
+
+paths = [
+  # "owner/repo/path/to/CMakeLists.txt",
+  # "https://github.com/owner/repo/blob/<sha>/path/to/CMakeLists.txt",
+]

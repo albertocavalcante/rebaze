@@ -50,7 +50,7 @@ uv run tools/cmake_corpus/collect.py --allow-license MIT --allow-license Apache-
 
 ## Config file
 
-`tools/cmake_corpus/config.toml` controls defaults like count, licenses, and rate limit settings.
+`tools/cmake_corpus/config.toml` controls defaults like count, licenses, size ranges, and rate limit settings.
 CLI flags override the config.
 
 If no corpus directory is configured, the default is:
@@ -58,6 +58,21 @@ If no corpus directory is configured, the default is:
 - otherwise a repo-local `.rebaze/cmake-corpus` if a repo root is found
 - otherwise `XDG_CACHE_HOME/rebaze/cmake-corpus` if set
 - otherwise the OS temp directory + `rebaze-cmake-corpus`
+
+If `size_max` is empty, the script auto-expands the size range until it can satisfy
+the requested count (or no larger files exist).
+
+By default, only exact `CMakeLists.txt` basenames are accepted (case-insensitive).
+Use `--allow-suffix` to include files that merely contain `CMakeLists.txt` in the name.
+
+The collector also applies a lightweight heuristic to skip files that do not look
+like CMake (first non-trivia token must be a command name followed by `(`). Disable
+with `--no-filter-invalid` if you need raw results.
+
+Skiplist support:
+- `tools/cmake_corpus/skiplist.toml` lets you skip known-bad repos/paths.
+- Entries can be `owner/repo/path` or a GitHub file URL.
+- Override with `--skiplist /path/to/skiplist.toml`.
 
 To use a different config file:
 
@@ -75,5 +90,6 @@ Environment overrides:
 ## Notes
 
 - Default search is `filename:CMakeLists.txt` across GitHub.
-- Adjust `--start-year` or `--query-extra` if you need more coverage.
+- Use `--size-min`/`--size-max` (or config) to control file size ranges.
+- Adjust `--query-extra` if you need more coverage.
 - Use `--no-fetch` to only build the manifest without cloning repos.

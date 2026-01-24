@@ -12,7 +12,6 @@ those files for parser testing.
 from __future__ import annotations
 
 import argparse
-import calendar
 import json
 import os
 import subprocess
@@ -22,9 +21,8 @@ import tomllib
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 
 
 @dataclass(frozen=True)
@@ -45,7 +43,6 @@ DEFAULT_DENY_LICENSES = {
 
 DEFAULT_CONFIG = {
     "count": 100,
-    "start_year": 2010,
     "max_per_repo": 3,
     "per_page": 100,
     "query_extra": "",
@@ -55,11 +52,19 @@ DEFAULT_CONFIG = {
     "allow_license": [],
     "deny_license": sorted(DEFAULT_DENY_LICENSES),
     "skip_unknown_license": False,
+    "exact_basename": True,
+    "filter_invalid": True,
 }
 
 
 def run(cmd: List[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, check=True, text=True, stdout=subprocess.PIPE)
+    return subprocess.run(
+        cmd,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -88,33 +93,47 @@ def default_corpus_dir() -> Path:
 
 
 def gh_search(query: str, page: int, per_page: int) -> dict:
-    ensure_search_budget(RATE_LIMIT_WAIT, RATE_LIMIT_SLEEP)
-    result = run(
-        [
-            "gh",
-            "api",
-            "-X",
-            "GET",
-            "/search/code",
-            "-f",
-            f"q={query}",
-            "-f",
-            f"per_page={per_page}",
-            "-f",
-            f"page={page}",
-        ]
-    )
-    return json.loads(result.stdout)
+    while True:
+        ensure_search_budget(RATE_LIMIT_WAIT, RATE_LIMIT_SLEEP)
+        try:
+            result = run(
+                [
+                    "gh",
+                    "api",
+                    "-X",
+                    "GET",
+                    "/search/code",
+                    "-f",
+                    f"q={query}",
+                    "-f",
+                    f"per_page={per_page}",
+                    "-f",
+                    f"page={page}",
+                ]
+            )
+            return json.loads(result.stdout)
+        except subprocess.CalledProcessError as exc:
+            if RATE_LIMIT_WAIT and is_rate_limit_error(exc):
+                ensure_search_budget(True, RATE_LIMIT_SLEEP)
+                continue
+            raise
 
 
 def gh_repo_license(repo: str) -> str:
-    result = run(["gh", "api", f"/repos/{repo}"])
-    data = json.loads(result.stdout)
-    license_info = data.get("license")
-    if not license_info:
-        return "UNKNOWN"
-    spdx = license_info.get("spdx_id")
-    return spdx or "UNKNOWN"
+    while True:
+        try:
+            result = run(["gh", "api", f"/repos/{repo}"])
+        except subprocess.CalledProcessError as exc:
+            if RATE_LIMIT_WAIT and is_rate_limit_error(exc):
+                ensure_search_budget(True, RATE_LIMIT_SLEEP)
+                continue
+            raise
+        data = json.loads(result.stdout)
+        license_info = data.get("license")
+        if not license_info:
+            return "UNKNOWN"
+        spdx = license_info.get("spdx_id")
+        return spdx or "UNKNOWN"
 
 
 def gh_rate_limit() -> dict:
@@ -124,7 +143,8 @@ def gh_rate_limit() -> dict:
 
 def ensure_search_budget(wait: bool, sleep_seconds: float) -> None:
     data = gh_rate_limit()
-    search = data.get("resources", {}).get("search", {})
+    resources = data.get("resources", {})
+    search = resources.get("code_search") or resources.get("search", {})
     remaining = int(search.get("remaining", 0))
     reset = int(search.get("reset", 0))
     if remaining > 0:
@@ -140,57 +160,45 @@ def ensure_search_budget(wait: bool, sleep_seconds: float) -> None:
         time.sleep(delay)
 
 
+def is_rate_limit_error(exc: subprocess.CalledProcessError) -> bool:
+    stderr = (exc.stderr or "").lower()
+    stdout = (exc.stdout or "").lower()
+    return "rate limit" in stderr or "rate limit" in stdout
+
+
 def total_count_for(query: str) -> int:
     data = gh_search(query, page=1, per_page=1)
     return int(data.get("total_count", 0))
 
-
-def iter_ranges(start_year: int) -> Iterable[tuple[date, date]]:
-    today = date.today()
-    for year in range(today.year, start_year - 1, -1):
-        start = date(year, 1, 1)
-        end = date(year, 12, 31)
-        yield start, end
-
-
-def split_range(start: date, end: date) -> Iterable[tuple[date, date]]:
-    if start == end:
-        yield start, end
-        return
-    mid = start + (end - start) // 2
-    yield start, mid
-    yield mid + timedelta(days=1), end
-
-
-def iter_months(start: date, end: date) -> Iterable[tuple[date, date]]:
-    cursor = date(start.year, start.month, 1)
-    while cursor <= end:
-        last_day = calendar.monthrange(cursor.year, cursor.month)[1]
-        month_end = date(cursor.year, cursor.month, last_day)
-        yield cursor, month_end
-        if cursor.month == 12:
-            cursor = date(cursor.year + 1, 1, 1)
-        else:
-            cursor = date(cursor.year, cursor.month + 1, 1)
-
-
-def query_for_range(start: date, end: date, extra: str) -> str:
-    date_range = f"created:{start.isoformat()}..{end.isoformat()}"
-    parts = ["filename:CMakeLists.txt", date_range]
+def query_for_size_range(min_size: int, max_size: int, extra: str) -> str:
+    size_range = f"size:{min_size}..{max_size}"
+    parts = ["filename:CMakeLists.txt", size_range]
     if extra:
         parts.append(extra)
     return " ".join(parts)
 
 
-def fetch_items_for_range(
-    start: date,
-    end: date,
+def query_for_min_size(min_size: int, extra: str) -> str:
+    parts = ["filename:CMakeLists.txt", f"size:>{min_size}"]
+    if extra:
+        parts.append(extra)
+    return " ".join(parts)
+
+
+def fetch_items_for_size_range(
+    min_size: int,
+    max_size: int,
     extra: str,
     license_cache: dict[str, str],
     allow_licenses: set[str],
     deny_licenses: set[str],
     skip_unknown_license: bool,
     skipped_by_license: dict[str, int],
+    exact_basename: bool,
+    skipped_by_name: dict[str, int],
+    skip_repos: set[str],
+    skip_paths: set[str],
+    skipped_by_skiplist: dict[str, int],
     selected: List[SearchItem],
     seen: set[tuple[str, str]],
     per_repo: dict[str, int],
@@ -198,30 +206,58 @@ def fetch_items_for_range(
     target_count: int,
     per_page: int,
 ) -> None:
-    query = query_for_range(start, end, extra)
+    if min_size > max_size:
+        return
+    query = query_for_size_range(min_size, max_size, extra)
     total = total_count_for(query)
     if total == 0:
         return
-    if total > 1000 and (end - start).days > 0:
-        for sub_start, sub_end in split_range(start, end):
-            fetch_items_for_range(
-                sub_start,
-                sub_end,
-                extra,
-                license_cache,
-                allow_licenses,
-                deny_licenses,
-                skip_unknown_license,
-                skipped_by_license,
-                selected,
-                seen,
-                per_repo,
-                max_per_repo,
-                target_count,
-                per_page,
-            )
-            if len(selected) >= target_count:
-                return
+    if total > 1000 and min_size < max_size:
+        mid = min_size + (max_size - min_size) // 2
+        fetch_items_for_size_range(
+            min_size,
+            mid,
+            extra,
+            license_cache,
+            allow_licenses,
+            deny_licenses,
+            skip_unknown_license,
+            skipped_by_license,
+            exact_basename,
+            skipped_by_name,
+            skip_repos,
+            skip_paths,
+            skipped_by_skiplist,
+            selected,
+            seen,
+            per_repo,
+            max_per_repo,
+            target_count,
+            per_page,
+        )
+        if len(selected) >= target_count:
+            return
+        fetch_items_for_size_range(
+            mid + 1,
+            max_size,
+            extra,
+            license_cache,
+            allow_licenses,
+            deny_licenses,
+            skip_unknown_license,
+            skipped_by_license,
+            exact_basename,
+            skipped_by_name,
+            skip_repos,
+            skip_paths,
+            skipped_by_skiplist,
+            selected,
+            seen,
+            per_repo,
+            max_per_repo,
+            target_count,
+            per_page,
+        )
         return
 
     page = 1
@@ -235,6 +271,16 @@ def fetch_items_for_range(
             path = item["path"]
             key = (repo, path)
             if key in seen:
+                continue
+            if exact_basename and not is_cmakelists_path(path):
+                skipped_by_name["basename_mismatch"] += 1
+                continue
+            if repo in skip_repos:
+                skipped_by_skiplist["repo"] += 1
+                continue
+            repo_path = f"{repo}/{path}"
+            if repo_path in skip_paths:
+                skipped_by_skiplist["path"] += 1
                 continue
             if per_repo[repo] >= max_per_repo:
                 continue
@@ -291,6 +337,13 @@ def load_config(path: Path | None) -> dict:
     return data
 
 
+def read_text_lossy(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="replace")
+
+
 def ensure_list(value: object) -> list[str]:
     if value is None:
         return []
@@ -301,18 +354,147 @@ def ensure_list(value: object) -> list[str]:
     raise RuntimeError("Expected a list or string for license configuration.")
 
 
-def normalize_optional_path(value: object) -> Path | None:
+def normalize_optional_path(value: object, base: Path | None = None) -> Path | None:
     if value is None:
         return None
     if isinstance(value, Path):
-        return value
+        path = value
+        if base and not path.is_absolute():
+            return base / path
+        return path
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:
             return None
         expanded = os.path.expandvars(stripped)
-        return Path(expanded).expanduser()
+        path = Path(expanded).expanduser()
+        if base and not path.is_absolute():
+            return base / path
+        return path
     raise RuntimeError("Expected a string path for configuration.")
+
+
+def normalize_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise RuntimeError("Expected an integer for size configuration.")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return int(stripped)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Expected an integer for size configuration, got '{value}'."
+            ) from exc
+    raise RuntimeError("Expected an integer for size configuration.")
+
+
+def resolve_size_max(min_size: int, target_count: int, extra: str) -> int:
+    candidate = max(min_size + 1, 1024)
+    while True:
+        total = total_count_for(query_for_size_range(min_size, candidate, extra))
+        if total >= target_count:
+            return candidate
+        overflow = total_count_for(query_for_min_size(candidate, extra))
+        if overflow == 0:
+            return candidate
+        candidate *= 2
+
+
+def is_cmakelists_path(path: str) -> bool:
+    name = Path(path).name
+    return name.casefold() == "cmakelists.txt"
+
+
+def skip_trivia(src: str, start: int = 0) -> int:
+    idx = start
+    length = len(src)
+    while idx < length:
+        ch = src[idx]
+        if ch == "\ufeff":
+            idx += 1
+            continue
+        if ch in " \t\r\n":
+            idx += 1
+            continue
+        if ch != "#":
+            return idx
+        if idx + 1 < length and src[idx + 1] == "[":
+            eq_idx = idx + 2
+            while eq_idx < length and src[eq_idx] == "=":
+                eq_idx += 1
+            if eq_idx < length and src[eq_idx] == "[":
+                close = "]" + ("=" * (eq_idx - (idx + 2))) + "]"
+                end = src.find(close, eq_idx + 1)
+                if end == -1:
+                    return length
+                idx = end + len(close)
+                continue
+        newline = src.find("\n", idx + 1)
+        if newline == -1:
+            return length
+        idx = newline + 1
+    return length
+
+
+def looks_like_cmake(src: str) -> bool:
+    idx = skip_trivia(src)
+    if idx >= len(src):
+        return True
+    ch = src[idx]
+    if not (ch.isalpha() or ch == "_"):
+        return False
+    end = idx + 1
+    while end < len(src):
+        if src[end].isalnum() or src[end] == "_":
+            end += 1
+            continue
+        break
+    end = skip_trivia(src, end)
+    return end < len(src) and src[end] == "("
+
+
+def normalize_repo_entry(entry: str) -> str:
+    raw = entry.strip().strip("/")
+    prefix = "https://github.com/"
+    if raw.startswith(prefix):
+        parts = raw.split("/")
+        if len(parts) >= 5:
+            return f"{parts[3]}/{parts[4]}"
+    return raw
+
+
+def normalize_path_entry(entry: str) -> str:
+    raw = entry.strip()
+    if not raw:
+        return raw
+    prefix = "https://github.com/"
+    if raw.startswith(prefix):
+        parts = raw.split("/")
+        if len(parts) >= 7 and parts[5] == "blob":
+            return f"{parts[3]}/{parts[4]}/" + "/".join(parts[6:])
+    return raw.lstrip("/")
+
+
+def load_skiplist(path: Path | None) -> tuple[set[str], set[str]]:
+    if not path or not path.exists():
+        return set(), set()
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise RuntimeError(f"Invalid TOML in {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Invalid skiplist in {path}: expected a TOML table")
+    repos = {normalize_repo_entry(item) for item in ensure_list(data.get("repos"))}
+    paths = {normalize_path_entry(item) for item in ensure_list(data.get("paths"))}
+    repos.discard("")
+    paths.discard("")
+    return repos, paths
 
 
 def main() -> int:
@@ -352,9 +534,8 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--count", type=int, default=cfg("count", DEFAULT_CONFIG["count"]))
-    parser.add_argument(
-        "--start-year", type=int, default=cfg("start_year", DEFAULT_CONFIG["start_year"])
-    )
+    parser.add_argument("--size-min", type=int, default=None)
+    parser.add_argument("--size-max", type=int, default=None)
     parser.add_argument(
         "--workdir",
         type=Path,
@@ -411,11 +592,46 @@ def main() -> int:
         type=Path,
         default=None,
     )
+    parser.add_argument(
+        "--exact-basename",
+        dest="exact_basename",
+        action="store_true",
+        default=None,
+        help="Only include paths whose basename is CMakeLists.txt (case-insensitive).",
+    )
+    parser.add_argument(
+        "--allow-suffix",
+        dest="exact_basename",
+        action="store_false",
+        help="Allow paths that merely contain CMakeLists.txt in the name.",
+    )
+    parser.add_argument(
+        "--filter-invalid",
+        dest="filter_invalid",
+        action="store_true",
+        default=None,
+        help="Skip files that do not look like CMake based on a lightweight heuristic.",
+    )
+    parser.add_argument(
+        "--no-filter-invalid",
+        dest="filter_invalid",
+        action="store_false",
+        help="Do not skip files that fail the heuristic.",
+    )
+    parser.add_argument(
+        "--skiplist",
+        type=Path,
+        default=None,
+        help="TOML file listing repos/paths to skip.",
+    )
     args = parser.parse_args()
+
+    base_dir = config_path.parent if config_path else None
 
     corpus_dir_cli = args.corpus_dir
     corpus_dir_cfg = normalize_optional_path(
-        cfg("corpus_dir", cfg("artifacts_dir", None))
+        cfg("corpus_dir", cfg("artifacts_dir", None)),
+        base_dir,
     )
     corpus_dir = (
         normalize_optional_path(corpus_dir_cli)
@@ -428,7 +644,7 @@ def main() -> int:
     elif corpus_dir_cli is not None:
         workdir = corpus_dir
     else:
-        workdir = normalize_optional_path(cfg("workdir", None)) or corpus_dir
+        workdir = normalize_optional_path(cfg("workdir", None), base_dir) or corpus_dir
     if workdir is None:
         workdir = default_corpus_dir()
 
@@ -437,7 +653,7 @@ def main() -> int:
     elif corpus_dir_cli is not None:
         out_path = None
     else:
-        out_path = normalize_optional_path(cfg("out", None))
+        out_path = normalize_optional_path(cfg("out", None), base_dir)
     if out_path is None:
         out_path = workdir / "files.txt"
 
@@ -446,7 +662,7 @@ def main() -> int:
     elif corpus_dir_cli is not None:
         license_cache_path = None
     else:
-        license_cache_path = normalize_optional_path(cfg("license_cache", None))
+        license_cache_path = normalize_optional_path(cfg("license_cache", None), base_dir)
     if license_cache_path is None:
         license_cache_path = workdir / "license_cache.json"
 
@@ -462,6 +678,32 @@ def main() -> int:
         args.allow_license = ensure_list(cfg("allow_license", []))
     if args.deny_license is None:
         args.deny_license = ensure_list(cfg("deny_license", DEFAULT_CONFIG["deny_license"]))
+    if args.exact_basename is None:
+        args.exact_basename = bool(
+            cfg("exact_basename", DEFAULT_CONFIG["exact_basename"])
+        )
+    if args.filter_invalid is None:
+        args.filter_invalid = bool(
+            cfg("filter_invalid", DEFAULT_CONFIG["filter_invalid"])
+        )
+    skiplist_path = args.skiplist
+    if skiplist_path is None:
+        skiplist_path = normalize_optional_path(cfg("skiplist", None), base_dir)
+
+    size_min = normalize_optional_int(args.size_min)
+    if size_min is None:
+        size_min = normalize_optional_int(cfg("size_min", 0)) or 0
+    size_max = normalize_optional_int(args.size_max)
+    if size_max is None:
+        size_max = normalize_optional_int(cfg("size_max", None))
+    if size_min < 0:
+        print("size_min must be >= 0", file=sys.stderr)
+        return 2
+    if size_max is not None and size_max < size_min:
+        print("size_max must be >= size_min", file=sys.stderr)
+        return 2
+    if size_max is None:
+        size_max = resolve_size_max(size_min, args.count, args.query_extra)
 
     global RATE_LIMIT_WAIT
     global RATE_LIMIT_SLEEP
@@ -479,6 +721,11 @@ def main() -> int:
     allow_licenses = set(args.allow_license)
     deny_licenses = set(args.deny_license)
     skipped_by_license: dict[str, int] = defaultdict(int)
+    skipped_by_name: dict[str, int] = defaultdict(int)
+    skipped_by_content: dict[str, int] = defaultdict(int)
+    skipped_by_skiplist: dict[str, int] = defaultdict(int)
+
+    skip_repos, skip_paths = load_skiplist(skiplist_path)
 
     license_cache: dict[str, str] = {}
     if license_cache_path.exists():
@@ -493,28 +740,30 @@ def main() -> int:
     seen: set[tuple[str, str]] = set()
     per_repo: dict[str, int] = defaultdict(int)
 
-    for start, end in iter_ranges(args.start_year):
-        fetch_items_for_range(
-            start,
-            end,
-            args.query_extra,
-            license_cache,
-            allow_licenses,
-            deny_licenses,
-            args.skip_unknown_license,
-            skipped_by_license,
-            selected,
-            seen,
-            per_repo,
-            args.max_per_repo,
-            args.count,
-            args.per_page,
-        )
-        if len(selected) >= args.count:
-            break
+    fetch_items_for_size_range(
+        size_min,
+        size_max,
+        args.query_extra,
+        license_cache,
+        allow_licenses,
+        deny_licenses,
+        args.skip_unknown_license,
+        skipped_by_license,
+        args.exact_basename,
+        skipped_by_name,
+        skip_repos,
+        skip_paths,
+        skipped_by_skiplist,
+        selected,
+        seen,
+        per_repo,
+        args.max_per_repo,
+        args.count,
+        args.per_page,
+    )
 
     if not selected:
-        print("No files found. Try adjusting --start-year or --query-extra.", file=sys.stderr)
+        print("No files found. Try adjusting --size-min/--size-max or --query-extra.", file=sys.stderr)
         return 1
 
     license_cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -542,6 +791,11 @@ def main() -> int:
         for path in paths:
             file_path = repo_dir / path
             if file_path.exists():
+                if args.filter_invalid:
+                    src = read_text_lossy(file_path)
+                    if not looks_like_cmake(src):
+                        skipped_by_content["non_cmake"] += 1
+                        continue
                 file_list.append(str(file_path))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -555,6 +809,18 @@ def main() -> int:
         print("Skipped by license:")
         for lic, count in sorted(skipped_by_license.items()):
             print(f"  {lic}: {count}")
+    if skipped_by_name:
+        print("Skipped by name:")
+        for name, count in sorted(skipped_by_name.items()):
+            print(f"  {name}: {count}")
+    if skipped_by_content:
+        print("Skipped by content:")
+        for name, count in sorted(skipped_by_content.items()):
+            print(f"  {name}: {count}")
+    if skipped_by_skiplist:
+        print("Skipped by skiplist:")
+        for name, count in sorted(skipped_by_skiplist.items()):
+            print(f"  {name}: {count}")
     return 0
 
 

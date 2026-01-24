@@ -18,7 +18,10 @@ pub fn parse(src: &str) -> (Option<CMakeFile>, Vec<Simple<char>>) {
 
 /// Parser for a complete CMake file.
 fn cmake_file() -> impl Parser<char, Vec<Command>, Error = Simple<char>> {
-    command().padded_by(trivia()).repeated().then_ignore(end())
+    trivia()
+        .ignore_then(command().padded_by(trivia()).repeated())
+        .then_ignore(trivia())
+        .then_ignore(end())
 }
 
 /// Parser for trivia (whitespace and comments).
@@ -407,6 +410,17 @@ mod tests {
         ",
         );
         assert_eq!(file.commands.len(), 1);
+    }
+
+    #[test]
+    fn test_comment_only_file() {
+        // Example: https://github.com/ggerganov/ggwave/blob/master/examples/rp2040-rx/CMakeLists.txt
+        let file = parse_ok(
+            r#"
+# rp2040-rx
+"#,
+        );
+        assert!(file.commands.is_empty());
     }
 
     #[test]

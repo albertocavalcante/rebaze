@@ -15,6 +15,12 @@ fn main() -> anyhow::Result<()> {
     let max_errors = arg_value(&args, "--max-errors")
         .and_then(|val| val.parse::<usize>().ok())
         .unwrap_or(20);
+    let max_empty = arg_value(&args, "--max-empty")
+        .and_then(|val| val.parse::<usize>().ok())
+        .unwrap_or(10);
+    let max_success = arg_value(&args, "--max-success")
+        .and_then(|val| val.parse::<usize>().ok())
+        .unwrap_or(10);
 
     let content = fs::read_to_string(&list_path)
         .map_err(|err| anyhow::anyhow!("Failed to read {}: {err}", list_path.display()))?;
@@ -28,40 +34,87 @@ fn main() -> anyhow::Result<()> {
         files.truncate(limit);
     }
 
-    let mut ok = 0usize;
-    let mut failures = Vec::new();
+    let mut read_errors = Vec::new();
+    let mut parse_errors = Vec::new();
+    let mut empty_files = Vec::new();
+    let mut non_empty_count = 0usize;
+    let mut sample_success = Vec::new();
 
     for path in files {
         let src = match fs::read_to_string(path) {
             Ok(src) => src,
             Err(err) => {
-                failures.push(format!("{path}: read error: {err}"));
+                read_errors.push(format!("{path}: read error: {err}"));
                 continue;
             }
         };
 
         match rebaze_cmake::parse_source(&src) {
-            Ok(_) => ok += 1,
-            Err(err) => failures.push(format!("{path}: {err}")),
+            Ok(file) => {
+                if file.commands.is_empty() {
+                    empty_files.push(path.to_string());
+                } else {
+                    non_empty_count += 1;
+                    if sample_success.len() < max_success {
+                        sample_success.push(path.to_string());
+                    }
+                }
+            }
+            Err(err) => parse_errors.push(format!("{path}: {err}")),
         }
     }
 
-    let total = ok + failures.len();
-    println!("Parsed: {ok}/{total}");
-    println!("Failed: {}", failures.len());
+    let total = read_errors.len() + parse_errors.len() + empty_files.len() + non_empty_count;
+    let read_ok = total.saturating_sub(read_errors.len());
+    let parsed_ok = read_ok.saturating_sub(parse_errors.len());
+    println!("Total files: {total}");
+    println!("Read ok: {read_ok}, read errors: {}", read_errors.len());
+    println!(
+        "Parsed ok: {parsed_ok} (non-empty: {non_empty_count}, empty: {})",
+        empty_files.len()
+    );
+    println!("Parse errors: {}", parse_errors.len());
 
-    for err in failures.iter().take(max_errors) {
+    for err in read_errors
+        .iter()
+        .chain(parse_errors.iter())
+        .take(max_errors)
+    {
         println!("  - {err}");
     }
 
-    if failures.len() > max_errors {
-        println!("  ... {} more", failures.len() - max_errors);
+    let total_failures = read_errors.len() + parse_errors.len();
+    if total_failures > max_errors {
+        println!("  ... {} more", total_failures - max_errors);
     }
 
-    if failures.is_empty() || allow_fail {
+    if !empty_files.is_empty() {
+        println!("Empty AST (no commands): {}", empty_files.len());
+        for path in empty_files.iter().take(max_empty) {
+            println!("  - {path}");
+        }
+        if empty_files.len() > max_empty {
+            println!("  ... {} more", empty_files.len() - max_empty);
+        }
+    }
+
+    if !sample_success.is_empty() {
+        println!("Parsed with commands (sample):");
+        for path in &sample_success {
+            println!("  - {path}");
+        }
+        if non_empty_count > sample_success.len() {
+            println!("  ... {} more", non_empty_count - sample_success.len());
+        }
+    }
+
+    if parse_errors.is_empty() && read_errors.is_empty() || allow_fail {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Parser failures: {}", failures.len()))
+        Err(anyhow::anyhow!(
+            "Parser failures: {}",
+            read_errors.len() + parse_errors.len()
+        ))
     }
 }
 
