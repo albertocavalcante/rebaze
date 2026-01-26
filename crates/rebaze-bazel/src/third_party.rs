@@ -266,76 +266,359 @@ def custom_resolve_dep(name, config):
     lines.join("\n")
 }
 
+/// Known package metadata for common libraries.
+/// This provides default URLs, versions, and build system info.
+fn get_known_package_info(pkg_name: &str) -> Option<KnownPackageInfo> {
+    match pkg_name {
+        "glib" | "glib-2.0" => Some(KnownPackageInfo {
+            name: "glib",
+            version: "2.82.4",
+            url: "https://download.gnome.org/sources/glib/2.82/glib-2.82.4.tar.xz",
+            sha256: "937f1312d7a883e6fdd0f75ed28de2f9e4fc2ee83fece0ab46a5153d5c34ce93",
+            strip_prefix: "glib-2.82.4",
+            build_system: "meson",
+            out_libs: vec!["libglib-2.0.a"],
+            out_shared_libs: vec!["libglib-2.0.so", "libglib-2.0.dylib"],
+            deps: vec!["pcre2", "libffi", "zlib"],
+            meson_options: vec![
+                "-Dtests=false",
+                "-Dglib_debug=disabled",
+                "-Dintrospection=disabled",
+            ],
+        }),
+        "gobject" | "gobject-2.0" => Some(KnownPackageInfo {
+            name: "gobject",
+            version: "2.82.4",
+            url: "https://download.gnome.org/sources/glib/2.82/glib-2.82.4.tar.xz",
+            sha256: "937f1312d7a883e6fdd0f75ed28de2f9e4fc2ee83fece0ab46a5153d5c34ce93",
+            strip_prefix: "glib-2.82.4",
+            build_system: "meson",
+            out_libs: vec!["libgobject-2.0.a"],
+            out_shared_libs: vec!["libgobject-2.0.so", "libgobject-2.0.dylib"],
+            deps: vec!["glib", "libffi"],
+            meson_options: vec!["-Dtests=false"],
+        }),
+        "pcre2" => Some(KnownPackageInfo {
+            name: "pcre2",
+            version: "10.44",
+            url: "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.gz",
+            sha256: "d34f02e113cf7193f1b06f1c26c1f8e7fa6e8a9fe1c3b1c29e579f5a6a6e8a19",
+            strip_prefix: "pcre2-10.44",
+            build_system: "cmake",
+            out_libs: vec!["libpcre2-8.a"],
+            out_shared_libs: vec![],
+            deps: vec![],
+            meson_options: vec![],
+        }),
+        "zlib" => Some(KnownPackageInfo {
+            name: "zlib",
+            version: "1.3.1",
+            url: "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
+            sha256: "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+            strip_prefix: "zlib-1.3.1",
+            build_system: "cmake",
+            out_libs: vec!["libz.a"],
+            out_shared_libs: vec![],
+            deps: vec![],
+            meson_options: vec![],
+        }),
+        "libffi" => Some(KnownPackageInfo {
+            name: "libffi",
+            version: "3.4.6",
+            url: "https://github.com/libffi/libffi/releases/download/v3.4.6/libffi-3.4.6.tar.gz",
+            sha256: "b0dea9df23c863a7a50e825440f3ebffabd65df1497108e5d437747843895a4e",
+            strip_prefix: "libffi-3.4.6",
+            build_system: "autotools",
+            out_libs: vec!["libffi.a"],
+            out_shared_libs: vec![],
+            deps: vec![],
+            meson_options: vec![],
+        }),
+        _ => None,
+    }
+}
+
+struct KnownPackageInfo {
+    name: &'static str,
+    version: &'static str,
+    url: &'static str,
+    sha256: &'static str,
+    strip_prefix: &'static str,
+    build_system: &'static str,
+    out_libs: Vec<&'static str>,
+    out_shared_libs: Vec<&'static str>,
+    deps: Vec<&'static str>,
+    meson_options: Vec<&'static str>,
+}
+
 /// Generate the third_party/source.bzl file for building from source.
 pub fn generate_source_bzl(pkg_config_modules: &[PkgConfigModule]) -> String {
     let mut lines = vec![
         r#""""Build third-party dependencies from source using rules_foreign_cc.
 
 This provides hermetic, reproducible builds but requires more setup.
+
+Usage:
+  1. In MODULE.bazel, use the source_deps extension:
+     source_deps = use_extension("//third_party:source.bzl", "source_deps")
+     use_repo(source_deps, "glib_src", "pcre2_src", ...)
+
+  2. In third_party/config.bzl, set strategy to "source":
+     DEFAULT_STRATEGY = "source"
+
+  3. Build targets will be available as //third_party:<name>_source
 """
 
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake", "configure_make", "meson")
 
-# Source URLs and versions for each dependency.
-# Update these to use specific versions for reproducibility.
+# Source configurations for each dependency.
+# These are populated with known good defaults where available.
 SOURCES = {"#
             .to_string(),
     ];
 
+    // Collect all unique packages including transitive deps
+    let mut all_packages = std::collections::BTreeSet::new();
     for pkg in pkg_config_modules {
-        let target_name = pkg.prefix.to_lowercase().replace('-', "_");
-        lines.push(format!(
-            r#"    "{target_name}": {{
+        let name = pkg.prefix.to_lowercase().replace('-', "_");
+        all_packages.insert(name.clone());
+
+        // Add known transitive deps
+        if let Some(info) = get_known_package_info(&name) {
+            for dep in info.deps {
+                all_packages.insert(dep.to_string());
+            }
+        }
+    }
+
+    for pkg_name in &all_packages {
+        if let Some(info) = get_known_package_info(pkg_name) {
+            let deps_str = if info.deps.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n        \"deps\": [{}],",
+                    info.deps.iter().map(|d| format!("\"{}\"", d)).collect::<Vec<_>>().join(", ")
+                )
+            };
+
+            let meson_opts_str = if info.meson_options.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n        \"meson_options\": [{}],",
+                    info.meson_options.iter().map(|o| format!("\"{}\"", o)).collect::<Vec<_>>().join(", ")
+                )
+            };
+
+            let out_libs_str = info.out_libs.iter()
+                .map(|l| format!("\"{}\"", l))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            lines.push(format!(
+                r#"    "{name}": {{
+        "url": "{url}",
+        "sha256": "{sha256}",
+        "strip_prefix": "{strip_prefix}",
+        "build_system": "{build_system}",
+        "out_static_libs": [{out_libs}],{deps}{meson_opts}
+    }},"#,
+                name = info.name,
+                url = info.url,
+                sha256 = info.sha256,
+                strip_prefix = info.strip_prefix,
+                build_system = info.build_system,
+                out_libs = out_libs_str,
+                deps = deps_str,
+                meson_opts = meson_opts_str,
+            ));
+        } else {
+            // Unknown package - generate placeholder
+            lines.push(format!(
+                r#"    "{pkg_name}": {{
+        # TODO: Configure source build for {pkg_name}
         # "url": "https://...",
         # "sha256": "...",
         # "strip_prefix": "...",
         # "build_system": "cmake",  # or "autotools", "meson"
+        # "out_static_libs": ["lib{pkg_name}.a"],
     }},"#
-        ));
+            ));
+        }
     }
 
     lines.push("}".to_string());
     lines.push(String::new());
 
-    lines.push(
-        r#"def setup_source_deps():
-    """Set up http_archive rules for source dependencies.
+    // Add the module extension for downloading sources
+    lines.push(r#"def _source_repo_impl(repository_ctx):
+    """Download and prepare source repository."""
+    repository_ctx.download_and_extract(
+        url = repository_ctx.attr.url,
+        sha256 = repository_ctx.attr.sha256,
+        stripPrefix = repository_ctx.attr.strip_prefix,
+    )
 
-    Call this from your MODULE.bazel or WORKSPACE.
-    """
+    # Create BUILD.bazel that exports all sources
+    repository_ctx.file("BUILD.bazel", '''
+filegroup(
+    name = "all",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)
+''')
+
+_source_repo = repository_rule(
+    implementation = _source_repo_impl,
+    attrs = {
+        "url": attr.string(mandatory = True),
+        "sha256": attr.string(default = ""),
+        "strip_prefix": attr.string(default = ""),
+    },
+)
+
+def _source_deps_impl(module_ctx):
+    """Download all configured source dependencies."""
     for name, config in SOURCES.items():
         if "url" not in config:
             continue
-        native.http_archive(
+        _source_repo(
             name = name + "_src",
-            urls = [config["url"]],
+            url = config["url"],
             sha256 = config.get("sha256", ""),
             strip_prefix = config.get("strip_prefix", ""),
         )
 
-def build_from_source(name):
-    """Generate build rules for a source dependency."""
-    config = SOURCES.get(name, {})
-    build_system = config.get("build_system", "cmake")
+source_deps = module_extension(
+    implementation = _source_deps_impl,
+)"#.to_string());
 
-    if build_system == "cmake":
-        cmake(
-            name = name + "_source",
-            lib_source = "@{}_src//:all".format(name),
-            # Add cmake options as needed
-        )
-    elif build_system == "autotools":
-        configure_make(
-            name = name + "_source",
-            lib_source = "@{}_src//:all".format(name),
-        )
-    elif build_system == "meson":
-        meson(
-            name = name + "_source",
-            lib_source = "@{}_src//:all".format(name),
-        )"#
-            .to_string(),
-    );
+    lines.join("\n")
+}
+
+/// Generate BUILD targets for source dependencies.
+pub fn generate_source_build_targets(pkg_config_modules: &[PkgConfigModule]) -> String {
+    let mut lines = vec![
+        r#"# Source build targets using rules_foreign_cc
+# These build dependencies from source for hermetic builds.
+
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake", "configure_make", "meson")
+load("//third_party:source.bzl", "SOURCES")
+"#.to_string(),
+    ];
+
+    // Collect all packages including transitive deps
+    let mut all_packages = std::collections::BTreeSet::new();
+    for pkg in pkg_config_modules {
+        let name = pkg.prefix.to_lowercase().replace('-', "_");
+        all_packages.insert(name.clone());
+        if let Some(info) = get_known_package_info(&name) {
+            for dep in info.deps {
+                all_packages.insert(dep.to_string());
+            }
+        }
+    }
+
+    for pkg_name in &all_packages {
+        if let Some(info) = get_known_package_info(pkg_name) {
+            let deps_str = if info.deps.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n    deps = [{}],",
+                    info.deps.iter().map(|d| format!("\":{}_source\"", d)).collect::<Vec<_>>().join(", ")
+                )
+            };
+
+            let out_libs_str = info.out_libs.iter()
+                .map(|l| format!("\"{}\"", l))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            match info.build_system {
+                "meson" => {
+                    let opts_str = if info.meson_options.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "\n    options = {{{}}},",
+                            info.meson_options.iter()
+                                .map(|o| {
+                                    let parts: Vec<&str> = o.trim_start_matches('-').splitn(2, '=').collect();
+                                    if parts.len() == 2 {
+                                        format!("\"{}\": \"{}\"", parts[0], parts[1])
+                                    } else {
+                                        format!("\"{}\": \"true\"", parts[0])
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    };
+
+                    lines.push(format!(
+                        r#"
+meson(
+    name = "{name}_source",
+    lib_source = "@{name}_src//:all",
+    out_static_libs = [{out_libs}],{opts}{deps}
+    visibility = ["//visibility:public"],
+)"#,
+                        name = info.name,
+                        out_libs = out_libs_str,
+                        opts = opts_str,
+                        deps = deps_str,
+                    ));
+                }
+                "cmake" => {
+                    lines.push(format!(
+                        r#"
+cmake(
+    name = "{name}_source",
+    lib_source = "@{name}_src//:all",
+    out_static_libs = [{out_libs}],
+    generate_args = ["-GNinja"],{deps}
+    visibility = ["//visibility:public"],
+)"#,
+                        name = info.name,
+                        out_libs = out_libs_str,
+                        deps = deps_str,
+                    ));
+                }
+                "autotools" => {
+                    lines.push(format!(
+                        r#"
+configure_make(
+    name = "{name}_source",
+    lib_source = "@{name}_src//:all",
+    out_static_libs = [{out_libs}],{deps}
+    visibility = ["//visibility:public"],
+)"#,
+                        name = info.name,
+                        out_libs = out_libs_str,
+                        deps = deps_str,
+                    ));
+                }
+                _ => {}
+            }
+        } else {
+            // Unknown package - generate placeholder
+            lines.push(format!(
+                r#"
+# TODO: Configure source build for {pkg_name}
+# Uncomment and adjust after configuring SOURCES["{pkg_name}"] in source.bzl
+#
+# cmake(
+#     name = "{pkg_name}_source",
+#     lib_source = "@{pkg_name}_src//:all",
+#     out_static_libs = ["lib{pkg_name}.a"],
+#     visibility = ["//visibility:public"],
+# )
+"#
+            ));
+        }
+    }
 
     lines.join("\n")
 }

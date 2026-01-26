@@ -66,16 +66,22 @@ pub fn generate_from_cmake(project: &rebaze_cmake::CMakeProject) -> HashMap<Stri
     if !project.pkg_config_modules.is_empty() {
         let config = ThirdPartyConfig::default();
 
-        // Generate extensible BUILD.bazel
-        let third_party_build =
+        // Generate extensible BUILD.bazel with aliases and system library fallbacks
+        let mut third_party_build =
             third_party::generate_build_file(&project.pkg_config_modules, &config);
+
+        // Append source build targets (used when strategy = "source")
+        third_party_build.push_str("\n\n");
+        third_party_build.push_str(&third_party::generate_source_build_targets(
+            &project.pkg_config_modules,
+        ));
         files.insert("third_party/BUILD.bazel".to_string(), third_party_build);
 
         // Generate config.bzl for customization
         let config_bzl = third_party::generate_config_bzl(&project.pkg_config_modules, &config);
         files.insert("third_party/config.bzl".to_string(), config_bzl);
 
-        // Generate source.bzl for building from source
+        // Generate source.bzl for building from source (includes module extension)
         let source_bzl = third_party::generate_source_bzl(&project.pkg_config_modules);
         files.insert("third_party/source.bzl".to_string(), source_bzl);
 

@@ -6,6 +6,15 @@ use rebaze_cmake::{CMakeProject, Executable, Library, LibraryKind};
 
 use crate::starlark::{BazelDep, CcBinary, CcLibrary, Glob, Load, Module, Package, SrcsWithHdrs};
 
+/// Get known transitive dependencies for a package.
+fn get_known_transitive_deps(pkg_name: &str) -> Vec<&'static str> {
+    match pkg_name {
+        "glib" | "glib-2.0" => vec!["pcre2", "libffi", "zlib"],
+        "gobject" | "gobject-2.0" => vec!["glib", "libffi", "pcre2", "zlib"],
+        _ => vec![],
+    }
+}
+
 /// Generate a MODULE.bazel file for a CMake project.
 #[must_use]
 pub fn generate_module_bazel(project: &CMakeProject) -> String {
@@ -50,7 +59,7 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
 
     // Add rules_foreign_cc for pkg-config dependencies
     if !project.pkg_config_modules.is_empty() {
-        parts.push("# Foreign build system support (for pkg-config dependencies)".to_string());
+        parts.push("# Foreign build system support (for building deps from source)".to_string());
         let rules_foreign_cc = BazelDep {
             name: "rules_foreign_cc".to_string(),
             version: "0.15.1".to_string(),
@@ -59,6 +68,17 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
             serde_starlark::to_string(&rules_foreign_cc).unwrap_or_else(|e| format!("# Error: {e}")),
         );
 
+        // Collect all package names including transitive deps for source builds
+        let mut all_source_packages = std::collections::BTreeSet::new();
+        for pkg in &project.pkg_config_modules {
+            let name = pkg.prefix.to_lowercase().replace('-', "_");
+            all_source_packages.insert(name.clone());
+            // Add known transitive deps
+            for dep in get_known_transitive_deps(&name) {
+                all_source_packages.insert(dep.to_string());
+            }
+        }
+
         // Add system_deps module extension for system library wrappers
         let system_dep_names: Vec<String> = project
             .pkg_config_modules
@@ -66,12 +86,30 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
             .map(|pkg| format!("system_{}", pkg.prefix.to_lowercase().replace('-', "_")))
             .collect();
 
-        parts.push("# System library wrappers (via new_local_repository)".to_string());
+        parts.push("# System library wrappers (strategy = \"system\", the default)".to_string());
         parts.push("# NOTE: These wrap system-installed libraries - adjust paths in third_party/system_deps.bzl".to_string());
         parts.push(format!(
             r#"system_deps = use_extension("//third_party:system_deps.bzl", "system_deps")
 use_repo(system_deps, {})"#,
             system_dep_names
+                .iter()
+                .map(|n| format!("\"{n}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+
+        // Add source_deps module extension for building from source
+        let source_dep_names: Vec<String> = all_source_packages
+            .iter()
+            .map(|name| format!("{}_src", name))
+            .collect();
+
+        parts.push("# Source downloads (strategy = \"source\" - hermetic builds)".to_string());
+        parts.push("# NOTE: Uncomment to enable building dependencies from source".to_string());
+        parts.push(format!(
+            r#"# source_deps = use_extension("//third_party:source.bzl", "source_deps")
+# use_repo(source_deps, {})"#,
+            source_dep_names
                 .iter()
                 .map(|n| format!("\"{n}\""))
                 .collect::<Vec<_>>()
