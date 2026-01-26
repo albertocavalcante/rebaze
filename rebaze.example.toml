@@ -1,0 +1,191 @@
+# Rebaze Configuration
+# Copy this file to your project root as `rebaze.toml` to customize migration behavior.
+
+# =============================================================================
+# Bazel Dependency Versions
+# =============================================================================
+# These versions are used when generating MODULE.bazel.
+# Update them to use newer versions of Bazel rules.
+
+[versions]
+rules_cc = "0.1.1"
+platforms = "0.0.11"
+rules_foreign_cc = "0.14.0"
+googletest = "1.15.2"
+google_benchmark = "1.9.1"
+
+# =============================================================================
+# Third-Party Dependency Strategy
+# =============================================================================
+# How to resolve external dependencies:
+# - "system": Use system-installed libraries (non-hermetic, but works out of the box)
+# - "source": Build from source using rules_foreign_cc (hermetic, recommended for CI)
+# - "conan": Use Conan package manager
+# - "vcpkg": Use vcpkg package manager
+
+[strategy]
+default = "system"
+
+# Per-package strategy overrides
+# [strategy.overrides]
+# glib = "source"
+# openssl = "vcpkg"
+
+# =============================================================================
+# System Library Mappings
+# =============================================================================
+# Map system library names to Bazel targets.
+# These are used when a CMake project links against a library like `-lz`.
+
+[mappings.system_libraries]
+# Compression
+z = "@zlib"
+zlib = "@zlib"
+bz2 = "@bzip2"
+lzma = "@lzma"
+lz4 = "@lz4"
+zstd = "@zstd"
+
+# Crypto/SSL
+ssl = "@openssl"
+crypto = "@openssl"
+openssl = "@openssl"
+
+# XML
+expat = "@expat"
+xml2 = "@libxml2"
+
+# Database
+sqlite3 = "@sqlite3"
+
+# Network
+curl = "@curl"
+
+# Regex
+pcre = "@pcre"
+"pcre2-8" = "@pcre"
+
+# Testing
+gtest = "@googletest//:gtest"
+gtest_main = "@googletest//:gtest_main"
+gmock = "@googletest//:gmock"
+gmock_main = "@googletest//:gmock_main"
+benchmark = "@google_benchmark//:benchmark"
+
+# Protobuf/gRPC
+protobuf = "@com_google_protobuf//:protobuf"
+grpc = "@com_github_grpc_grpc//:grpc"
+"grpc++" = "@com_github_grpc_grpc//:grpc++"
+
+# Add your custom library mappings here:
+# mylib = "@my_repo//:mylib"
+
+# =============================================================================
+# Implicit System Libraries
+# =============================================================================
+# Libraries that are implicitly provided by the system and don't need Bazel targets.
+
+[mappings]
+implicit_system_libs = [
+    "pthread",
+    "c",
+    "m",
+    "dl",
+    "rt",
+    "util",
+    "resolv",
+    "nsl",
+    "socket",
+]
+
+# =============================================================================
+# CMake Package Mappings
+# =============================================================================
+# Map CMake find_package() targets to Bazel targets.
+# Use {component} as a placeholder for the component name.
+
+[mappings.packages.Boost]
+target_pattern = "@boost//:{component}"
+# Add component overrides if needed:
+# [mappings.packages.Boost.components]
+# filesystem = "@boost//:filesystem"
+
+[mappings.packages.OpenSSL]
+target_pattern = "@openssl//:{component}"
+[mappings.packages.OpenSSL.components]
+SSL = "@openssl//:ssl"
+Crypto = "@openssl//:crypto"
+
+[mappings.packages.GTest]
+target_pattern = "@googletest//:{component}"
+[mappings.packages.GTest.components]
+gtest = "@googletest//:gtest"
+gtest_main = "@googletest//:gtest_main"
+gmock = "@googletest//:gmock"
+gmock_main = "@googletest//:gmock_main"
+
+[mappings.packages.Protobuf]
+target_pattern = "@com_google_protobuf//:{component}"
+[mappings.packages.Protobuf.components]
+protobuf = "@com_google_protobuf//:protobuf"
+protobuf_lite = "@com_google_protobuf//:protobuf_lite"
+protoc = "@com_google_protobuf//:protoc"
+
+[mappings.packages.absl]
+target_pattern = "@com_google_absl//absl/{component}"
+
+[mappings.packages.nlohmann_json]
+target_pattern = "@nlohmann_json//:json"
+
+[mappings.packages.PkgConfig]
+target_pattern = "//third_party:{component}"
+
+# =============================================================================
+# Build Configuration
+# =============================================================================
+
+[build]
+default_visibility = "//visibility:public"
+header_patterns = ["**/*.h", "**/*.hpp"]
+default_cxx_standard = "17"
+default_c_standard = "11"
+module_version = "0.1.0"
+
+# =============================================================================
+# Filter Configuration
+# =============================================================================
+# Patterns for filtering out platform-specific or non-portable artifacts.
+
+[filters]
+# File extensions to exclude from sources
+excluded_source_extensions = [
+    "rc", "res", "ico", "manifest", "def",  # Windows
+    "plist", "xib", "storyboard", "xcassets",  # macOS
+    "o", "obj", "a", "lib", "so", "dylib", "dll",  # Prebuilt
+    "cmake",  # Build system
+]
+
+# Define patterns to filter out (prefix match)
+excluded_define_patterns = [
+    "_WIN32", "WIN32", "_WIN64", "_WINDOWS", "_MSC_VER", "NOMINMAX",
+    "__APPLE__", "__MACH__",
+    "__linux__", "_GNU_SOURCE",
+    "_DEBUG", "NDEBUG",
+]
+
+# Compiler option patterns to filter out (prefix match)
+excluded_copt_patterns = [
+    "/",      # MSVC flags
+    "-O",     # Optimization
+    "-g",     # Debug
+    "-std=",  # Standard (handled by toolchain)
+    "-march=", "-mtune=",  # Architecture
+]
+
+# Include path patterns to filter out (prefix match)
+excluded_include_patterns = [
+    "/usr/",
+    "/opt/",
+    "/Library/",
+    "/System/",
+]

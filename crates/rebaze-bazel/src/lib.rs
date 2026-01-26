@@ -5,9 +5,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 // Re-export for use by other crates
+pub use crate::config::MigrationConfig;
 pub use crate::generator::BazelFile;
 pub use crate::third_party::{deduplicate_modules, DepsStrategy, ThirdPartyConfig};
 
+pub mod config;
 pub mod filters;
 mod cmake_generator;
 mod generator;
