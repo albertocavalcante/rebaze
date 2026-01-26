@@ -29,7 +29,7 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
 
     // Module declaration
     let module = Module {
-        name: project.name.replace('-', "_"),
+        name: project.name.to_lowercase().replace('-', "_"),
         version: "0.1.0".to_string(),
     };
     parts.push(

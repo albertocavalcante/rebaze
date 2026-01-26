@@ -333,11 +333,11 @@ fn normalize_and_filter_include(inc: &str) -> Option<String> {
         return None;
     }
 
-    // Normalize current directory references
+    // Normalize path: remove ./, trailing /, and collapse // to /
     let result = normalized
         .trim_start_matches("./")
         .trim_end_matches('/')
-        .to_string();
+        .replace("//", "/"); // Collapse double slashes
 
     // Skip if empty after normalization
     if result.is_empty() || result == "." {
@@ -567,5 +567,83 @@ mod tests {
             map_dependency("GTest::gtest"),
             Some("@com_google_googletest//:gtest".to_string())
         );
+    }
+
+    #[test]
+    fn test_filter_includes() {
+        let includes = vec![
+            "include".to_string(),
+            "src/".to_string(),                       // Trailing slash
+            "./test".to_string(),                     // Current dir reference
+            "test//integration".to_string(),          // Double slash
+            "/usr/include".to_string(),               // System path
+            "/opt/homebrew/include".to_string(),      // System path
+            "${CMAKE_CURRENT_SOURCE_DIR}/include".to_string(), // CMake var
+            "${CMAKE_BINARY_DIR}/generated".to_string(),       // Should be filtered
+            "".to_string(),                           // Empty
+        ];
+
+        let filtered = filter_includes(&includes);
+
+        // Should be included (normalized)
+        assert!(filtered.contains(&"include".to_string()));
+        assert!(filtered.contains(&"src".to_string())); // Trailing slash removed
+        assert!(filtered.contains(&"test".to_string())); // ./ removed
+        assert!(filtered.contains(&"test/integration".to_string())); // // collapsed
+
+        // Should be filtered out
+        assert!(!filtered.iter().any(|s| s.contains("/usr/")));
+        assert!(!filtered.iter().any(|s| s.contains("/opt/")));
+        assert!(!filtered.iter().any(|s| s.contains("CMAKE_BINARY_DIR")));
+        assert!(!filtered.iter().any(|s| s.is_empty()));
+    }
+
+    #[test]
+    fn test_filter_defines_external_libs() {
+        let defines = vec![
+            "USE_BUNDLED_FMT".to_string(),
+            "SPDLOG_FMT_EXTERNAL".to_string(),   // Should be filtered
+            "LIB_USE_EXTERNAL".to_string(),       // Should be filtered
+            "FEATURE_EXTERNAL_API".to_string(),   // Should NOT be filtered (EXTERNAL not at end)
+        ];
+
+        let filtered = filter_defines(&defines);
+        assert!(filtered.contains(&"USE_BUNDLED_FMT".to_string()));
+        assert!(filtered.contains(&"FEATURE_EXTERNAL_API".to_string()));
+        assert!(!filtered.contains(&"SPDLOG_FMT_EXTERNAL".to_string()));
+        assert!(!filtered.contains(&"LIB_USE_EXTERNAL".to_string()));
+    }
+
+    #[test]
+    fn test_filter_copts_exception_handling() {
+        let copts = vec![
+            "-Wall".to_string(),
+            "-fno-exceptions".to_string(),  // Should be filtered
+            "-fexceptions".to_string(),     // Should be filtered
+            "-fno-rtti".to_string(),        // Should be filtered
+            "-fvisibility=hidden".to_string(), // Should NOT be filtered
+        ];
+
+        let filtered = filter_copts(&copts);
+        assert!(filtered.contains(&"-Wall".to_string()));
+        assert!(filtered.contains(&"-fvisibility=hidden".to_string()));
+        assert!(!filtered.contains(&"-fno-exceptions".to_string()));
+        assert!(!filtered.contains(&"-fexceptions".to_string()));
+        assert!(!filtered.contains(&"-fno-rtti".to_string()));
+    }
+
+    #[test]
+    fn test_filter_sources_cmake_vars() {
+        let sources = vec![
+            "src/main.cpp".to_string(),
+            "${CMAKE_CURRENT_BINARY_DIR}/generated.cpp".to_string(), // Should be filtered
+            "${CMAKE_BINARY_DIR}/config.h".to_string(),              // Should be filtered
+            "normal/path.cpp".to_string(),
+        ];
+
+        let filtered = filter_sources(&sources);
+        assert!(filtered.contains(&"src/main.cpp".to_string()));
+        assert!(filtered.contains(&"normal/path.cpp".to_string()));
+        assert!(!filtered.iter().any(|s| s.contains("CMAKE_")));
     }
 }
