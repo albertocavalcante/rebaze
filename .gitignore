@@ -8,7 +8,6 @@ user.bazelrc
 
 # IDE
 .idea/
-.vscode/
 *.iml
 
 # OS
