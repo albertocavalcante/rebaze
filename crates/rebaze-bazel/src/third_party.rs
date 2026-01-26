@@ -121,7 +121,7 @@ package(default_visibility = ["//visibility:public"])"#
         };
 
         lines.push(format!("# {} -> {}", pkg.prefix, packages_str));
-        if let Ok(alias_str) = serde_starlark::to_string(&alias) {
+        if let Ok(alias_str) = crate::starlark::serde_starlark::to_string(&alias) {
             lines.push(alias_str);
         }
         lines.push(String::new());
@@ -164,7 +164,7 @@ package(default_visibility = ["//visibility:public"])"#
             ..Default::default()
         };
 
-        if let Ok(lib_str) = serde_starlark::to_string(&cc_lib) {
+        if let Ok(lib_str) = crate::starlark::serde_starlark::to_string(&cc_lib) {
             lines.push(lib_str);
         }
 
@@ -573,21 +573,21 @@ load("//third_party:source.bzl", "SOURCES")
                         .with_options(options)
                         .with_deps(deps)
                         .with_visibility_public();
-                    serde_starlark::to_string(&rule).ok()
+                    crate::starlark::serde_starlark::to_string(&rule).ok()
                 }
                 "cmake" => {
                     let rule = Cmake::new(name, lib_source)
                         .with_static_libs(info.out_libs.clone())
                         .with_deps(deps)
                         .with_visibility_public();
-                    serde_starlark::to_string(&rule).ok()
+                    crate::starlark::serde_starlark::to_string(&rule).ok()
                 }
                 "autotools" => {
                     let rule = ConfigureMake::new(name, lib_source)
                         .with_static_libs(info.out_libs.clone())
                         .with_deps(deps)
                         .with_visibility_public();
-                    serde_starlark::to_string(&rule).ok()
+                    crate::starlark::serde_starlark::to_string(&rule).ok()
                 }
                 _ => None,
             };

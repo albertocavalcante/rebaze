@@ -77,7 +77,7 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
         version: config.build.module_version.clone(),
     };
     parts.push(
-        serde_starlark::to_string(&module).unwrap_or_else(|e| format!("# Error: {e}")),
+        crate::starlark::serde_starlark::to_string(&module).unwrap_or_else(|e| format!("# Error: {e}")),
     );
 
     // C/C++ toolchain dependency
@@ -87,7 +87,7 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
         version: config.versions.rules_cc.clone(),
     };
     parts.push(
-        serde_starlark::to_string(&rules_cc).unwrap_or_else(|e| format!("# Error: {e}")),
+        crate::starlark::serde_starlark::to_string(&rules_cc).unwrap_or_else(|e| format!("# Error: {e}")),
     );
 
     // Detect and add external test/benchmark dependencies
@@ -99,7 +99,7 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
             version: config.versions.googletest.clone(),
         };
         parts.push(
-            serde_starlark::to_string(&googletest).unwrap_or_else(|e| format!("# Error: {e}")),
+            crate::starlark::serde_starlark::to_string(&googletest).unwrap_or_else(|e| format!("# Error: {e}")),
         );
     }
     if detected.benchmark {
@@ -109,7 +109,7 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
             version: config.versions.google_benchmark.clone(),
         };
         parts.push(
-            serde_starlark::to_string(&benchmark).unwrap_or_else(|e| format!("# Error: {e}")),
+            crate::starlark::serde_starlark::to_string(&benchmark).unwrap_or_else(|e| format!("# Error: {e}")),
         );
     }
 
@@ -121,7 +121,7 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
             version: config.versions.platforms.clone(),
         };
         parts.push(
-            serde_starlark::to_string(&platforms).unwrap_or_else(|e| format!("# Error: {e}")),
+            crate::starlark::serde_starlark::to_string(&platforms).unwrap_or_else(|e| format!("# Error: {e}")),
         );
     }
 
@@ -133,7 +133,7 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
             version: config.versions.rules_foreign_cc.clone(),
         };
         parts.push(
-            serde_starlark::to_string(&rules_foreign_cc).unwrap_or_else(|e| format!("# Error: {e}")),
+            crate::starlark::serde_starlark::to_string(&rules_foreign_cc).unwrap_or_else(|e| format!("# Error: {e}")),
         );
 
         // Collect all package names including transitive deps for source builds
@@ -219,7 +219,7 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         bzl: "@rules_cc//cc:defs.bzl".to_string(),
         items,
     };
-    parts.push(serde_starlark::to_string(&load).unwrap_or_else(|e| format!("# Error: {e}")));
+    parts.push(crate::starlark::serde_starlark::to_string(&load).unwrap_or_else(|e| format!("# Error: {e}")));
 
     // Add pkg-config dependency note
     if !project.pkg_config_modules.is_empty() {
@@ -239,7 +239,7 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         default_visibility: vec!["//visibility:public".to_string()],
     };
     parts.push(
-        serde_starlark::to_string(&package).unwrap_or_else(|e| format!("# Error: {e}")),
+        crate::starlark::serde_starlark::to_string(&package).unwrap_or_else(|e| format!("# Error: {e}")),
     );
 
     // Generate libraries first (they may be dependencies of executables)
@@ -250,7 +250,7 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         if seen_libs.insert(target_name) {
             let cc_lib = build_cc_library(lib);
             parts.push(
-                serde_starlark::to_string(&cc_lib).unwrap_or_else(|e| format!("# Error: {e}")),
+                crate::starlark::serde_starlark::to_string(&cc_lib).unwrap_or_else(|e| format!("# Error: {e}")),
             );
         }
     }
@@ -259,7 +259,7 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
     for exe in &project.executables {
         let cc_bin = build_cc_binary(exe, &project.libraries, &project.pkg_config_modules);
         parts.push(
-            serde_starlark::to_string(&cc_bin).unwrap_or_else(|e| format!("# Error: {e}")),
+            crate::starlark::serde_starlark::to_string(&cc_bin).unwrap_or_else(|e| format!("# Error: {e}")),
         );
     }
 

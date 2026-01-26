@@ -13,7 +13,7 @@ pub mod config;
 pub mod filters;
 mod cmake_generator;
 mod generator;
-pub mod starlark;
+pub use rebaze_starlark as starlark;
 pub mod third_party;
 
 /// Generate Bazel files from a parsed Gradle project.

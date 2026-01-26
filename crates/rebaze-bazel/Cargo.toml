@@ -13,9 +13,9 @@ workspace = true
 [dependencies]
 rebaze-cmake.workspace = true
 rebaze-gradle.workspace = true
+rebaze-starlark.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
-serde_starlark.workspace = true
 toml.workspace = true
 tracing.workspace = true

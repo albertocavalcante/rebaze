@@ -434,8 +434,8 @@ dependencies = [
  "anyhow",
  "rebaze-cmake",
  "rebaze-gradle",
+ "rebaze-starlark",
  "serde",
- "serde_starlark",
  "thiserror 2.0.18",
  "toml",
  "tracing",
@@ -504,6 +504,14 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "walkdir",
+]
+
+[[package]]
+name = "rebaze-starlark"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_starlark",
 ]
 
 [[package]]

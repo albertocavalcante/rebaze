@@ -1,0 +1,15 @@
+[package]
+name = "rebaze-starlark"
+description = "Starlark/Bazel AST types and serialization for rebaze"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_starlark = { workspace = true }
+
+[lints]
+workspace = true

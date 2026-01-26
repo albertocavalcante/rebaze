@@ -7,6 +7,7 @@ members = [
     "crates/rebaze-cmake-file-api",
     "crates/rebaze-gradle",
     "crates/rebaze-bazel",
+    "crates/rebaze-starlark",
 ]
 
 [workspace.package]
@@ -53,6 +54,7 @@ rebaze-cmake-file-api = { path = "crates/rebaze-cmake-file-api" }
 rebaze-core = { path = "crates/rebaze-core" }
 rebaze-gradle = { path = "crates/rebaze-gradle" }
 rebaze-bazel = { path = "crates/rebaze-bazel" }
+rebaze-starlark = { path = "crates/rebaze-starlark" }
 
 [profile.release]
 lto = true

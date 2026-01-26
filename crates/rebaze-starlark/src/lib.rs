@@ -1,11 +1,14 @@
-//! Type-safe Starlark/Bazel rule definitions using serde_starlark.
+//! Starlark/Bazel AST types and serialization for rebaze.
 //!
-//! This module provides Rust types that serialize to valid Starlark code via serde_starlark.
+//! This crate provides Rust types that serialize to valid Starlark code via serde_starlark.
 //! Use these types instead of manual string formatting for type-safe BUILD file generation.
 
 use serde::ser::{SerializeStruct, SerializeTupleStruct, Serializer};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+
+// Re-export serde_starlark for users of this crate
+pub use serde_starlark;
 
 /// Load statement: load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 pub struct Load {
