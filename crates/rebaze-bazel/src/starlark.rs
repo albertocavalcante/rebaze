@@ -1,8 +1,11 @@
 //! Type-safe Starlark/Bazel rule definitions using serde_starlark.
+//!
+//! This module provides Rust types that serialize to valid Starlark code via serde_starlark.
+//! Use these types instead of manual string formatting for type-safe BUILD file generation.
 
 use serde::ser::{SerializeStruct, SerializeTupleStruct, Serializer};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Load statement: load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 pub struct Load {
@@ -214,5 +217,192 @@ impl Serialize for Glob {
             }
             s.end()
         }
+    }
+}
+
+// =============================================================================
+// rules_foreign_cc rules
+// =============================================================================
+
+/// rules_foreign_cc cmake() rule for building CMake projects.
+#[derive(Serialize, Default)]
+#[serde(rename = "cmake")]
+pub struct Cmake {
+    pub name: String,
+    pub lib_source: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub out_static_libs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub out_shared_libs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generate_args: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub cache_entries: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub deps: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Vec<String>>,
+}
+
+impl Cmake {
+    /// Create a new cmake rule with Ninja generator.
+    pub fn new(name: impl Into<String>, lib_source: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            lib_source: lib_source.into(),
+            generate_args: vec!["-GNinja".to_string()],
+            ..Default::default()
+        }
+    }
+
+    pub fn with_static_libs(mut self, libs: Vec<impl Into<String>>) -> Self {
+        self.out_static_libs = libs.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_deps(mut self, deps: Vec<impl Into<String>>) -> Self {
+        self.deps = deps.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_visibility_public(mut self) -> Self {
+        self.visibility = Some(vec!["//visibility:public".to_string()]);
+        self
+    }
+}
+
+/// rules_foreign_cc meson() rule for building Meson projects.
+#[derive(Serialize, Default)]
+#[serde(rename = "meson")]
+pub struct Meson {
+    pub name: String,
+    pub lib_source: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub out_static_libs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub out_shared_libs: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub deps: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Vec<String>>,
+}
+
+impl Meson {
+    pub fn new(name: impl Into<String>, lib_source: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            lib_source: lib_source.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_static_libs(mut self, libs: Vec<impl Into<String>>) -> Self {
+        self.out_static_libs = libs.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_options(mut self, options: BTreeMap<String, String>) -> Self {
+        self.options = options;
+        self
+    }
+
+    pub fn with_deps(mut self, deps: Vec<impl Into<String>>) -> Self {
+        self.deps = deps.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_visibility_public(mut self) -> Self {
+        self.visibility = Some(vec!["//visibility:public".to_string()]);
+        self
+    }
+}
+
+/// rules_foreign_cc configure_make() rule for building autotools projects.
+#[derive(Serialize, Default)]
+#[serde(rename = "configure_make")]
+pub struct ConfigureMake {
+    pub name: String,
+    pub lib_source: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub out_static_libs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub out_shared_libs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub configure_options: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub deps: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Vec<String>>,
+}
+
+impl ConfigureMake {
+    pub fn new(name: impl Into<String>, lib_source: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            lib_source: lib_source.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_static_libs(mut self, libs: Vec<impl Into<String>>) -> Self {
+        self.out_static_libs = libs.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_deps(mut self, deps: Vec<impl Into<String>>) -> Self {
+        self.deps = deps.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_visibility_public(mut self) -> Self {
+        self.visibility = Some(vec!["//visibility:public".to_string()]);
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cmake_serialization() {
+        let cmake = Cmake::new("zlib_source", "@zlib_src//:all")
+            .with_static_libs(vec!["libz.a"])
+            .with_visibility_public();
+        let output = serde_starlark::to_string(&cmake).unwrap();
+        assert!(output.contains("cmake("));
+        assert!(output.contains("name = \"zlib_source\""));
+        assert!(output.contains("lib_source = \"@zlib_src//:all\""));
+        assert!(output.contains("out_static_libs = ["));
+        assert!(output.contains("-GNinja"));
+    }
+
+    #[test]
+    fn test_meson_serialization() {
+        let mut options = BTreeMap::new();
+        options.insert("tests".to_string(), "false".to_string());
+        options.insert("introspection".to_string(), "disabled".to_string());
+
+        let meson = Meson::new("glib_source", "@glib_src//:all")
+            .with_static_libs(vec!["libglib-2.0.a"])
+            .with_options(options)
+            .with_deps(vec![":pcre2_source", ":zlib_source"])
+            .with_visibility_public();
+        let output = serde_starlark::to_string(&meson).unwrap();
+        assert!(output.contains("meson("));
+        assert!(output.contains("options = {"));
+        assert!(output.contains("deps = ["));
+    }
+
+    #[test]
+    fn test_configure_make_serialization() {
+        let rule = ConfigureMake::new("libffi_source", "@libffi_src//:all")
+            .with_static_libs(vec!["libffi.a"])
+            .with_visibility_public();
+        let output = serde_starlark::to_string(&rule).unwrap();
+        assert!(output.contains("configure_make("));
+        assert!(output.contains("out_static_libs = ["));
     }
 }
