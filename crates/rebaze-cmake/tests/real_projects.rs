@@ -214,3 +214,39 @@ fn test_project_extraction_with_boost() {
         .link_libraries
         .contains(&"Boost::filesystem".to_string()));
 }
+
+#[test]
+fn test_recursive_subdirectory_parsing_microdnf() {
+    // This test requires microdnf to be cloned at /tmp/microdnf
+    let fixture_dir = Path::new("/tmp/microdnf");
+
+    if !fixture_dir.exists() {
+        eprintln!("Skipping test: microdnf not found at /tmp/microdnf");
+        return;
+    }
+
+    let project = rebaze_cmake::extract_project_from_path(fixture_dir).unwrap();
+
+    // Root project info
+    assert_eq!(project.name, "microdnf");
+    assert_eq!(project.cmake_minimum_version, Some("3.10".to_string()));
+
+    // The microdnf executable is defined in dnf/CMakeLists.txt
+    // It should be found via recursive parsing
+    assert!(
+        project.executables.iter().any(|e| e.name == "microdnf"),
+        "Expected to find microdnf executable via recursive parsing. Found: {:?}",
+        project
+            .executables
+            .iter()
+            .map(|e| &e.name)
+            .collect::<Vec<_>>()
+    );
+
+    // The root CMakeLists.txt has add_subdirectory(dnf)
+    assert!(
+        project.subdirectories.contains(&"dnf".to_string()),
+        "Expected subdirectories to contain 'dnf'. Found: {:?}",
+        project.subdirectories
+    );
+}

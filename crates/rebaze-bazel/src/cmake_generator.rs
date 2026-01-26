@@ -1,218 +1,331 @@
 //! Bazel file generation from CMake projects.
 
-use std::fmt::Write;
+use std::collections::BTreeSet;
 
 use rebaze_cmake::{CMakeProject, Executable, Library, LibraryKind};
+
+use crate::starlark::{BazelDep, CcBinary, CcLibrary, Glob, Load, Module, Package, SrcsWithHdrs};
 
 /// Generate a MODULE.bazel file for a CMake project.
 #[must_use]
 pub fn generate_module_bazel(project: &CMakeProject) -> String {
-    let mut content = String::new();
-    let module_name = project.name.replace('-', "_");
+    let mut parts = Vec::new();
 
-    let _ = write!(
-        content,
-        r#""""Bazel module for {name} - migrated from CMake by rebaze."""
+    // Add docstring
+    parts.push(format!(
+        "\"\"\"Bazel module for {} - migrated from CMake by rebaze.\"\"\"",
+        project.name
+    ));
 
-module(
-    name = "{module_name}",
-    version = "0.1.0",
-)
+    // Module declaration
+    let module = Module {
+        name: project.name.replace('-', "_"),
+        version: "0.1.0".to_string(),
+    };
+    parts.push(
+        serde_starlark::to_string(&module).unwrap_or_else(|e| format!("# Error: {e}")),
+    );
 
-# C/C++ toolchain
-bazel_dep(name = "rules_cc", version = "0.1.1")
-
-"#,
-        name = project.name
+    // C/C++ toolchain dependency
+    parts.push("# C/C++ toolchain".to_string());
+    let rules_cc = BazelDep {
+        name: "rules_cc".to_string(),
+        version: "0.2.14".to_string(),
+    };
+    parts.push(
+        serde_starlark::to_string(&rules_cc).unwrap_or_else(|e| format!("# Error: {e}")),
     );
 
     // Add platform support if needed
     if !project.packages.is_empty() {
-        content.push_str("# Platform and dependency management\n");
-        content.push_str("bazel_dep(name = \"platforms\", version = \"0.0.11\")\n\n");
+        parts.push("# Platform and dependency management".to_string());
+        let platforms = BazelDep {
+            name: "platforms".to_string(),
+            version: "1.0.0".to_string(),
+        };
+        parts.push(
+            serde_starlark::to_string(&platforms).unwrap_or_else(|e| format!("# Error: {e}")),
+        );
     }
 
-    content
+    // Add rules_foreign_cc for pkg-config dependencies
+    if !project.pkg_config_modules.is_empty() {
+        parts.push("# Foreign build system support (for pkg-config dependencies)".to_string());
+        let rules_foreign_cc = BazelDep {
+            name: "rules_foreign_cc".to_string(),
+            version: "0.15.1".to_string(),
+        };
+        parts.push(
+            serde_starlark::to_string(&rules_foreign_cc).unwrap_or_else(|e| format!("# Error: {e}")),
+        );
+
+        // Add system_deps module extension for system library wrappers
+        let system_dep_names: Vec<String> = project
+            .pkg_config_modules
+            .iter()
+            .map(|pkg| format!("system_{}", pkg.prefix.to_lowercase().replace('-', "_")))
+            .collect();
+
+        parts.push("# System library wrappers (via new_local_repository)".to_string());
+        parts.push("# NOTE: These wrap system-installed libraries - adjust paths in third_party/system_deps.bzl".to_string());
+        parts.push(format!(
+            r#"system_deps = use_extension("//third_party:system_deps.bzl", "system_deps")
+use_repo(system_deps, {})"#,
+            system_dep_names
+                .iter()
+                .map(|n| format!("\"{n}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    parts.join("\n\n") + "\n"
 }
 
 /// Generate the root BUILD.bazel file.
 #[must_use]
 pub fn generate_root_build(project: &CMakeProject) -> String {
-    let mut content = String::new();
-    let name = &project.name;
+    let mut parts = Vec::new();
 
-    let _ = writeln!(
-        content,
-        "# BUILD file for {name} - migrated from CMake by rebaze\n"
+    // Add header comment with review notes
+    let pkg_note = if project.pkg_config_modules.is_empty() {
+        ""
+    } else {
+        "\n#   - pkg-config deps in //third_party/ use system libs (not hermetic)"
+    };
+    parts.push(format!(
+        r#"# BUILD file for {} - migrated from CMake by rebaze
+#
+# NOTE: This file was auto-generated and should be reviewed:
+#   - glob patterns use allow_empty=True (some patterns may match nothing)
+#   - include paths are inferred from source file locations{}"#,
+        project.name, pkg_note
+    ));
+
+    // Load statement
+    let mut items = BTreeSet::new();
+    items.insert("cc_binary".to_string());
+    items.insert("cc_library".to_string());
+    let load = Load {
+        bzl: "@rules_cc//cc:defs.bzl".to_string(),
+        items,
+    };
+    parts.push(serde_starlark::to_string(&load).unwrap_or_else(|e| format!("# Error: {e}")));
+
+    // Add pkg-config dependency note
+    if !project.pkg_config_modules.is_empty() {
+        let mut pkg_comments = vec![
+            "# pkg-config dependencies (wrappers in //third_party):".to_string(),
+        ];
+        for pkg in &project.pkg_config_modules {
+            pkg_comments.push(format!("#   //third_party:{} -> {}",
+                pkg.prefix.to_lowercase().replace('-', "_"),
+                pkg.packages.join(", ")));
+        }
+        parts.push(pkg_comments.join("\n"));
+    }
+
+    // Package visibility
+    let package = Package {
+        default_visibility: vec!["//visibility:public".to_string()],
+    };
+    parts.push(
+        serde_starlark::to_string(&package).unwrap_or_else(|e| format!("# Error: {e}")),
     );
-
-    content.push_str("load(\"@rules_cc//cc:defs.bzl\", \"cc_binary\", \"cc_library\")\n\n");
-
-    // Generate package visibility
-    content.push_str("package(default_visibility = [\"//visibility:public\"])\n\n");
 
     // Generate libraries first (they may be dependencies of executables)
     for lib in &project.libraries {
-        let _ = write!(content, "{}", generate_cc_library(lib));
-        content.push('\n');
+        let cc_lib = build_cc_library(lib);
+        parts.push(
+            serde_starlark::to_string(&cc_lib).unwrap_or_else(|e| format!("# Error: {e}")),
+        );
     }
 
     // Generate executables
     for exe in &project.executables {
-        let _ = write!(content, "{}", generate_cc_binary(exe, &project.libraries));
-        content.push('\n');
+        let cc_bin = build_cc_binary(exe, &project.libraries, &project.pkg_config_modules);
+        parts.push(
+            serde_starlark::to_string(&cc_bin).unwrap_or_else(|e| format!("# Error: {e}")),
+        );
     }
 
-    content
+    parts.join("\n\n") + "\n"
 }
 
-/// Generate a cc_library rule.
-fn generate_cc_library(lib: &Library) -> String {
-    let mut content = String::new();
+/// Build a CcLibrary struct from a CMake Library.
+fn build_cc_library(lib: &Library) -> CcLibrary {
     let target_name = lib.name.replace('-', "_");
-
-    let _ = writeln!(content, "cc_library(");
-    let _ = writeln!(content, "    name = \"{target_name}\",");
 
     // Determine if this is header-only
     let is_header_only = lib.kind == LibraryKind::Interface || lib.sources.is_empty();
 
-    if is_header_only {
+    let (srcs, hdrs, includes) = if is_header_only {
         // Header-only library
-        let _ = writeln!(
-            content,
-            "    hdrs = glob([\"include/**/*.h\", \"include/**/*.hpp\"]),"
-        );
-        let _ = writeln!(content, "    includes = [\"include\"],");
+        (
+            Vec::new(),
+            Some(Glob {
+                include: vec!["include/**/*.h".to_string(), "include/**/*.hpp".to_string()],
+                exclude: Vec::new(),
+                allow_empty: true, // Not all projects have .hpp files
+            }),
+            vec!["include".to_string()],
+        )
     } else {
         // Regular library with sources
-        let _ = writeln!(content, "    srcs = [");
-        for src in &lib.sources {
-            let _ = writeln!(content, "        \"{src}\",");
-        }
-        content.push_str("    ],\n");
-
-        // Add headers
-        let _ = writeln!(
-            content,
-            "    hdrs = glob([\"include/**/*.h\", \"include/**/*.hpp\"]),"
-        );
-
-        if lib.include_directories.is_empty() {
-            let _ = writeln!(content, "    includes = [\"include\"],");
+        let includes = if lib.include_directories.is_empty() {
+            vec!["include".to_string()]
         } else {
-            let _ = writeln!(content, "    includes = [");
-            for dir in &lib.include_directories {
-                // Convert CMake paths to Bazel-friendly paths
-                let dir = normalize_include_dir(dir);
-                let _ = writeln!(content, "        \"{dir}\",");
-            }
-            content.push_str("    ],\n");
-        }
-    }
+            lib.include_directories
+                .iter()
+                .map(|d| normalize_include_dir(d))
+                .collect()
+        };
 
-    // Add link dependencies
-    if !lib.link_libraries.is_empty() {
-        let _ = writeln!(content, "    deps = [");
-        for dep in &lib.link_libraries {
-            if let Some(bazel_dep) = map_cmake_dependency(dep) {
-                let _ = writeln!(content, "        \"{bazel_dep}\",");
-            }
-        }
-        content.push_str("    ],\n");
-    }
+        (
+            lib.sources.clone(),
+            Some(Glob {
+                include: vec!["include/**/*.h".to_string(), "include/**/*.hpp".to_string()],
+                exclude: Vec::new(),
+                allow_empty: true, // Not all projects have .hpp files
+            }),
+            includes,
+        )
+    };
 
-    if !lib.compile_definitions.is_empty() {
-        let _ = writeln!(content, "    defines = [");
-        for define in &lib.compile_definitions {
-            let _ = writeln!(content, "        \"{define}\",");
-        }
-        content.push_str("    ],\n");
-    }
+    // Map link dependencies
+    let deps: Vec<String> = lib
+        .link_libraries
+        .iter()
+        .filter_map(|dep| map_cmake_dependency(dep))
+        .collect();
 
-    if !lib.compile_options.is_empty() {
-        let _ = writeln!(content, "    copts = [");
-        for opt in &lib.compile_options {
-            let _ = writeln!(content, "        \"{opt}\",");
-        }
-        content.push_str("    ],\n");
+    CcLibrary {
+        name: target_name,
+        srcs,
+        hdrs,
+        includes,
+        deps,
+        defines: lib.compile_definitions.clone(),
+        copts: lib.compile_options.clone(),
+        linkopts: Vec::new(),
+        linkshared: if lib.kind == LibraryKind::Shared {
+            Some(true)
+        } else {
+            None
+        },
     }
-
-    // Add linkopts for specific library types
-    if lib.kind == LibraryKind::Shared {
-        let _ = writeln!(content, "    linkshared = True,");
-    }
-
-    content.push_str(")\n");
-    content
 }
 
-/// Generate a cc_binary rule.
-fn generate_cc_binary(exe: &Executable, libs: &[Library]) -> String {
-    let mut content = String::new();
+/// Build a CcBinary struct from a CMake Executable.
+fn build_cc_binary(
+    exe: &Executable,
+    libs: &[Library],
+    pkg_config_modules: &[rebaze_cmake::PkgConfigModule],
+) -> CcBinary {
     let target_name = exe.name.replace('-', "_");
 
-    let _ = writeln!(content, "cc_binary(");
-    let _ = writeln!(content, "    name = \"{target_name}\",");
+    // Start with explicit include directories
+    let mut includes: Vec<String> = exe
+        .include_directories
+        .iter()
+        .map(|d| normalize_include_dir(d))
+        .collect();
 
-    let _ = writeln!(content, "    srcs = [");
+    // Add unique directories containing source files as include paths
+    // This mimics CMake's behavior where files can include headers from their own directory
     for src in &exe.sources {
-        let _ = writeln!(content, "        \"{src}\",");
-    }
-    content.push_str("    ],\n");
-
-    if !exe.include_directories.is_empty() {
-        let _ = writeln!(content, "    includes = [");
-        for dir in &exe.include_directories {
-            let dir = normalize_include_dir(dir);
-            let _ = writeln!(content, "        \"{dir}\",");
-        }
-        content.push_str("    ],\n");
-    }
-
-    // Collect dependencies
-    let mut deps = Vec::new();
-
-    // Add internal library dependencies
-    for link_lib in &exe.link_libraries {
-        // Check if it's an internal library
-        if libs.iter().any(|l| l.name == *link_lib) {
-            deps.push(format!(":{}", link_lib.replace('-', "_")));
-        } else if let Some(bazel_dep) = map_cmake_dependency(link_lib) {
-            deps.push(bazel_dep);
+        if let Some(dir) = std::path::Path::new(src).parent() {
+            let dir_str = dir.to_string_lossy().to_string();
+            if !dir_str.is_empty() && !includes.contains(&dir_str) {
+                includes.push(dir_str);
+            }
         }
     }
 
-    if !deps.is_empty() {
-        let _ = writeln!(content, "    deps = [");
-        for dep in &deps {
-            let _ = writeln!(content, "        \"{dep}\",");
-        }
-        content.push_str("    ],\n");
+    // Sort for deterministic output
+    includes.sort();
+    includes.dedup();
+
+    // Find minimal set of root directories for header globs
+    // This avoids redundant patterns like dnf/**/*.h AND dnf/plugins/foo/**/*.h
+    let glob_roots = find_minimal_glob_roots(&includes);
+
+    // Generate header glob patterns - uses allow_empty since not all projects have .hpp files
+    let hdrs_glob: Vec<String> = glob_roots
+        .iter()
+        .flat_map(|dir| vec![format!("{dir}/**/*.h"), format!("{dir}/**/*.hpp")])
+        .collect();
+
+    // Collect dependencies from link_libraries
+    let mut deps: Vec<String> = exe
+        .link_libraries
+        .iter()
+        .filter_map(|link_lib| {
+            // Check if it's an internal library
+            if libs.iter().any(|l| l.name == *link_lib) {
+                Some(format!(":{}", link_lib.replace('-', "_")))
+            } else {
+                map_cmake_dependency(link_lib)
+            }
+        })
+        .collect();
+
+    // Add pkg-config dependencies from third_party/
+    for pkg in pkg_config_modules {
+        let dep_name = pkg.prefix.to_lowercase().replace('-', "_");
+        deps.push(format!("//third_party:{dep_name}"));
     }
 
-    if !exe.compile_definitions.is_empty() {
-        let _ = writeln!(content, "    defines = [");
-        for define in &exe.compile_definitions {
-            let _ = writeln!(content, "        \"{define}\",");
-        }
-        content.push_str("    ],\n");
+    CcBinary {
+        name: target_name,
+        srcs: SrcsWithHdrs {
+            files: exe.sources.clone(),
+            hdrs_glob: if hdrs_glob.is_empty() { None } else { Some(hdrs_glob) },
+        },
+        includes,
+        deps,
+        defines: exe.compile_definitions.clone(),
+        copts: exe.compile_options.clone(),
+    }
+}
+
+/// Find the minimal set of root directories that cover all paths.
+/// For example, given ["dnf", "dnf/plugins/foo", "dnf/plugins/bar"],
+/// returns just ["dnf"] since dnf/**/* covers all subdirectories.
+fn find_minimal_glob_roots(dirs: &[String]) -> Vec<String> {
+    if dirs.is_empty() {
+        return Vec::new();
     }
 
-    if !exe.compile_options.is_empty() {
-        let _ = writeln!(content, "    copts = [");
-        for opt in &exe.compile_options {
-            let _ = writeln!(content, "        \"{opt}\",");
+    let mut roots: Vec<String> = Vec::new();
+
+    for dir in dirs {
+        // Check if this directory is already covered by an existing root
+        let is_covered = roots.iter().any(|root| {
+            dir.starts_with(root) && (dir.len() == root.len() || dir[root.len()..].starts_with('/'))
+        });
+
+        if !is_covered {
+            // Remove any existing roots that this directory would cover
+            roots.retain(|root| {
+                !(root.starts_with(dir)
+                    && (root.len() == dir.len() || root[dir.len()..].starts_with('/')))
+            });
+            roots.push(dir.clone());
         }
-        content.push_str("    ],\n");
     }
 
-    content.push_str(")\n");
-    content
+    roots.sort();
+    roots
 }
 
 /// Map CMake package/library names to Bazel dependencies.
 fn map_cmake_dependency(cmake_name: &str) -> Option<String> {
+    // Handle -l flags from pkg-config
+    if let Some(lib) = cmake_name.strip_prefix("-l") {
+        return Some(format!("# TODO: Map system library '{lib}'"));
+    }
+
     // Handle CMake imported targets like Boost::system, OpenSSL::SSL
     if cmake_name.contains("::") {
         let parts: Vec<&str> = cmake_name.split("::").collect();
@@ -284,7 +397,11 @@ mod tests {
                 required: true,
                 components: vec!["system".to_string()],
             }],
+            pkg_config_modules: vec![],
             subdirectories: vec![],
+            global_include_directories: vec![],
+            cxx_standard: Some("17".to_string()),
+            c_standard: None,
         }
     }
 
@@ -296,6 +413,7 @@ mod tests {
         assert!(content.contains("module("));
         assert!(content.contains("test_project"));
         assert!(content.contains("rules_cc"));
+        assert!(content.contains("platforms"));
     }
 
     #[test]
@@ -311,5 +429,68 @@ mod tests {
         assert!(content.contains("APP_DEF"));
         assert!(content.contains("-O2"));
         assert!(content.contains("-g"));
+    }
+
+    #[test]
+    fn test_generate_module_bazel_format() {
+        let project = test_project();
+        let content = generate_module_bazel(&project);
+
+        // Check docstring is present
+        assert!(content.contains("\"\"\"Bazel module for"));
+
+        // Check module format
+        assert!(content.contains("name = \"test_project\""));
+        assert!(content.contains("version = \"0.1.0\""));
+
+        // Check bazel_dep format
+        assert!(content.contains("bazel_dep("));
+        assert!(content.contains("name = \"rules_cc\""));
+    }
+
+    #[test]
+    fn test_generate_root_build_format() {
+        let project = test_project();
+        let content = generate_root_build(&project);
+
+        // Check load statement
+        assert!(content.contains("load("));
+        assert!(content.contains("@rules_cc//cc:defs.bzl"));
+
+        // Check package visibility
+        assert!(content.contains("package("));
+        assert!(content.contains("default_visibility"));
+        assert!(content.contains("//visibility:public"));
+
+        // Check glob pattern for headers
+        assert!(content.contains("glob("));
+        assert!(content.contains("include/**/*.h"));
+    }
+
+    #[test]
+    fn test_output_format_visual() {
+        let project = test_project();
+
+        let module = generate_module_bazel(&project);
+        let build = generate_root_build(&project);
+
+        // This test verifies that the output is properly formatted Starlark
+        // by checking the overall structure
+        eprintln!("=== MODULE.bazel ===\n{module}");
+        eprintln!("=== BUILD.bazel ===\n{build}");
+
+        // Verify proper function call formatting
+        assert!(
+            module.contains("module(\n") || module.contains("module(name"),
+            "module should have proper function call format"
+        );
+        assert!(
+            build.contains("cc_library(\n") || build.contains("cc_library(name"),
+            "cc_library should have proper function call format"
+        );
+        assert!(
+            build.contains("cc_binary(\n") || build.contains("cc_binary(name"),
+            "cc_binary should have proper function call format"
+        );
     }
 }

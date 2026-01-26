@@ -132,6 +132,7 @@ fn argument() -> impl Parser<char, Argument, Error = Simple<char>> {
 }
 
 /// Parser for unquoted arguments (simple version without nested parens - those are handled at argument level).
+/// Handles embedded quoted strings like `-DFOO="${VAR}"` where the whole thing is one unquoted argument.
 fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char>> {
     // Escape sequences
     let escape_sequence = just('\\').ignore_then(any()).map(|c| vec![c]);
@@ -149,14 +150,72 @@ fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char
         .at_least(1)
         .flatten()
         .collect::<String>()
+        .map(|s| vec![ArgumentPart::Text(s)]);
+
+    let var_ref = variable_reference().map(|p| vec![p]);
+
+    // Bare dollar sign: $ not followed by {, E (for ENV), C (for CACHE), or < (for generator expr)
+    // This handles cases like $foo where $ should be treated as literal text
+    let bare_dollar = just('$')
+        .then_ignore(none_of("{EC<").rewind().or(end().to('\0')))
+        .map(|_| vec![ArgumentPart::Text("$".to_string())]);
+
+    // Embedded quoted string (e.g., ="value" or ="${VAR}" or just "value")
+    // This handles patterns like -DFOO="bar" or -DFOO="${VAR}"
+    let embedded_quoted = embedded_quoted_content();
+
+    choice((var_ref, bare_dollar, embedded_quoted, text_part))
+        .repeated()
+        .at_least(1)
+        .flatten()
+        .map(|parts| Argument::Unquoted(ArgumentValue { parts }))
+}
+
+/// Parser for embedded quoted content within unquoted arguments.
+/// Parses `"content"` and returns a vector of ArgumentParts with quotes included.
+fn embedded_quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> {
+    just('"')
+        .ignore_then(embedded_quoted_inner())
+        .then_ignore(just('"'))
+        .map(|inner_parts| {
+            // Wrap the content with quotes as text
+            let mut parts = vec![ArgumentPart::Text("\"".to_string())];
+            parts.extend(inner_parts);
+            parts.push(ArgumentPart::Text("\"".to_string()));
+            parts
+        })
+}
+
+/// Parser for content inside embedded quotes.
+fn embedded_quoted_inner() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> {
+    let escape_sequence = just('\\').ignore_then(choice((
+        just('\\').to('\\'),
+        just('"').to('"'),
+        just('n').to('\n'),
+        just('t').to('\t'),
+        just('r').to('\r'),
+        just(';').to(';'),
+        just('$').to('$'),
+    )));
+
+    let regular_char = none_of("\"\\$");
+
+    let text_char = escape_sequence.or(regular_char);
+
+    let text = text_char
+        .repeated()
+        .at_least(1)
+        .collect::<String>()
         .map(ArgumentPart::Text);
 
     let var_ref = variable_reference();
 
-    choice((var_ref, text_part))
-        .repeated()
-        .at_least(1)
-        .map(|parts| Argument::Unquoted(ArgumentValue { parts }))
+    // Bare dollar sign: $ not followed by {, E (for ENV), C (for CACHE), or < (for generator expr)
+    let bare_dollar = just('$')
+        .then_ignore(none_of("{EC<").rewind().or(end().to('\0')))
+        .map(|_| ArgumentPart::Text("$".to_string()));
+
+    choice((var_ref, bare_dollar, text)).repeated()
 }
 
 /// Parser for bracket-quoted arguments: [[content]] or [=[content]=]
@@ -211,15 +270,21 @@ fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>
 
     let var_ref = variable_reference();
 
-    choice((var_ref, text)).repeated()
+    // Bare dollar sign: $ not followed by {, E (for ENV), C (for CACHE), or < (for generator expr)
+    // This handles cases like $" or $foo where $ should be treated as literal text
+    let bare_dollar = just('$')
+        .then_ignore(none_of("{EC<").rewind().or(end().to('\0')))
+        .map(|_| ArgumentPart::Text("$".to_string()));
+
+    choice((var_ref, bare_dollar, text)).repeated()
 }
 
 /// Parser for variable references: ${VAR}, $ENV{VAR}, $CACHE{VAR}, $<GENEXPR>
 /// Supports nested variables like ${${VARNAME}}
 fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>> {
     recursive(|var_ref| {
-        // Variable content can be: alphanumeric, underscore, or nested ${...}
-        let plain_chars = filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_')
+        // Variable content can be: alphanumeric, underscore, hyphen, or nested ${...}
+        let plain_chars = filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
             .repeated()
             .at_least(1)
             .collect::<String>();
@@ -400,6 +465,39 @@ mod tests {
     }
 
     #[test]
+    fn test_variable_with_hyphen() {
+        // Variable names can contain hyphens (e.g., LLVM-CONFIG)
+        let file = parse_ok("set(VAR ${LLVM-CONFIG})");
+        assert_eq!(file.commands.len(), 1);
+        let args = &file.commands[0].arguments;
+        assert_eq!(args.len(), 2);
+
+        if let Argument::Unquoted(val) = &args[1] {
+            assert_eq!(val.parts.len(), 1);
+            assert!(matches!(&val.parts[0], ArgumentPart::Variable(v) if v == "LLVM-CONFIG"));
+        } else {
+            panic!("Expected unquoted argument");
+        }
+
+        // Multiple hyphens in variable name
+        let file2 = parse_ok("message(${FOO-BAR-BAZ})");
+        assert_eq!(file2.commands.len(), 1);
+        let args2 = &file2.commands[0].arguments;
+        assert_eq!(args2.len(), 1);
+
+        if let Argument::Unquoted(val) = &args2[0] {
+            assert_eq!(val.parts.len(), 1);
+            assert!(matches!(&val.parts[0], ArgumentPart::Variable(v) if v == "FOO-BAR-BAZ"));
+        } else {
+            panic!("Expected unquoted argument");
+        }
+
+        // Nested variable with hyphen
+        let file3 = parse_ok("set(VAR ${${MY-VAR}})");
+        assert_eq!(file3.commands.len(), 1);
+    }
+
+    #[test]
     fn test_comments() {
         let file = parse_ok(
             "
@@ -457,5 +555,127 @@ add_executable(myapp
     fn test_generator_expression() {
         let file = parse_ok("target_include_directories(mylib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)");
         assert_eq!(file.commands.len(), 1);
+    }
+
+    #[test]
+    fn test_bare_dollar_in_quoted() {
+        // Bare $ not followed by valid variable syntax should be treated as literal
+        let file = parse_ok(r#"message("$foo")"#);
+        assert_eq!(file.commands.len(), 1);
+        let arg = &file.commands[0].arguments[0];
+        assert_eq!(arg.to_string_lossy(), "$foo");
+
+        // Dollar before quote (end of string)
+        let file2 = parse_ok(r#"message("test$")"#);
+        assert_eq!(file2.commands.len(), 1);
+        let arg2 = &file2.commands[0].arguments[0];
+        assert_eq!(arg2.to_string_lossy(), "test$");
+
+        // Multiple bare dollars
+        let file3 = parse_ok(r#"message("$a$b")"#);
+        assert_eq!(file3.commands.len(), 1);
+        let arg3 = &file3.commands[0].arguments[0];
+        assert_eq!(arg3.to_string_lossy(), "$a$b");
+
+        // Bare dollar followed by valid variable
+        let file4 = parse_ok(r#"message("$foo${VAR}")"#);
+        assert_eq!(file4.commands.len(), 1);
+    }
+
+    #[test]
+    fn test_bare_dollar_in_unquoted() {
+        // Bare $ in unquoted argument
+        let file = parse_ok("message($foo)");
+        assert_eq!(file.commands.len(), 1);
+        let arg = &file.commands[0].arguments[0];
+        assert_eq!(arg.to_string_lossy(), "$foo");
+    }
+
+    #[test]
+    fn test_embedded_quotes_in_unquoted() {
+        // Simple embedded quoted string: -DFOO="bar"
+        let file = parse_ok(r#"add_definitions(-DFOO="bar")"#);
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("add_definitions"));
+        assert_eq!(file.commands[0].arguments.len(), 1);
+        // The argument should be parsed as a single unquoted argument
+        if let Argument::Unquoted(val) = &file.commands[0].arguments[0] {
+            // Should have text parts: -DFOO=, ", bar, "
+            let full = val
+                .parts
+                .iter()
+                .map(|p| match p {
+                    ArgumentPart::Text(s) => s.clone(),
+                    ArgumentPart::Variable(s) => format!("${{{s}}}"),
+                    _ => String::new(),
+                })
+                .collect::<String>();
+            assert_eq!(full, r#"-DFOO="bar""#);
+        } else {
+            panic!("Expected unquoted argument");
+        }
+
+        // Embedded quoted string with variable: -DFOO="${VAR}"
+        let file2 = parse_ok(r#"add_definitions(-DFOO="${VAR}")"#);
+        assert_eq!(file2.commands.len(), 1);
+        assert_eq!(file2.commands[0].arguments.len(), 1);
+        if let Argument::Unquoted(val) = &file2.commands[0].arguments[0] {
+            // Should have: -DFOO=, ", ${VAR}, "
+            let has_var = val.parts.iter().any(|p| matches!(p, ArgumentPart::Variable(v) if v == "VAR"));
+            assert!(has_var, "Should contain variable reference VAR");
+            let full = val
+                .parts
+                .iter()
+                .map(|p| match p {
+                    ArgumentPart::Text(s) => s.clone(),
+                    ArgumentPart::Variable(s) => format!("${{{s}}}"),
+                    _ => String::new(),
+                })
+                .collect::<String>();
+            assert_eq!(full, r#"-DFOO="${VAR}""#);
+        } else {
+            panic!("Expected unquoted argument");
+        }
+
+        // Real-world example: -DPACKAGE_LIBDIR="${PKG_LIBDIR}"
+        let file3 = parse_ok(r#"add_definitions(-DPACKAGE_LIBDIR="${PKG_LIBDIR}")"#);
+        assert_eq!(file3.commands.len(), 1);
+        assert_eq!(file3.commands[0].arguments.len(), 1);
+        if let Argument::Unquoted(val) = &file3.commands[0].arguments[0] {
+            let has_var = val.parts.iter().any(|p| matches!(p, ArgumentPart::Variable(v) if v == "PKG_LIBDIR"));
+            assert!(has_var, "Should contain variable reference PKG_LIBDIR");
+        } else {
+            panic!("Expected unquoted argument");
+        }
+    }
+
+    #[test]
+    fn test_embedded_quotes_with_escapes() {
+        // Embedded quotes with escape sequences
+        let file = parse_ok(r#"add_definitions(-DFOO="bar\\baz")"#);
+        assert_eq!(file.commands.len(), 1);
+        if let Argument::Unquoted(val) = &file.commands[0].arguments[0] {
+            let full = val
+                .parts
+                .iter()
+                .map(|p| match p {
+                    ArgumentPart::Text(s) => s.clone(),
+                    _ => String::new(),
+                })
+                .collect::<String>();
+            // The backslash should be escaped to a single backslash
+            assert!(full.contains("bar\\baz"), "Got: {full}");
+        } else {
+            panic!("Expected unquoted argument");
+        }
+    }
+
+    #[test]
+    fn test_multiple_embedded_quotes() {
+        // Multiple embedded quoted sections in one argument
+        let file = parse_ok(r#"set(FLAGS -DFOO="1" -DBAR="2")"#);
+        assert_eq!(file.commands.len(), 1);
+        // These should be parsed as separate arguments due to whitespace
+        assert_eq!(file.commands[0].arguments.len(), 3);
     }
 }

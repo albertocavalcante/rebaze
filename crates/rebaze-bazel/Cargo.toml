@@ -16,4 +16,5 @@ rebaze-gradle.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+serde_starlark.workspace = true
 tracing.workspace = true

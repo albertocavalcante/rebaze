@@ -6,19 +6,25 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ariadne::{Color, Label, Report, ReportKind, Source};
 
 pub mod ast;
+pub mod eval;
 mod parser;
 mod project;
 
 pub use ast::{Argument, ArgumentPart, ArgumentValue, CMakeFile, Command};
-pub use project::{CMakeProject, Executable, Library, LibraryKind, Package};
+pub use eval::EvalContext;
+pub use project::{
+    extract_project_from_path, CMakeProject, Executable, ExtractError, Library, LibraryKind,
+    Package, PkgConfigModule,
+};
 
 /// Parse a CMake project at the given path.
 ///
-/// Looks for CMakeLists.txt in the given directory and parses it.
+/// Recursively parses CMakeLists.txt in the given directory and all
+/// subdirectories referenced via add_subdirectory() commands.
 pub fn parse(path: &Path) -> Result<CMakeProject> {
     let cmake_file = path.join("CMakeLists.txt");
 
@@ -28,18 +34,21 @@ pub fn parse(path: &Path) -> Result<CMakeProject> {
 
     tracing::debug!("Parsing CMake project at {}", path.display());
 
-    let src = std::fs::read_to_string(&cmake_file)
-        .with_context(|| format!("Failed to read {}", cmake_file.display()))?;
-
-    let (file, errors) = parser::parse(&src);
-
-    if !errors.is_empty() {
-        report_errors(&cmake_file.display().to_string(), &src, &errors);
-    }
-
-    let file = file.ok_or_else(|| anyhow::anyhow!("Failed to parse CMakeLists.txt"))?;
-
-    let project = project::extract_project(&file, path.to_path_buf());
+    // Use recursive parsing to follow add_subdirectory() calls
+    let project = project::extract_project_from_path(path).map_err(|e| match e {
+        project::ExtractError::ReadFile { path: p, source } => {
+            anyhow::anyhow!("Failed to read {}: {}", p.display(), source)
+        }
+        project::ExtractError::Canonicalize { path: p, source } => {
+            anyhow::anyhow!("Failed to canonicalize {}: {}", p.display(), source)
+        }
+        project::ExtractError::NotFound(p) => {
+            anyhow::anyhow!("CMakeLists.txt not found at {}", p.display())
+        }
+        project::ExtractError::Parse { path: p, message } => {
+            anyhow::anyhow!("Failed to parse {}: {}", p.display(), message)
+        }
+    })?;
 
     tracing::info!(
         "Parsed CMake project '{}' with {} executables and {} libraries",
