@@ -1,0 +1,18 @@
+{
+    "rust-analyzer.check.command": "clippy",
+    "rust-analyzer.cargo.buildScripts.enable": true,
+    "rust-analyzer.procMacro.enable": true,
+    "rust-analyzer.inlayHints.parameterHints.enable": false,
+    "editor.formatOnSave": true,
+    "editor.rulers": [
+        100
+    ],
+    "files.insertFinalNewline": true,
+    "files.trimTrailingWhitespace": true,
+    "[starlark]": {
+        "editor.defaultFormatter": "BazelBuild.vscode-bazel"
+    },
+    "[bazel.build]": {
+        "editor.defaultFormatter": "BazelBuild.vscode-bazel"
+    }
+}
