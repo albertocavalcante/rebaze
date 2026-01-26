@@ -134,8 +134,25 @@ fn argument() -> impl Parser<char, Argument, Error = Simple<char>> {
 /// Parser for unquoted arguments (simple version without nested parens - those are handled at argument level).
 /// Handles embedded quoted strings like `-DFOO="${VAR}"` where the whole thing is one unquoted argument.
 fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char>> {
-    // Escape sequences
-    let escape_sequence = just('\\').ignore_then(any()).map(|c| vec![c]);
+    // Escape sequences - handle common escapes like \\, \", \n, \t, \r, \;, \$
+    // Also handle \# which is used to escape comments in CMake
+    let escape_sequence = just('\\')
+        .ignore_then(choice((
+            just('\\').to('\\'),
+            just('"').to('"'),
+            just('n').to('\n'),
+            just('t').to('\t'),
+            just('r').to('\r'),
+            just(';').to(';'),
+            just('$').to('$'),
+            just('#').to('#'),
+            just('(').to('('),
+            just(')').to(')'),
+            just(' ').to(' '),
+            // For any other escaped character, just return the character itself
+            any(),
+        )))
+        .map(|c| vec![c]);
 
     // Regular characters (no whitespace, quotes, #, $, ;, or parens)
     let regular_chars = filter(|c: &char| {
@@ -248,6 +265,7 @@ fn quoted_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
 
 /// Parser for content inside double quotes.
 fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> {
+    // Escape sequences - handle common escapes and fall back to literal for others
     let escape_sequence = just('\\').ignore_then(choice((
         just('\\').to('\\'),
         just('"').to('"'),
@@ -256,6 +274,12 @@ fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>
         just('r').to('\r'),
         just(';').to(';'),
         just('$').to('$'),
+        just('#').to('#'),
+        just('(').to('('),
+        just(')').to(')'),
+        just(' ').to(' '),
+        // For any other escaped character, just return the character itself
+        any(),
     )));
 
     let regular_char = none_of("\"\\$");
@@ -677,5 +701,51 @@ add_executable(myapp
         assert_eq!(file.commands.len(), 1);
         // These should be parsed as separate arguments due to whitespace
         assert_eq!(file.commands[0].arguments.len(), 3);
+    }
+
+    #[test]
+    fn test_escape_sequences_in_quoted() {
+        // Test \# escape (used for literal hash in quoted strings)
+        // Arguments: COMMAND(0), cmake(1), -E(2), echo(3), "\#include <foo>"(4)
+        let file = parse_ok(r#"add_custom_command(COMMAND cmake -E echo "\#include <foo>")"#);
+        assert_eq!(file.commands.len(), 1);
+        if let Argument::Quoted(val) = &file.commands[0].arguments[4] {
+            let full: String = val.parts.iter().map(|p| match p {
+                ArgumentPart::Text(s) => s.clone(),
+                _ => String::new(),
+            }).collect();
+            assert_eq!(full, "#include <foo>");
+        } else {
+            panic!("Expected quoted argument");
+        }
+
+        // Test multiple escape sequences: \\, \", \n, \t
+        let file2 = parse_ok(r#"message("line1\nline2\ttabbed\\path\"quoted\"")"#);
+        assert_eq!(file2.commands.len(), 1);
+        if let Argument::Quoted(val) = &file2.commands[0].arguments[0] {
+            let full: String = val.parts.iter().map(|p| match p {
+                ArgumentPart::Text(s) => s.clone(),
+                _ => String::new(),
+            }).collect();
+            assert_eq!(full, "line1\nline2\ttabbed\\path\"quoted\"");
+        } else {
+            panic!("Expected quoted argument");
+        }
+    }
+
+    #[test]
+    fn test_escape_sequences_in_unquoted() {
+        // Test escape sequences in unquoted arguments
+        let file = parse_ok(r#"set(PATH path\\to\\file)"#);
+        assert_eq!(file.commands.len(), 1);
+        if let Argument::Unquoted(val) = &file.commands[0].arguments[1] {
+            let full: String = val.parts.iter().map(|p| match p {
+                ArgumentPart::Text(s) => s.clone(),
+                _ => String::new(),
+            }).collect();
+            assert_eq!(full, "path\\to\\file");
+        } else {
+            panic!("Expected unquoted argument");
+        }
     }
 }

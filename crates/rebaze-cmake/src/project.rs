@@ -177,6 +177,7 @@ pub fn extract_project_with_context(
             "target_include_directories" => apply_include_directories(cmd, &mut project, ctx),
             "target_compile_definitions" => apply_compile_definitions(cmd, &mut project, ctx),
             "target_compile_options" => apply_compile_options(cmd, &mut project, ctx),
+            "target_sources" => apply_target_sources(cmd, &mut project, ctx),
             _ => {}
         }
     }
@@ -1021,6 +1022,83 @@ fn apply_compile_options(cmd: &Command, project: &mut CMakeProject, ctx: &EvalCo
     }
 }
 
+fn apply_target_sources(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext) {
+    // target_sources(<target>
+    //   <INTERFACE|PUBLIC|PRIVATE> [items1...]
+    //   [<INTERFACE|PUBLIC|PRIVATE> [items2...] ...])
+    // Also supports FILE_SET which we skip for now
+    let target = match cmd.arguments.first().and_then(Argument::as_literal) {
+        Some(target) => target.to_string(),
+        None => return,
+    };
+
+    let mut sources = Vec::new();
+    let mut skip_until_next_visibility = false;
+
+    for arg in cmd.arguments.iter().skip(1) {
+        if let Some(lit) = arg.as_literal() {
+            let upper = lit.to_uppercase();
+            // Reset skip state on visibility keywords
+            if matches!(upper.as_str(), "PUBLIC" | "PRIVATE" | "INTERFACE") {
+                skip_until_next_visibility = false;
+                continue;
+            }
+            // FILE_SET introduces a block we should skip until next visibility keyword
+            if upper == "FILE_SET" || upper == "TYPE" || upper == "BASE_DIRS" || upper == "FILES" {
+                skip_until_next_visibility = true;
+                continue;
+            }
+            if skip_until_next_visibility {
+                continue;
+            }
+            // Skip generator expressions for now
+            if lit.starts_with('$') {
+                continue;
+            }
+            sources.push(lit.to_string());
+        } else {
+            // Expand variable references
+            let expanded = ctx.expand_argument(arg);
+            for val in expanded {
+                let upper = val.to_uppercase();
+                if matches!(upper.as_str(), "PUBLIC" | "PRIVATE" | "INTERFACE") {
+                    skip_until_next_visibility = false;
+                    continue;
+                }
+                if upper == "FILE_SET" || upper == "TYPE" || upper == "BASE_DIRS" || upper == "FILES" {
+                    skip_until_next_visibility = true;
+                    continue;
+                }
+                if skip_until_next_visibility {
+                    continue;
+                }
+                if val.starts_with('$') {
+                    continue;
+                }
+                sources.push(val);
+            }
+        }
+    }
+
+    if sources.is_empty() {
+        return;
+    }
+
+    // Find and update the target
+    for exe in &mut project.executables {
+        if exe.name == target {
+            exe.sources.extend(sources);
+            return;
+        }
+    }
+    for lib in &mut project.libraries {
+        if lib.name == target {
+            lib.sources.extend(sources);
+            return;
+        }
+    }
+}
+
 fn strip_define_prefix(value: &str) -> String {
     if let Some(stripped) = value.strip_prefix("-D") {
         return stripped.to_string();
@@ -1474,5 +1552,49 @@ add_executable(level2_exe main.cpp)
         // Should only have valid_dir, not the unexpanded variable
         assert_eq!(project.global_include_directories.len(), 1);
         assert!(project.global_include_directories.contains(&"valid_dir".to_string()));
+    }
+
+    #[test]
+    fn test_target_sources() {
+        let project = parse_and_extract(
+            "
+            project(mylib)
+            add_library(mylib STATIC initial.cpp)
+            target_sources(mylib PRIVATE extra1.cpp extra2.cpp)
+            target_sources(mylib PUBLIC public.cpp)
+        ",
+        );
+
+        assert_eq!(project.libraries.len(), 1);
+        let lib = &project.libraries[0];
+        assert_eq!(lib.name, "mylib");
+        assert_eq!(
+            lib.sources,
+            vec!["initial.cpp", "extra1.cpp", "extra2.cpp", "public.cpp"]
+        );
+    }
+
+    #[test]
+    fn test_target_sources_with_file_set() {
+        let project = parse_and_extract(
+            "
+            project(mylib)
+            add_library(mylib STATIC initial.cpp)
+            target_sources(mylib
+                PUBLIC
+                    FILE_SET HEADERS
+                    TYPE HEADERS
+                    BASE_DIRS include
+                    FILES include/mylib.h
+                PRIVATE
+                    impl.cpp
+            )
+        ",
+        );
+
+        assert_eq!(project.libraries.len(), 1);
+        let lib = &project.libraries[0];
+        // FILE_SET block should be skipped, only impl.cpp should be captured
+        assert_eq!(lib.sources, vec!["initial.cpp", "impl.cpp"]);
     }
 }
