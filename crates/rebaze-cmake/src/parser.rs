@@ -79,12 +79,16 @@ fn command() -> impl Parser<char, Command, Error = Simple<char>> {
 
 /// Parser for a list of arguments.
 fn argument_list() -> impl Parser<char, Vec<Argument>, Error = Simple<char>> {
-    argument()
-        .separated_by(arg_separator())
-        .allow_leading()
-        .allow_trailing()
+    // Arguments are typically separated by whitespace/semicolons, but we make separators
+    // optional to handle edge cases:
+    // - `if(NOT(A))` - no space between NOT and (
+    // - `"string1"+"string2"` - invalid CMake, but seen in the wild
+    // The parser still works because each argument type is distinct and unambiguous
+    arg_separator()
         .or_not()
-        .map(std::option::Option::unwrap_or_default)
+        .ignore_then(argument())
+        .then_ignore(arg_separator().or_not())
+        .repeated()
 }
 
 /// Parser for a single argument (including nested parentheses with mixed arg types).
@@ -747,5 +751,38 @@ add_executable(myapp
         } else {
             panic!("Expected unquoted argument");
         }
+    }
+
+    #[test]
+    fn test_no_space_before_paren() {
+        // CMake allows parentheses directly following an argument in conditionals
+        // e.g., if(NOT(A AND B)) is valid
+        let file = parse_ok("if(NOT(${A} AND ${B}))");
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("if"));
+        // Should parse as: NOT, (${A} AND ${B})
+        assert!(file.commands[0].arguments.len() >= 2);
+        assert_eq!(file.commands[0].arg_literal(0), Some("NOT"));
+    }
+
+    #[test]
+    fn test_no_space_between_quoted_args() {
+        // Some CMake files in the wild have malformed syntax like "a"+"b"
+        // We handle this gracefully by making separators optional
+        // Note: +"world" is parsed as single unquoted arg with embedded quote
+        let file = parse_ok(r#"message("hello"+"world")"#);
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("message"));
+        // Parses as: "hello", +"world" (2 args)
+        assert_eq!(file.commands[0].arguments.len(), 2);
+    }
+
+    #[test]
+    fn test_arguments_without_spaces() {
+        // Multiple arguments without spaces
+        let file = parse_ok(r#"message("a""b""c")"#);
+        assert_eq!(file.commands.len(), 1);
+        // Should parse as three quoted arguments
+        assert_eq!(file.commands[0].arguments.len(), 3);
     }
 }
