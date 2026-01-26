@@ -101,7 +101,7 @@ use_repo(system_deps, {})"#,
         // Add source_deps module extension for building from source
         let source_dep_names: Vec<String> = all_source_packages
             .iter()
-            .map(|name| format!("{}_src", name))
+            .map(|name| format!("{name}_src"))
             .collect();
 
         parts.push("# Source downloads (strategy = \"source\" - hermetic builds)".to_string());
@@ -132,11 +132,11 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         "\n#   - pkg-config deps in //third_party/ use system libs (not hermetic)"
     };
     parts.push(format!(
-        r#"# BUILD file for {} - migrated from CMake by rebaze
+        r"# BUILD file for {} - migrated from CMake by rebaze
 #
 # NOTE: This file was auto-generated and should be reviewed:
 #   - glob patterns use allow_empty=True (some patterns may match nothing)
-#   - include paths are inferred from source file locations{}"#,
+#   - include paths are inferred from source file locations{}",
         project.name, pkg_note
     ));
 

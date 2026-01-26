@@ -237,7 +237,7 @@ fn find_sandbox_root(path: &str) -> Option<String> {
 
     for root in &known_roots {
         if path.starts_with(root) {
-            return Some(root.to_string());
+            return Some((*root).to_string());
         }
     }
 

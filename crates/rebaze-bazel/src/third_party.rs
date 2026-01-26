@@ -11,7 +11,9 @@
 //! - `bazelle`: Use bazelle/gazelle_cc to generate BUILD files
 //! - `custom`: User-defined resolution
 
+use crate::starlark::{Alias, CcLibrary, Cmake, ConfigureMake, FunctionCall, Meson};
 use rebaze_cmake::PkgConfigModule;
+use std::collections::BTreeMap;
 
 /// Dependency resolution strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -93,13 +95,18 @@ package(default_visibility = ["//visibility:public"])"#
         let target_name = pkg.prefix.to_lowercase().replace('-', "_");
         let packages_str = pkg.packages.join(", ");
 
+        let alias = Alias {
+            name: target_name.clone(),
+            actual: FunctionCall {
+                name: "resolve_dep",
+                args: vec![target_name],
+            },
+        };
+
         lines.push(format!("# {} -> {}", pkg.prefix, packages_str));
-        lines.push(format!(
-            r#"alias(
-    name = "{target_name}",
-    actual = resolve_dep("{target_name}"),
-)"#
-        ));
+        if let Ok(alias_str) = serde_starlark::to_string(&alias) {
+            lines.push(alias_str);
+        }
         lines.push(String::new());
     }
 
@@ -116,45 +123,39 @@ package(default_visibility = ["//visibility:public"])"#
         // Try to detect actual flags from pkg-config
         let detected_flags = probe_pkg_config(&pkg.packages);
 
-        lines.push("cc_library(".to_string());
-        lines.push(format!("    name = \"{target_name}_system\","));
-
         // NOTE: We only include linkopts here, NOT copts with include paths.
         // Include paths must go in .bazelrc as --copt=-isystem/path because
         // rules_cc validates include paths in copts and rejects absolute system paths.
 
-        if let Some(ref flags) = detected_flags {
+        let (linkopts, needs_todo) = if let Some(ref flags) = detected_flags {
             // Extract only linker flags (not -I or other compiler flags)
-            let linkopts: Vec<_> = flags.libs.iter()
+            let opts: Vec<String> = flags
+                .libs
+                .iter()
                 .filter(|f| f.starts_with("-l") || f.starts_with("-L"))
+                .cloned()
                 .collect();
-
-            if !linkopts.is_empty() {
-                lines.push("    linkopts = [".to_string());
-                for opt in &linkopts {
-                    lines.push(format!("        \"{opt}\","));
-                }
-                lines.push("    ],".to_string());
-            }
+            (opts, false)
         } else {
             // Fallback to guessed linkopts when pkg-config not available
-            let linkopts = generate_system_linkopts(&pkg.packages);
-            if !linkopts.is_empty() {
-                lines.push("    linkopts = [".to_string());
-                for opt in &linkopts {
-                    lines.push(format!("        \"{opt}\","));
-                }
-                lines.push("    ],".to_string());
-            }
-            lines.push(format!(
-                "    # TODO: pkg-config not available. Add linkopts from:"
-            ));
-            lines.push(format!(
-                "    # pkg-config --libs {packages_str}"
-            ));
+            (generate_system_linkopts(&pkg.packages), true)
+        };
+
+        let cc_lib = CcLibrary {
+            name: format!("{target_name}_system"),
+            linkopts,
+            ..Default::default()
+        };
+
+        if let Ok(lib_str) = serde_starlark::to_string(&cc_lib) {
+            lines.push(lib_str);
         }
 
-        lines.push(")".to_string());
+        if needs_todo {
+            lines.push("# TODO: pkg-config not available. Add linkopts from:".to_string());
+            lines.push(format!("# pkg-config --libs {packages_str}"));
+        }
+
         lines.push(String::new());
     }
 
@@ -199,7 +200,7 @@ DEPS_CONFIG = {{"#
         let packages: Vec<_> = pkg
             .packages
             .iter()
-            .map(|p| format!("\"{}\"", p))
+            .map(|p| format!("\"{p}\""))
             .collect();
 
         lines.push(format!(
@@ -338,6 +339,9 @@ fn get_known_package_info(pkg_name: &str) -> Option<KnownPackageInfo> {
     }
 }
 
+/// Metadata for known packages that can be built from source.
+/// Fields like `version` and `out_shared_libs` are reserved for future use.
+#[allow(dead_code)]
 struct KnownPackageInfo {
     name: &'static str,
     version: &'static str,
@@ -398,7 +402,7 @@ SOURCES = {"#
             } else {
                 format!(
                     "\n        \"deps\": [{}],",
-                    info.deps.iter().map(|d| format!("\"{}\"", d)).collect::<Vec<_>>().join(", ")
+                    info.deps.iter().map(|d| format!("\"{d}\"")).collect::<Vec<_>>().join(", ")
                 )
             };
 
@@ -407,12 +411,12 @@ SOURCES = {"#
             } else {
                 format!(
                     "\n        \"meson_options\": [{}],",
-                    info.meson_options.iter().map(|o| format!("\"{}\"", o)).collect::<Vec<_>>().join(", ")
+                    info.meson_options.iter().map(|o| format!("\"{o}\"")).collect::<Vec<_>>().join(", ")
                 )
             };
 
             let out_libs_str = info.out_libs.iter()
-                .map(|l| format!("\"{}\"", l))
+                .map(|l| format!("\"{l}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
 
@@ -522,85 +526,56 @@ load("//third_party:source.bzl", "SOURCES")
 
     for pkg_name in &all_packages {
         if let Some(info) = get_known_package_info(pkg_name) {
-            let deps_str = if info.deps.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    "\n    deps = [{}],",
-                    info.deps.iter().map(|d| format!("\":{}_source\"", d)).collect::<Vec<_>>().join(", ")
-                )
-            };
+            let name = format!("{}_source", info.name);
+            let lib_source = format!("@{}_src//:all", info.name);
+            let deps: Vec<String> = info
+                .deps
+                .iter()
+                .map(|d| format!(":{d}_source"))
+                .collect();
 
-            let out_libs_str = info.out_libs.iter()
-                .map(|l| format!("\"{}\"", l))
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            match info.build_system {
+            let rule_str = match info.build_system {
                 "meson" => {
-                    let opts_str = if info.meson_options.is_empty() {
-                        String::new()
-                    } else {
-                        format!(
-                            "\n    options = {{{}}},",
-                            info.meson_options.iter()
-                                .map(|o| {
-                                    let parts: Vec<&str> = o.trim_start_matches('-').splitn(2, '=').collect();
-                                    if parts.len() == 2 {
-                                        format!("\"{}\": \"{}\"", parts[0], parts[1])
-                                    } else {
-                                        format!("\"{}\": \"true\"", parts[0])
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    };
+                    let options: BTreeMap<String, String> = info
+                        .meson_options
+                        .iter()
+                        .map(|o| {
+                            let parts: Vec<&str> =
+                                o.trim_start_matches('-').splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                (parts[0].to_string(), parts[1].to_string())
+                            } else {
+                                (parts[0].to_string(), "true".to_string())
+                            }
+                        })
+                        .collect();
 
-                    lines.push(format!(
-                        r#"
-meson(
-    name = "{name}_source",
-    lib_source = "@{name}_src//:all",
-    out_static_libs = [{out_libs}],{opts}{deps}
-    visibility = ["//visibility:public"],
-)"#,
-                        name = info.name,
-                        out_libs = out_libs_str,
-                        opts = opts_str,
-                        deps = deps_str,
-                    ));
+                    let rule = Meson::new(name, lib_source)
+                        .with_static_libs(info.out_libs.clone())
+                        .with_options(options)
+                        .with_deps(deps)
+                        .with_visibility_public();
+                    serde_starlark::to_string(&rule).ok()
                 }
                 "cmake" => {
-                    lines.push(format!(
-                        r#"
-cmake(
-    name = "{name}_source",
-    lib_source = "@{name}_src//:all",
-    out_static_libs = [{out_libs}],
-    generate_args = ["-GNinja"],{deps}
-    visibility = ["//visibility:public"],
-)"#,
-                        name = info.name,
-                        out_libs = out_libs_str,
-                        deps = deps_str,
-                    ));
+                    let rule = Cmake::new(name, lib_source)
+                        .with_static_libs(info.out_libs.clone())
+                        .with_deps(deps)
+                        .with_visibility_public();
+                    serde_starlark::to_string(&rule).ok()
                 }
                 "autotools" => {
-                    lines.push(format!(
-                        r#"
-configure_make(
-    name = "{name}_source",
-    lib_source = "@{name}_src//:all",
-    out_static_libs = [{out_libs}],{deps}
-    visibility = ["//visibility:public"],
-)"#,
-                        name = info.name,
-                        out_libs = out_libs_str,
-                        deps = deps_str,
-                    ));
+                    let rule = ConfigureMake::new(name, lib_source)
+                        .with_static_libs(info.out_libs.clone())
+                        .with_deps(deps)
+                        .with_visibility_public();
+                    serde_starlark::to_string(&rule).ok()
                 }
-                _ => {}
+                _ => None,
+            };
+
+            if let Some(rule) = rule_str {
+                lines.push(format!("\n{rule}"));
             }
         } else {
             // Unknown package - generate placeholder
@@ -681,9 +656,7 @@ pub fn probe_system_lib(packages: &[String]) -> Option<SystemLibInfo> {
         .filter_map(|f| f.strip_prefix("-I"))
         .map(|p| {
             // Try to make path relative to prefix
-            p.strip_prefix(&prefix)
-                .map(|rel| rel.trim_start_matches('/').to_string())
-                .unwrap_or_else(|| p.to_string())
+            p.strip_prefix(&prefix).map_or_else(|| p.to_string(), |rel| rel.trim_start_matches('/').to_string())
         })
         .collect();
 
@@ -702,15 +675,13 @@ pub fn probe_system_lib(packages: &[String]) -> Option<SystemLibInfo> {
         if let Some(lib) = flag.strip_prefix("-l") {
             libs.push(lib.to_string());
         } else if let Some(dir) = flag.strip_prefix("-L") {
-            let rel_dir = dir.strip_prefix(&prefix)
-                .map(|rel| rel.trim_start_matches('/').to_string())
-                .unwrap_or_else(|| dir.to_string());
+            let rel_dir = dir.strip_prefix(&prefix).map_or_else(|| dir.to_string(), |rel| rel.trim_start_matches('/').to_string());
             lib_dirs.push(rel_dir);
         }
     }
 
     Some(SystemLibInfo {
-        name: base_packages.first()?.to_string(),
+        name: (*base_packages.first()?).to_string(),
         packages: packages.to_vec(),
         prefix: Some(prefix),
         include_dirs,
@@ -743,13 +714,13 @@ SYSTEM_LIBS = {"#.to_string(),
         if let Some(info) = probe_system_lib(&pkg.packages) {
             let prefix = info.prefix.as_deref().unwrap_or("/usr/local");
             let include_dirs: Vec<_> = info.include_dirs.iter()
-                .map(|d| format!("\"{}\"", d))
+                .map(|d| format!("\"{d}\""))
                 .collect();
             let lib_dirs: Vec<_> = info.lib_dirs.iter()
-                .map(|d| format!("\"{}\"", d))
+                .map(|d| format!("\"{d}\""))
                 .collect();
             let libs: Vec<_> = info.libs.iter()
-                .map(|l| format!("\"{}\"", l))
+                .map(|l| format!("\"{l}\""))
                 .collect();
 
             lines.push(format!(

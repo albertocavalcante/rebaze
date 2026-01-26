@@ -190,7 +190,7 @@ pub struct Glob {
 
 impl Glob {
     /// Create a new glob with the given include patterns, allowing empty results.
-    pub fn new_allow_empty(include: Vec<String>) -> Self {
+    pub const fn new_allow_empty(include: Vec<String>) -> Self {
         Self {
             include,
             exclude: Vec::new(),
