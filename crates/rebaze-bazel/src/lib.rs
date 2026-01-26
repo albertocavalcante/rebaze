@@ -48,10 +48,19 @@ pub fn generate(project: &rebaze_gradle::GradleProject) -> HashMap<String, Strin
 /// Generate Bazel files from a parsed CMake project.
 #[must_use]
 pub fn generate_from_cmake(project: &rebaze_cmake::CMakeProject) -> HashMap<String, String> {
+    generate_from_cmake_with_config(project, &MigrationConfig::default())
+}
+
+/// Generate Bazel files from a parsed CMake project with custom configuration.
+#[must_use]
+pub fn generate_from_cmake_with_config(
+    project: &rebaze_cmake::CMakeProject,
+    config: &MigrationConfig,
+) -> HashMap<String, String> {
     let mut files = HashMap::new();
 
     // Generate MODULE.bazel
-    let module_bazel = cmake_generator::generate_module_bazel(project);
+    let module_bazel = cmake_generator::generate_module_bazel(project, config);
     files.insert("MODULE.bazel".to_string(), module_bazel);
 
     // Generate root BUILD.bazel

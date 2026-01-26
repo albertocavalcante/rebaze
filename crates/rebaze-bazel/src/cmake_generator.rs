@@ -58,9 +58,11 @@ fn detect_external_deps(project: &CMakeProject) -> DetectedDeps {
     deps
 }
 
+use crate::config::MigrationConfig;
+
 /// Generate a MODULE.bazel file for a CMake project.
 #[must_use]
-pub fn generate_module_bazel(project: &CMakeProject) -> String {
+pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -> String {
     let mut parts = Vec::new();
 
     // Add docstring
@@ -72,7 +74,7 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
     // Module declaration
     let module = Module {
         name: project.name.to_lowercase().replace('-', "_"),
-        version: "0.1.0".to_string(),
+        version: config.build.module_version.clone(),
     };
     parts.push(
         serde_starlark::to_string(&module).unwrap_or_else(|e| format!("# Error: {e}")),
@@ -82,7 +84,7 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
     parts.push("# C/C++ toolchain".to_string());
     let rules_cc = BazelDep {
         name: "rules_cc".to_string(),
-        version: "0.2.14".to_string(),
+        version: config.versions.rules_cc.clone(),
     };
     parts.push(
         serde_starlark::to_string(&rules_cc).unwrap_or_else(|e| format!("# Error: {e}")),
@@ -94,7 +96,7 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
         parts.push("# Testing framework (auto-detected from CMake)".to_string());
         let googletest = BazelDep {
             name: "googletest".to_string(),
-            version: "1.15.2".to_string(),
+            version: config.versions.googletest.clone(),
         };
         parts.push(
             serde_starlark::to_string(&googletest).unwrap_or_else(|e| format!("# Error: {e}")),
@@ -104,7 +106,7 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
         parts.push("# Benchmarking framework (auto-detected from CMake)".to_string());
         let benchmark = BazelDep {
             name: "google_benchmark".to_string(),
-            version: "1.9.1".to_string(),
+            version: config.versions.google_benchmark.clone(),
         };
         parts.push(
             serde_starlark::to_string(&benchmark).unwrap_or_else(|e| format!("# Error: {e}")),
@@ -116,7 +118,7 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
         parts.push("# Platform and dependency management".to_string());
         let platforms = BazelDep {
             name: "platforms".to_string(),
-            version: "1.0.0".to_string(),
+            version: config.versions.platforms.clone(),
         };
         parts.push(
             serde_starlark::to_string(&platforms).unwrap_or_else(|e| format!("# Error: {e}")),
@@ -128,7 +130,7 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
         parts.push("# Foreign build system support (for building deps from source)".to_string());
         let rules_foreign_cc = BazelDep {
             name: "rules_foreign_cc".to_string(),
-            version: "0.15.1".to_string(),
+            version: config.versions.rules_foreign_cc.clone(),
         };
         parts.push(
             serde_starlark::to_string(&rules_foreign_cc).unwrap_or_else(|e| format!("# Error: {e}")),
@@ -500,7 +502,8 @@ mod tests {
     #[test]
     fn test_generate_module_bazel() {
         let project = test_project();
-        let content = generate_module_bazel(&project);
+        let config = crate::config::MigrationConfig::default();
+        let content = generate_module_bazel(&project, &config);
 
         assert!(content.contains("module("));
         assert!(content.contains("test_project"));
@@ -527,7 +530,8 @@ mod tests {
     #[test]
     fn test_generate_module_bazel_format() {
         let project = test_project();
-        let content = generate_module_bazel(&project);
+        let config = crate::config::MigrationConfig::default();
+        let content = generate_module_bazel(&project, &config);
 
         // Check docstring is present
         assert!(content.contains("\"\"\"Bazel module for"));
@@ -563,8 +567,9 @@ mod tests {
     #[test]
     fn test_output_format_visual() {
         let project = test_project();
+        let config = crate::config::MigrationConfig::default();
 
-        let module = generate_module_bazel(&project);
+        let module = generate_module_bazel(&project, &config);
         let build = generate_root_build(&project);
 
         // This test verifies that the output is properly formatted Starlark
