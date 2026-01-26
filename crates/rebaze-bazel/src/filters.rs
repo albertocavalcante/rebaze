@@ -191,6 +191,12 @@ fn is_problematic_copt(opt: &str) -> bool {
         return true;
     }
 
+    // IBM z/OS and AIX compiler flags (start with -q)
+    // These are not compatible with clang/gcc
+    if opt.starts_with("-q") {
+        return true;
+    }
+
     // Link-time flags that shouldn't be in copts
     if opt.starts_with("-l") || opt.starts_with("-L") {
         return true;
@@ -215,7 +221,7 @@ fn is_problematic_copt(opt: &str) -> bool {
     false
 }
 
-/// Filter source files for Bazel compatibility.
+/// Filter and normalize source files for Bazel compatibility.
 ///
 /// Removes:
 /// - Absolute paths (not portable)
@@ -224,12 +230,24 @@ fn is_problematic_copt(opt: &str) -> bool {
 /// - CMake build directory references
 /// - Object files and archives
 /// - Non-source files that shouldn't be in srcs
+/// - Duplicate sources
+///
+/// Normalizes:
+/// - Double slashes (//) to single slashes
+/// - Removes leading ./
 pub fn filter_sources(sources: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
     sources
         .iter()
         .filter(|src| !is_problematic_source(src))
-        .cloned()
+        .map(|src| normalize_source_path(src))
+        .filter(|src| seen.insert(src.clone())) // Deduplicate while preserving order
         .collect()
+}
+
+fn normalize_source_path(src: &str) -> String {
+    src.trim_start_matches("./")
+        .replace("//", "/")
 }
 
 fn is_problematic_source(src: &str) -> bool {
@@ -645,5 +663,37 @@ mod tests {
         assert!(filtered.contains(&"src/main.cpp".to_string()));
         assert!(filtered.contains(&"normal/path.cpp".to_string()));
         assert!(!filtered.iter().any(|s| s.contains("CMAKE_")));
+    }
+
+    #[test]
+    fn test_filter_sources_path_normalization() {
+        let sources = vec![
+            "src//include/foo.h".to_string(),       // Double slash
+            "./main.cpp".to_string(),               // Leading ./
+            "src//util//helper.cpp".to_string(),    // Multiple double slashes
+            "test.cpp".to_string(),                 // Normal
+        ];
+
+        let filtered = filter_sources(&sources);
+        assert!(filtered.contains(&"src/include/foo.h".to_string())); // // collapsed
+        assert!(filtered.contains(&"main.cpp".to_string()));          // ./ removed
+        assert!(filtered.contains(&"src/util/helper.cpp".to_string())); // // collapsed
+        assert!(filtered.contains(&"test.cpp".to_string()));
+    }
+
+    #[test]
+    fn test_filter_sources_deduplication() {
+        let sources = vec![
+            "src/main.cpp".to_string(),
+            "src/util.cpp".to_string(),
+            "src/main.cpp".to_string(),     // Duplicate
+            "./src/util.cpp".to_string(),   // Duplicate (normalized)
+            "src//main.cpp".to_string(),    // Duplicate (normalized)
+        ];
+
+        let filtered = filter_sources(&sources);
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.contains(&"src/main.cpp".to_string()));
+        assert!(filtered.contains(&"src/util.cpp".to_string()));
     }
 }
