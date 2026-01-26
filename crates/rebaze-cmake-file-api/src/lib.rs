@@ -303,7 +303,13 @@ fn normalize_include_path(path: &Path, source_root: &Path, build_root: &Path) ->
 }
 
 fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    let s = path.to_string_lossy().replace('\\', "/");
+    // Collapse multiple slashes and remove leading ./
+    let mut result = s.trim_start_matches("./").to_string();
+    while result.contains("//") {
+        result = result.replace("//", "/");
+    }
+    result
 }
 
 fn sorted_vec(mut set: HashSet<String>) -> Vec<String> {

@@ -16,6 +16,48 @@ fn get_known_transitive_deps(pkg_name: &str) -> Vec<&'static str> {
     }
 }
 
+/// Detected external dependencies that need bazel_dep entries.
+#[derive(Debug, Default)]
+struct DetectedDeps {
+    googletest: bool,
+    benchmark: bool,
+}
+
+/// Detect external test/benchmark frameworks from link libraries.
+fn detect_external_deps(project: &CMakeProject) -> DetectedDeps {
+    let mut deps = DetectedDeps::default();
+
+    // Check all executables and libraries for test framework usage
+    let all_link_libs = project
+        .executables
+        .iter()
+        .flat_map(|e| e.link_libraries.iter())
+        .chain(project.libraries.iter().flat_map(|l| l.link_libraries.iter()));
+
+    for lib in all_link_libs {
+        let lib_lower = lib.to_lowercase();
+        if lib_lower.contains("gtest") || lib_lower.contains("gmock") || lib_lower.contains("googletest") {
+            deps.googletest = true;
+        }
+        if lib_lower.contains("benchmark") && !lib_lower.contains("google") {
+            deps.benchmark = true;
+        }
+    }
+
+    // Also check CMake packages
+    for pkg in &project.packages {
+        let pkg_lower = pkg.name.to_lowercase();
+        if pkg_lower.contains("gtest") || pkg_lower.contains("googletest") {
+            deps.googletest = true;
+        }
+        if pkg_lower == "benchmark" {
+            deps.benchmark = true;
+        }
+    }
+
+    deps
+}
+
 /// Generate a MODULE.bazel file for a CMake project.
 #[must_use]
 pub fn generate_module_bazel(project: &CMakeProject) -> String {
@@ -45,6 +87,29 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
     parts.push(
         serde_starlark::to_string(&rules_cc).unwrap_or_else(|e| format!("# Error: {e}")),
     );
+
+    // Detect and add external test/benchmark dependencies
+    let detected = detect_external_deps(project);
+    if detected.googletest {
+        parts.push("# Testing framework (auto-detected from CMake)".to_string());
+        let googletest = BazelDep {
+            name: "googletest".to_string(),
+            version: "1.15.2".to_string(),
+        };
+        parts.push(
+            serde_starlark::to_string(&googletest).unwrap_or_else(|e| format!("# Error: {e}")),
+        );
+    }
+    if detected.benchmark {
+        parts.push("# Benchmarking framework (auto-detected from CMake)".to_string());
+        let benchmark = BazelDep {
+            name: "google_benchmark".to_string(),
+            version: "1.9.1".to_string(),
+        };
+        parts.push(
+            serde_starlark::to_string(&benchmark).unwrap_or_else(|e| format!("# Error: {e}")),
+        );
+    }
 
     // Add platform support if needed
     if !project.packages.is_empty() {
@@ -81,10 +146,13 @@ pub fn generate_module_bazel(project: &CMakeProject) -> String {
         }
 
         // Add system_deps module extension for system library wrappers
+        // Use BTreeSet to deduplicate and maintain consistent ordering
         let system_dep_names: Vec<String> = project
             .pkg_config_modules
             .iter()
             .map(|pkg| format!("system_{}", pkg.prefix.to_lowercase().replace('-', "_")))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .collect();
 
         parts.push("# System library wrappers (strategy = \"system\", the default)".to_string());
@@ -174,7 +242,7 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
 
     // Generate libraries first (they may be dependencies of executables)
     // Deduplicate by name - CMake may report both shared and static variants
-    let mut seen_libs = std::collections::HashSet::new();
+    let mut seen_libs = std::collections::BTreeSet::new();
     for lib in &project.libraries {
         let target_name = lib.name.replace('-', "_");
         if seen_libs.insert(target_name) {
@@ -236,7 +304,7 @@ fn build_cc_library(lib: &Library) -> CcLibrary {
     // Map link dependencies using comprehensive mapper (filters out # TODO comments)
     // Deduplicate deps - CMake may report the same dependency multiple ways (e.g., fmt and fmt::fmt)
     let deps: Vec<String> = {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = std::collections::BTreeSet::new();
         lib.link_libraries
             .iter()
             .filter_map(|dep| map_dependency(dep))
@@ -274,23 +342,28 @@ fn build_cc_binary(
     // Filter sources first
     let filtered_sources = filter_sources(&exe.sources);
 
+    // Build a set of internal library names for O(1) lookups (avoid O(n²))
+    let internal_lib_names: std::collections::BTreeSet<&str> =
+        libs.iter().map(|l| l.name.as_str()).collect();
+
     // Start with explicit include directories (filtered)
-    let mut includes = filter_includes(&exe.include_directories);
+    let mut includes_set: std::collections::BTreeSet<String> =
+        filter_includes(&exe.include_directories).into_iter().collect();
 
     // Add unique directories containing source files as include paths
     // This mimics CMake's behavior where files can include headers from their own directory
+    // Using BTreeSet for O(log n) insert instead of O(n) contains check
     for src in &filtered_sources {
         if let Some(dir) = std::path::Path::new(src).parent() {
-            let dir_str = dir.to_string_lossy().to_string();
-            if !dir_str.is_empty() && !includes.contains(&dir_str) {
-                includes.push(dir_str);
+            let dir_str = dir.to_string_lossy();
+            if !dir_str.is_empty() {
+                includes_set.insert(dir_str.into_owned());
             }
         }
     }
 
-    // Sort for deterministic output
-    includes.sort();
-    includes.dedup();
+    // Convert to sorted Vec (BTreeSet already sorted)
+    let includes: Vec<String> = includes_set.into_iter().collect();
 
     // Find minimal set of root directories for header globs
     // This avoids redundant patterns like dnf/**/*.h AND dnf/plugins/foo/**/*.h
@@ -303,8 +376,8 @@ fn build_cc_binary(
         .collect();
 
     // Collect dependencies from link_libraries using comprehensive mapper
-    // Deduplicate deps - CMake may report the same dependency multiple ways
-    let mut seen_deps = std::collections::HashSet::new();
+    // Deduplicate deps deterministically with BTreeSet
+    let mut seen_deps = std::collections::BTreeSet::new();
     let mut deps: Vec<String> = exe
         .link_libraries
         .iter()
@@ -317,7 +390,8 @@ fn build_cc_binary(
                 link_lib.as_str()
             };
 
-            if libs.iter().any(|l| l.name == lib_name) {
+            // O(log n) lookup instead of O(n)
+            if internal_lib_names.contains(lib_name) {
                 Some(format!(":{}", lib_name.replace('-', "_")))
             } else {
                 map_dependency(link_lib)

@@ -13,7 +13,23 @@
 
 use crate::starlark::{Alias, CcLibrary, Cmake, ConfigureMake, FunctionCall, Meson};
 use rebaze_cmake::PkgConfigModule;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Deduplicate pkg-config modules by their normalized target name.
+///
+/// Returns a new `Vec` with duplicates removed, preserving the order of first occurrence.
+/// Uses BTreeSet for deterministic deduplication behavior.
+pub fn deduplicate_modules(modules: &[PkgConfigModule]) -> Vec<PkgConfigModule> {
+    let mut seen = BTreeSet::new();
+    modules
+        .iter()
+        .filter(|pkg| {
+            let target_name = pkg.prefix.to_lowercase().replace('-', "_");
+            seen.insert(target_name)
+        })
+        .cloned()
+        .collect()
+}
 
 /// Dependency resolution strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

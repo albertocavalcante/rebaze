@@ -3,7 +3,7 @@
 //! This module provides comprehensive filtering of platform-specific,
 //! compiler-specific, and otherwise non-portable CMake artifacts.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 /// Filter compile definitions (defines) for Bazel compatibility.
 ///
@@ -24,6 +24,17 @@ pub fn filter_defines(defines: &[String]) -> Vec<String> {
 }
 
 fn is_problematic_define(def: &str) -> bool {
+    // Empty or whitespace-only
+    if def.trim().is_empty() {
+        return true;
+    }
+
+    // Defines with spaces are not valid in Bazel
+    // (e.g., "PUGIXML_API=__attribute__((visibility(\"default\")))")
+    if def.contains(' ') {
+        return true;
+    }
+
     // Extract just the define name (handle -DFOO=bar and FOO=bar formats)
     let name = def
         .strip_prefix("-D")
@@ -236,7 +247,7 @@ fn is_problematic_copt(opt: &str) -> bool {
 /// - Double slashes (//) to single slashes
 /// - Removes leading ./
 pub fn filter_sources(sources: &[String]) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = BTreeSet::new();
     sources
         .iter()
         .filter(|src| !is_problematic_source(src))
@@ -303,7 +314,7 @@ pub fn filter_includes(includes: &[String]) -> Vec<String> {
     includes
         .iter()
         .filter_map(|inc| normalize_and_filter_include(inc))
-        .collect::<HashSet<_>>() // Deduplicate
+        .collect::<BTreeSet<_>>() // Deduplicate deterministically
         .into_iter()
         .collect()
 }
@@ -456,11 +467,11 @@ fn map_imported_target(cmake_name: &str) -> Option<String> {
         // Abseil
         "absl" => Some(format!("@com_google_absl//absl/{component}")),
 
-        // Google Test - all components map to @com_google_googletest//:component
-        "gtest" | "googletest" => Some(format!("@com_google_googletest//:{component}")),
+        // Google Test - all components map to @googletest//:component
+        "gtest" | "googletest" => Some(format!("@googletest//:{component}")),
 
-        // Google Benchmark - requires adding bazel_dep to MODULE.bazel
-        "benchmark" => Some("# TODO: Add @com_google_benchmark (bazel_dep in MODULE.bazel)".to_string()),
+        // Google Benchmark
+        "benchmark" => Some(format!("@google_benchmark//:{component}")),
 
         // nlohmann_json
         "nlohmann_json" => Some("@nlohmann_json//:json".to_string()),
@@ -491,10 +502,14 @@ fn map_plain_library(lib: &str) -> Option<String> {
         "protobuf" => Some("@com_google_protobuf//:protobuf".to_string()),
         "grpc" | "grpc++" => Some("@com_github_grpc_grpc//:grpc++".to_string()),
 
-        // Test/benchmark libraries - require adding bazel_dep to MODULE.bazel
-        "gtest" | "gtest_main" | "gmock" | "gmock_main" | "benchmark" => {
-            Some(format!("# TODO: Add external dep for '{lib}' (bazel_dep in MODULE.bazel)"))
-        }
+        // Google Test/Mock - map to @googletest (requires bazel_dep in MODULE.bazel)
+        "gtest" => Some("@googletest//:gtest".to_string()),
+        "gtest_main" => Some("@googletest//:gtest_main".to_string()),
+        "gmock" => Some("@googletest//:gmock".to_string()),
+        "gmock_main" => Some("@googletest//:gmock_main".to_string()),
+
+        // Google Benchmark - map to @google_benchmark
+        "benchmark" | "benchmark_main" => Some("@google_benchmark//:benchmark".to_string()),
 
         // Unknown - generate TODO comment
         _ => Some(format!("# TODO: Map '{lib}' to Bazel dependency")),
@@ -583,7 +598,7 @@ mod tests {
         assert_eq!(map_dependency("Threads::Threads"), None);
         assert_eq!(
             map_dependency("GTest::gtest"),
-            Some("@com_google_googletest//:gtest".to_string())
+            Some("@googletest//:gtest".to_string())
         );
     }
 
