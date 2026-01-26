@@ -172,11 +172,16 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
     );
 
     // Generate libraries first (they may be dependencies of executables)
+    // Deduplicate by name - CMake may report both shared and static variants
+    let mut seen_libs = std::collections::HashSet::new();
     for lib in &project.libraries {
-        let cc_lib = build_cc_library(lib);
-        parts.push(
-            serde_starlark::to_string(&cc_lib).unwrap_or_else(|e| format!("# Error: {e}")),
-        );
+        let target_name = lib.name.replace('-', "_");
+        if seen_libs.insert(target_name) {
+            let cc_lib = build_cc_library(lib);
+            parts.push(
+                serde_starlark::to_string(&cc_lib).unwrap_or_else(|e| format!("# Error: {e}")),
+            );
+        }
     }
 
     // Generate executables
@@ -230,24 +235,48 @@ fn build_cc_library(lib: &Library) -> CcLibrary {
         )
     };
 
-    // Map link dependencies
+    // Map link dependencies (filter out # TODO comments - those aren't valid labels)
     let deps: Vec<String> = lib
         .link_libraries
         .iter()
         .filter_map(|dep| map_cmake_dependency(dep))
+        .filter(|dep| !dep.starts_with('#'))
+        .collect();
+
+    // Filter out invalid sources (absolute paths, Windows resource files)
+    let filtered_srcs: Vec<String> = srcs
+        .into_iter()
+        .filter(|s| !s.starts_with('/') && !s.ends_with(".rc"))
+        .collect();
+
+    // Filter out MSVC-specific flags (start with /) - not portable to Unix
+    let filtered_copts: Vec<String> = lib
+        .compile_options
+        .iter()
+        .filter(|opt| !opt.starts_with('/'))
+        .cloned()
+        .collect();
+
+    // Filter out Windows-specific defines
+    let filtered_defines: Vec<String> = lib
+        .compile_definitions
+        .iter()
+        .filter(|def| !def.starts_with("_HAS_") && !def.starts_with("_CRT_"))
+        .cloned()
         .collect();
 
     CcLibrary {
         name: target_name,
-        srcs,
+        srcs: filtered_srcs,
         hdrs,
         includes,
         deps,
-        defines: lib.compile_definitions.clone(),
-        copts: lib.compile_options.clone(),
+        defines: filtered_defines,
+        copts: filtered_copts,
         linkopts: Vec::new(),
-        linkshared: if lib.kind == LibraryKind::Shared {
-            Some(true)
+        // For shared libraries, set linkstatic = False (default is True)
+        linkstatic: if lib.kind == LibraryKind::Shared {
+            Some(false)
         } else {
             None
         },
@@ -294,7 +323,7 @@ fn build_cc_binary(
         .flat_map(|dir| vec![format!("{dir}/**/*.h"), format!("{dir}/**/*.hpp")])
         .collect();
 
-    // Collect dependencies from link_libraries
+    // Collect dependencies from link_libraries (filter out # TODO comments)
     let mut deps: Vec<String> = exe
         .link_libraries
         .iter()
@@ -306,6 +335,7 @@ fn build_cc_binary(
                 map_cmake_dependency(link_lib)
             }
         })
+        .filter(|dep| !dep.starts_with('#'))
         .collect();
 
     // Add pkg-config dependencies from third_party/
@@ -313,6 +343,22 @@ fn build_cc_binary(
         let dep_name = pkg.prefix.to_lowercase().replace('-', "_");
         deps.push(format!("//third_party:{dep_name}"));
     }
+
+    // Filter out MSVC-specific flags (start with /) - not portable to Unix
+    let filtered_copts: Vec<String> = exe
+        .compile_options
+        .iter()
+        .filter(|opt| !opt.starts_with('/'))
+        .cloned()
+        .collect();
+
+    // Filter out Windows-specific defines
+    let filtered_defines: Vec<String> = exe
+        .compile_definitions
+        .iter()
+        .filter(|def| !def.starts_with("_HAS_") && !def.starts_with("_CRT_"))
+        .cloned()
+        .collect();
 
     CcBinary {
         name: target_name,
@@ -322,8 +368,8 @@ fn build_cc_binary(
         },
         includes,
         deps,
-        defines: exe.compile_definitions.clone(),
-        copts: exe.compile_options.clone(),
+        defines: filtered_defines,
+        copts: filtered_copts,
     }
 }
 

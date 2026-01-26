@@ -78,8 +78,9 @@ pub struct CcLibrary {
     pub copts: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub linkopts: Vec<String>,
+    /// Note: linkstatic controls whether to link statically (default true for cc_library)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub linkshared: Option<bool>,
+    pub linkstatic: Option<bool>,
 }
 
 /// Bazel alias rule

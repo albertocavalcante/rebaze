@@ -84,7 +84,7 @@ fn test_generate_bazel_for_shared_library() {
         .find(|(name, _)| *name == "BUILD.bazel")
         .unwrap();
     assert!(build.1.contains("cc_library("));
-    assert!(build.1.contains("linkshared = True"));
+    assert!(build.1.contains("linkstatic = False"));
 }
 
 #[test]
