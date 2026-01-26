@@ -6,9 +6,7 @@ use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
-    let list_path = arg_value(&args, "--list")
-        .map(PathBuf::from)
-        .unwrap_or_else(default_list_path);
+    let list_path = arg_value(&args, "--list").map_or_else(default_list_path, PathBuf::from);
     let limit = arg_value(&args, "--limit")
         .and_then(|val| val.parse::<usize>().ok());
     let allow_fail = args.iter().any(|arg| arg == "--allow-fail");

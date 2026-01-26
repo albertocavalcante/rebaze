@@ -50,6 +50,7 @@ pub struct ThirdPartyConfig {
 }
 
 /// Generate the third_party/BUILD.bazel file.
+#[allow(clippy::option_if_let_else)]
 pub fn generate_build_file(
     pkg_config_modules: &[PkgConfigModule],
     _config: &ThirdPartyConfig,
@@ -356,6 +357,7 @@ struct KnownPackageInfo {
 }
 
 /// Generate the third_party/source.bzl file for building from source.
+#[allow(clippy::too_many_lines)]
 pub fn generate_source_bzl(pkg_config_modules: &[PkgConfigModule]) -> String {
     let mut lines = vec![
         r#""""Build third-party dependencies from source using rules_foreign_cc.
@@ -691,6 +693,7 @@ pub fn probe_system_lib(packages: &[String]) -> Option<SystemLibInfo> {
 }
 
 /// Generate system_deps.bzl module extension for wrapping system libraries.
+#[allow(clippy::too_many_lines)]
 pub fn generate_system_deps_bzl(pkg_config_modules: &[PkgConfigModule]) -> String {
     let mut lines = vec![
         r#""""Module extension for system library dependencies.

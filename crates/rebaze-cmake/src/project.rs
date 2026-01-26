@@ -116,7 +116,7 @@ pub struct Package {
 pub struct PkgConfigModule {
     /// The CMake variable prefix (e.g., "GLIB")
     pub prefix: String,
-    /// The pkg-config package names (e.g., ["glib-2.0"])
+    /// The pkg-config package names (e.g., `["glib-2.0"]`)
     pub packages: Vec<String>,
     /// Whether this package is required
     pub required: bool,
@@ -228,7 +228,7 @@ fn extract_recursive(
     })?;
 
     // Skip if already visited (prevents infinite loops)
-    if !visited.insert(canonical.clone()) {
+    if !visited.insert(canonical) {
         tracing::debug!("Skipping already visited directory: {}", dir.display());
         return Ok(CMakeProject::default());
     }
@@ -356,7 +356,7 @@ fn extract_cmake_version(cmd: &Command, project: &mut CMakeProject) {
 fn extract_project_info(cmd: &Command, project: &mut CMakeProject) {
     // project(name [lang1 lang2...] | [VERSION x.y.z] [LANGUAGES lang1 lang2...])
     // CMake supports both positional languages (after name, before keywords) and explicit LANGUAGES keyword
-    let name = cmd.arguments.get(0).and_then(Argument::as_literal);
+    let name = cmd.arguments.first().and_then(Argument::as_literal);
     if let Some(name) = name {
         project.name = name.to_string();
     } else {
@@ -446,14 +446,14 @@ fn is_language(arg: &str) -> bool {
 
 fn extract_executable(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext) {
     // add_executable(name [WIN32] [MACOSX_BUNDLE] source1 source2...)
-    let name = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+    let name = match cmd.arguments.first().and_then(Argument::as_literal) {
         Some(name) => name.to_string(),
         None => {
             // Try expanding via context
-            if let Some(first_arg) = cmd.arguments.get(0) {
-                let expanded = ctx.expand_argument(first_arg);
+            if let Some(first_arg) = cmd.arguments.first() {
+                let mut expanded = ctx.expand_argument(first_arg);
                 if expanded.len() == 1 {
-                    expanded.into_iter().next().unwrap()
+                    expanded.remove(0)
                 } else {
                     tracing::debug!("Skipping add_executable with non-literal target name");
                     return;
@@ -503,14 +503,14 @@ fn extract_executable(cmd: &Command, project: &mut CMakeProject, ctx: &EvalConte
 
 fn extract_library(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext) {
     // add_library(name [STATIC|SHARED|MODULE|OBJECT|INTERFACE] source1 source2...)
-    let name = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+    let name = match cmd.arguments.first().and_then(Argument::as_literal) {
         Some(name) => name.to_string(),
         None => {
             // Try expanding via context
-            if let Some(first_arg) = cmd.arguments.get(0) {
-                let expanded = ctx.expand_argument(first_arg);
+            if let Some(first_arg) = cmd.arguments.first() {
+                let mut expanded = ctx.expand_argument(first_arg);
                 if expanded.len() == 1 {
-                    expanded.into_iter().next().unwrap()
+                    expanded.remove(0)
                 } else {
                     tracing::debug!("Skipping add_library with non-literal target name");
                     return;
@@ -584,12 +584,9 @@ fn extract_library(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext)
 
 fn extract_package(cmd: &Command, project: &mut CMakeProject) {
     // find_package(PackageName [version] [REQUIRED] [COMPONENTS comp1...])
-    let name = match cmd.arguments.get(0).and_then(Argument::as_literal) {
-        Some(name) => name.to_string(),
-        None => {
-            tracing::debug!("Skipping find_package with non-literal package name");
-            return;
-        }
+    let name = if let Some(name) = cmd.arguments.first().and_then(Argument::as_literal) { name.to_string() } else {
+        tracing::debug!("Skipping find_package with non-literal package name");
+        return;
     };
 
     let mut version = None;
@@ -715,8 +712,8 @@ fn extract_compile_features(cmd: &Command, project: &mut CMakeProject) {
 fn prefix_path(subdir: &str, path: &str) -> String {
     if path == "." {
         subdir.to_string()
-    } else if path.starts_with("./") {
-        format!("{subdir}/{}", &path[2..])
+    } else if let Some(stripped) = path.strip_prefix("./") {
+        format!("{subdir}/{stripped}")
     } else {
         format!("{subdir}/{path}")
     }
@@ -795,7 +792,7 @@ fn extract_pkg_config(cmd: &Command, project: &mut CMakeProject, ctx: &mut EvalC
 
 fn apply_link_libraries(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext) {
     // target_link_libraries(target [PUBLIC|PRIVATE|INTERFACE] lib1 lib2...)
-    let target = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+    let target = match cmd.arguments.first().and_then(Argument::as_literal) {
         Some(target) => target.to_string(),
         None => return,
     };
@@ -846,7 +843,7 @@ fn apply_link_libraries(cmd: &Command, project: &mut CMakeProject, ctx: &EvalCon
 
 fn apply_include_directories(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext) {
     // target_include_directories(target [PUBLIC|PRIVATE|INTERFACE] dir1 dir2...)
-    let target = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+    let target = match cmd.arguments.first().and_then(Argument::as_literal) {
         Some(target) => target.to_string(),
         None => return,
     };
@@ -896,7 +893,7 @@ fn apply_include_directories(cmd: &Command, project: &mut CMakeProject, ctx: &Ev
 
 fn apply_compile_definitions(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext) {
     // target_compile_definitions(target [PUBLIC|PRIVATE|INTERFACE] def1 def2...)
-    let target = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+    let target = match cmd.arguments.first().and_then(Argument::as_literal) {
         Some(target) => target.to_string(),
         None => return,
     };
@@ -953,7 +950,7 @@ fn apply_compile_definitions(cmd: &Command, project: &mut CMakeProject, ctx: &Ev
 
 fn apply_compile_options(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext) {
     // target_compile_options(target [BEFORE] [SYSTEM] [PUBLIC|PRIVATE|INTERFACE] opt1 opt2...)
-    let target = match cmd.arguments.get(0).and_then(Argument::as_literal) {
+    let target = match cmd.arguments.first().and_then(Argument::as_literal) {
         Some(target) => target.to_string(),
         None => return,
     };

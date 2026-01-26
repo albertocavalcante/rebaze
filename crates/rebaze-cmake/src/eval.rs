@@ -57,7 +57,9 @@ impl EvalContext {
                         chars.next();
                         break;
                     }
-                    var_name.push(chars.next().unwrap());
+                    if let Some(c) = chars.next() {
+                        var_name.push(c);
+                    }
                 }
 
                 // Look up and expand
@@ -148,17 +150,15 @@ fn eval_set(cmd: &Command, ctx: &mut EvalContext) {
     }
 
     // First argument is the variable name
-    let var_name = match cmd.arguments[0].as_literal() {
-        Some(name) => name.to_string(),
-        None => {
-            // Variable name might be a variable reference itself
-            let expanded = ctx.expand_argument(&cmd.arguments[0]);
-            if expanded.len() == 1 {
-                expanded.into_iter().next().unwrap()
-            } else {
-                return; // Can't determine variable name
-            }
+    let var_name = if let Some(name) = cmd.arguments[0].as_literal() {
+        name.to_string()
+    } else {
+        // Variable name might be a variable reference itself
+        let mut expanded = ctx.expand_argument(&cmd.arguments[0]);
+        if expanded.len() != 1 {
+            return; // Can't determine variable name
         }
+        expanded.remove(0)
     };
 
     // Check for PARENT_SCOPE, CACHE, etc. - skip these for now

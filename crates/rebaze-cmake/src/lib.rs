@@ -77,6 +77,8 @@ pub fn parse_source(src: &str) -> Result<CMakeFile> {
 }
 
 /// Report parsing errors with nice formatting.
+/// Currently unused but kept for debugging and future interactive error reporting.
+#[allow(dead_code)]
 fn report_errors(filename: &str, src: &str, errors: &[chumsky::error::Simple<char>]) {
     for err in errors {
         let report = Report::build(ReportKind::Error, filename, err.span().start)

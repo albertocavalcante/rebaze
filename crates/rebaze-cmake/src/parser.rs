@@ -84,7 +84,7 @@ fn argument_list() -> impl Parser<char, Vec<Argument>, Error = Simple<char>> {
         .allow_leading()
         .allow_trailing()
         .or_not()
-        .map(|args| args.unwrap_or_default())
+        .map(std::option::Option::unwrap_or_default)
 }
 
 /// Parser for a single argument (including nested parentheses with mixed arg types).

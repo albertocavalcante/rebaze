@@ -128,8 +128,8 @@ pub struct CcBinary {
 }
 
 /// Source files with optional header glob patterns.
-/// Serializes as: ["file1.c", "file2.c"] + glob(["**/*.h"]) if hdrs_glob is Some,
-/// or just ["file1.c", "file2.c"] if hdrs_glob is None.
+/// Serializes as: `["file1.c", "file2.c"] + glob(["**/*.h"])` if hdrs_glob is Some,
+/// or just `["file1.c", "file2.c"]` if hdrs_glob is None.
 pub struct SrcsWithHdrs {
     pub files: Vec<String>,
     pub hdrs_glob: Option<Vec<String>>,
@@ -246,6 +246,7 @@ pub struct Cmake {
 
 impl Cmake {
     /// Create a new cmake rule with Ninja generator.
+    #[must_use]
     pub fn new(name: impl Into<String>, lib_source: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -255,16 +256,19 @@ impl Cmake {
         }
     }
 
+    #[must_use]
     pub fn with_static_libs(mut self, libs: Vec<impl Into<String>>) -> Self {
         self.out_static_libs = libs.into_iter().map(Into::into).collect();
         self
     }
 
+    #[must_use]
     pub fn with_deps(mut self, deps: Vec<impl Into<String>>) -> Self {
         self.deps = deps.into_iter().map(Into::into).collect();
         self
     }
 
+    #[must_use]
     pub fn with_visibility_public(mut self) -> Self {
         self.visibility = Some(vec!["//visibility:public".to_string()]);
         self
@@ -290,6 +294,7 @@ pub struct Meson {
 }
 
 impl Meson {
+    #[must_use]
     pub fn new(name: impl Into<String>, lib_source: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -298,21 +303,25 @@ impl Meson {
         }
     }
 
+    #[must_use]
     pub fn with_static_libs(mut self, libs: Vec<impl Into<String>>) -> Self {
         self.out_static_libs = libs.into_iter().map(Into::into).collect();
         self
     }
 
+    #[must_use]
     pub fn with_options(mut self, options: BTreeMap<String, String>) -> Self {
         self.options = options;
         self
     }
 
+    #[must_use]
     pub fn with_deps(mut self, deps: Vec<impl Into<String>>) -> Self {
         self.deps = deps.into_iter().map(Into::into).collect();
         self
     }
 
+    #[must_use]
     pub fn with_visibility_public(mut self) -> Self {
         self.visibility = Some(vec!["//visibility:public".to_string()]);
         self
@@ -338,6 +347,7 @@ pub struct ConfigureMake {
 }
 
 impl ConfigureMake {
+    #[must_use]
     pub fn new(name: impl Into<String>, lib_source: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -346,16 +356,19 @@ impl ConfigureMake {
         }
     }
 
+    #[must_use]
     pub fn with_static_libs(mut self, libs: Vec<impl Into<String>>) -> Self {
         self.out_static_libs = libs.into_iter().map(Into::into).collect();
         self
     }
 
+    #[must_use]
     pub fn with_deps(mut self, deps: Vec<impl Into<String>>) -> Self {
         self.deps = deps.into_iter().map(Into::into).collect();
         self
     }
 
+    #[must_use]
     pub fn with_visibility_public(mut self) -> Self {
         self.visibility = Some(vec!["//visibility:public".to_string()]);
         self

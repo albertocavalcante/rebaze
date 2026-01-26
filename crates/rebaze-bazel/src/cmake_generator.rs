@@ -328,8 +328,8 @@ fn build_cc_binary(
 }
 
 /// Find the minimal set of root directories that cover all paths.
-/// For example, given ["dnf", "dnf/plugins/foo", "dnf/plugins/bar"],
-/// returns just ["dnf"] since dnf/**/* covers all subdirectories.
+/// For example, given `["dnf", "dnf/plugins/foo", "dnf/plugins/bar"]`,
+/// returns just `["dnf"]` since `dnf/**/*` covers all subdirectories.
 fn find_minimal_glob_roots(dirs: &[String]) -> Vec<String> {
     if dirs.is_empty() {
         return Vec::new();
