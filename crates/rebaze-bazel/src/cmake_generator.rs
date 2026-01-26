@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use rebaze_cmake::{CMakeProject, Executable, Library, LibraryKind};
 
+use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources, map_dependency};
 use crate::starlark::{BazelDep, CcBinary, CcLibrary, Glob, Load, Module, Package, SrcsWithHdrs};
 
 /// Get known transitive dependencies for a package.
@@ -214,18 +215,15 @@ fn build_cc_library(lib: &Library) -> CcLibrary {
             vec!["include".to_string()],
         )
     } else {
-        // Regular library with sources
+        // Regular library with sources - apply comprehensive filtering
         let includes = if lib.include_directories.is_empty() {
             vec!["include".to_string()]
         } else {
-            lib.include_directories
-                .iter()
-                .map(|d| normalize_include_dir(d))
-                .collect()
+            filter_includes(&lib.include_directories)
         };
 
         (
-            lib.sources.clone(),
+            filter_sources(&lib.sources),
             Some(Glob {
                 include: vec!["include/**/*.h".to_string(), "include/**/*.hpp".to_string()],
                 exclude: Vec::new(),
@@ -235,44 +233,26 @@ fn build_cc_library(lib: &Library) -> CcLibrary {
         )
     };
 
-    // Map link dependencies (filter out # TODO comments - those aren't valid labels)
-    let deps: Vec<String> = lib
-        .link_libraries
-        .iter()
-        .filter_map(|dep| map_cmake_dependency(dep))
-        .filter(|dep| !dep.starts_with('#'))
-        .collect();
-
-    // Filter out invalid sources (absolute paths, Windows resource files)
-    let filtered_srcs: Vec<String> = srcs
-        .into_iter()
-        .filter(|s| !s.starts_with('/') && !s.ends_with(".rc"))
-        .collect();
-
-    // Filter out MSVC-specific flags (start with /) - not portable to Unix
-    let filtered_copts: Vec<String> = lib
-        .compile_options
-        .iter()
-        .filter(|opt| !opt.starts_with('/'))
-        .cloned()
-        .collect();
-
-    // Filter out Windows-specific defines
-    let filtered_defines: Vec<String> = lib
-        .compile_definitions
-        .iter()
-        .filter(|def| !def.starts_with("_HAS_") && !def.starts_with("_CRT_"))
-        .cloned()
-        .collect();
+    // Map link dependencies using comprehensive mapper (filters out # TODO comments)
+    // Deduplicate deps - CMake may report the same dependency multiple ways (e.g., fmt and fmt::fmt)
+    let deps: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        lib.link_libraries
+            .iter()
+            .filter_map(|dep| map_dependency(dep))
+            .filter(|dep| !dep.starts_with('#'))
+            .filter(|dep| seen.insert(dep.clone()))
+            .collect()
+    };
 
     CcLibrary {
         name: target_name,
-        srcs: filtered_srcs,
+        srcs,
         hdrs,
         includes,
         deps,
-        defines: filtered_defines,
-        copts: filtered_copts,
+        defines: filter_defines(&lib.compile_definitions),
+        copts: filter_copts(&lib.compile_options),
         linkopts: Vec::new(),
         // For shared libraries, set linkstatic = False (default is True)
         linkstatic: if lib.kind == LibraryKind::Shared {
@@ -291,16 +271,15 @@ fn build_cc_binary(
 ) -> CcBinary {
     let target_name = exe.name.replace('-', "_");
 
-    // Start with explicit include directories
-    let mut includes: Vec<String> = exe
-        .include_directories
-        .iter()
-        .map(|d| normalize_include_dir(d))
-        .collect();
+    // Filter sources first
+    let filtered_sources = filter_sources(&exe.sources);
+
+    // Start with explicit include directories (filtered)
+    let mut includes = filter_includes(&exe.include_directories);
 
     // Add unique directories containing source files as include paths
     // This mimics CMake's behavior where files can include headers from their own directory
-    for src in &exe.sources {
+    for src in &filtered_sources {
         if let Some(dir) = std::path::Path::new(src).parent() {
             let dir_str = dir.to_string_lossy().to_string();
             if !dir_str.is_empty() && !includes.contains(&dir_str) {
@@ -323,7 +302,9 @@ fn build_cc_binary(
         .flat_map(|dir| vec![format!("{dir}/**/*.h"), format!("{dir}/**/*.hpp")])
         .collect();
 
-    // Collect dependencies from link_libraries (filter out # TODO comments)
+    // Collect dependencies from link_libraries using comprehensive mapper
+    // Deduplicate deps - CMake may report the same dependency multiple ways
+    let mut seen_deps = std::collections::HashSet::new();
     let mut deps: Vec<String> = exe
         .link_libraries
         .iter()
@@ -339,44 +320,32 @@ fn build_cc_binary(
             if libs.iter().any(|l| l.name == lib_name) {
                 Some(format!(":{}", lib_name.replace('-', "_")))
             } else {
-                map_cmake_dependency(link_lib)
+                map_dependency(link_lib)
             }
         })
         .filter(|dep| !dep.starts_with('#'))
+        .filter(|dep| seen_deps.insert(dep.clone()))
         .collect();
 
     // Add pkg-config dependencies from third_party/
     for pkg in pkg_config_modules {
         let dep_name = pkg.prefix.to_lowercase().replace('-', "_");
-        deps.push(format!("//third_party:{dep_name}"));
+        let dep = format!("//third_party:{dep_name}");
+        if seen_deps.insert(dep.clone()) {
+            deps.push(dep);
+        }
     }
-
-    // Filter out MSVC-specific flags (start with /) - not portable to Unix
-    let filtered_copts: Vec<String> = exe
-        .compile_options
-        .iter()
-        .filter(|opt| !opt.starts_with('/'))
-        .cloned()
-        .collect();
-
-    // Filter out Windows-specific defines
-    let filtered_defines: Vec<String> = exe
-        .compile_definitions
-        .iter()
-        .filter(|def| !def.starts_with("_HAS_") && !def.starts_with("_CRT_"))
-        .cloned()
-        .collect();
 
     CcBinary {
         name: target_name,
         srcs: SrcsWithHdrs {
-            files: exe.sources.clone(),
+            files: filtered_sources,
             hdrs_glob: if hdrs_glob.is_empty() { None } else { Some(hdrs_glob) },
         },
         includes,
         deps,
-        defines: filtered_defines,
-        copts: filtered_copts,
+        defines: filter_defines(&exe.compile_definitions),
+        copts: filter_copts(&exe.compile_options),
     }
 }
 
@@ -408,48 +377,6 @@ fn find_minimal_glob_roots(dirs: &[String]) -> Vec<String> {
 
     roots.sort();
     roots
-}
-
-/// Map CMake package/library names to Bazel dependencies.
-fn map_cmake_dependency(cmake_name: &str) -> Option<String> {
-    // Handle -l flags from pkg-config
-    if let Some(lib) = cmake_name.strip_prefix("-l") {
-        return Some(format!("# TODO: Map system library '{lib}'"));
-    }
-
-    // Handle CMake imported targets like Boost::system, OpenSSL::SSL
-    if cmake_name.contains("::") {
-        let parts: Vec<&str> = cmake_name.split("::").collect();
-        if parts.len() == 2 {
-            let package = parts[0].to_lowercase();
-            let component = parts[1].to_lowercase();
-
-            return match package.as_str() {
-                "boost" => Some(format!("@boost//:{component}")),
-                "openssl" => Some(format!("@openssl//:{component}")),
-                "threads" => Some("# TODO: Add threading support".to_string()),
-                _ => Some(format!("# TODO: Map {cmake_name} to Bazel")),
-            };
-        }
-    }
-
-    // Handle common system libraries (built-in, no explicit dep needed)
-    match cmake_name {
-        "pthread" | "Threads::Threads" | "m" | "dl" => None,
-        _ => Some(format!("# TODO: Map '{cmake_name}' to Bazel dependency")),
-    }
-}
-
-/// Normalize CMake include directory paths for Bazel.
-fn normalize_include_dir(dir: &str) -> String {
-    // Remove CMake variable references like ${CMAKE_CURRENT_SOURCE_DIR}
-    if dir.starts_with("${") {
-        if let Some(end) = dir.find('}') {
-            let rest = &dir[end + 1..];
-            return rest.trim_start_matches('/').to_string();
-        }
-    }
-    dir.to_string()
 }
 
 #[cfg(test)]
@@ -518,8 +445,9 @@ mod tests {
         assert!(content.contains("myapp"));
         assert!(content.contains("LIB_DEF"));
         assert!(content.contains("APP_DEF"));
-        assert!(content.contains("-O2"));
-        assert!(content.contains("-g"));
+        // Optimization and debug flags are filtered out (Bazel handles these)
+        assert!(!content.contains("-O2"), "optimization flags should be filtered");
+        assert!(!content.contains("\"-g\""), "debug info flags should be filtered");
     }
 
     #[test]

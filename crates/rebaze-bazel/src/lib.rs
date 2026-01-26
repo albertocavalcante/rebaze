@@ -8,6 +8,7 @@ use std::path::Path;
 pub use crate::generator::BazelFile;
 pub use crate::third_party::{DepsStrategy, ThirdPartyConfig};
 
+pub mod filters;
 mod cmake_generator;
 mod generator;
 pub mod starlark;
