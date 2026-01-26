@@ -328,9 +328,16 @@ fn build_cc_binary(
         .link_libraries
         .iter()
         .filter_map(|link_lib| {
-            // Check if it's an internal library
-            if libs.iter().any(|l| l.name == *link_lib) {
-                Some(format!(":{}", link_lib.replace('-', "_")))
+            // Check if it's an internal library (handle both "spdlog" and "spdlog::spdlog" formats)
+            let lib_name = if link_lib.contains("::") {
+                // Extract the component name (e.g., "spdlog::spdlog_header_only" -> "spdlog_header_only")
+                link_lib.split("::").last().unwrap_or(link_lib)
+            } else {
+                link_lib.as_str()
+            };
+
+            if libs.iter().any(|l| l.name == lib_name) {
+                Some(format!(":{}", lib_name.replace('-', "_")))
             } else {
                 map_cmake_dependency(link_lib)
             }
