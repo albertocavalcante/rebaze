@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -64,6 +65,8 @@ DEFAULT_CONFIG = {
     "skip_unknown_license": False,
     "exact_basename": True,
     "filter_invalid": True,
+    "search_backend": "github",
+    "search_limit": 0,
     "cache_enabled": True,
     "cache_ttl_seconds": 86_400,
 }
@@ -466,6 +469,69 @@ def is_cmakelists_path(path: str) -> bool:
     return name.casefold() == "cmakelists.txt"
 
 
+def sourcegraph_query(extra: str) -> str:
+    parts = ["file:CMakeLists.txt", "patternType:literal"]
+    if extra:
+        parts.append(extra)
+    return " ".join(parts)
+
+
+def normalize_sourcegraph_repo(repo: str | None) -> str | None:
+    if not repo:
+        return None
+    normalized = repo.strip().split("@", 1)[0]
+    if normalized.startswith("github.com/"):
+        return normalized[len("github.com/") :]
+    first = normalized.split("/", 1)[0]
+    if "." not in first and "/" in normalized:
+        return normalized
+    return None
+
+
+def sourcegraph_search(query: str, limit: int) -> tuple[list[SearchItem], dict[str, int]]:
+    skipped: dict[str, int] = defaultdict(int)
+    cmd = ["src", "search", "-json", "-stream"]
+    if limit > 0:
+        cmd.extend(["-display", str(limit)])
+    cmd.extend(["--", query])
+    try:
+        result = run(cmd)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        raise RuntimeError(f"Sourcegraph search failed: {stderr}") from exc
+    items: list[SearchItem] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            skipped["invalid_json"] += 1
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "match":
+            data = event.get("data", {})
+        else:
+            data = event
+        if not isinstance(data, dict):
+            continue
+        path = data.get("path")
+        repo = data.get("repository")
+        if isinstance(repo, dict):
+            repo = repo.get("name") or repo.get("repo") or repo.get("repository")
+        if not path or not isinstance(path, str):
+            skipped["missing_path"] += 1
+            continue
+        repo_norm = normalize_sourcegraph_repo(repo if isinstance(repo, str) else None)
+        if not repo_norm:
+            skipped["non_github_repo"] += 1
+            continue
+        items.append(SearchItem(repo=repo_norm, path=path, html_url=""))
+    return items, skipped
+
+
 def skip_trivia(src: str, start: int = 0) -> int:
     idx = start
     length = len(src)
@@ -589,6 +655,13 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--count", type=int, default=cfg("count", DEFAULT_CONFIG["count"]))
+    parser.add_argument(
+        "--backend",
+        choices=["github", "sourcegraph"],
+        default=cfg("search_backend", DEFAULT_CONFIG["search_backend"]),
+        help="Search backend to use for corpus collection.",
+    )
+    parser.add_argument("--search-limit", type=int, default=None)
     parser.add_argument("--size-min", type=int, default=None)
     parser.add_argument("--size-max", type=int, default=None)
     parser.add_argument(
@@ -760,6 +833,10 @@ def main() -> int:
         )
     if args.cache_ttl is None:
         args.cache_ttl = DEFAULT_CONFIG["cache_ttl_seconds"]
+    if args.search_limit is None:
+        args.search_limit = normalize_optional_int(cfg("search_limit", None))
+    if args.search_limit is None:
+        args.search_limit = DEFAULT_CONFIG["search_limit"]
     skiplist_path = args.skiplist
     if skiplist_path is None:
         skiplist_path = normalize_optional_path(cfg("skiplist", None), base_dir)
@@ -780,8 +857,15 @@ def main() -> int:
     if size_max is not None and size_max < size_min:
         print("size_max must be >= size_min", file=sys.stderr)
         return 2
-    if size_max is None:
-        size_max = resolve_size_max(size_min, args.count, args.query_extra)
+    if args.backend == "github":
+        if size_max is None:
+            size_max = resolve_size_max(size_min, args.count, args.query_extra)
+    else:
+        if size_min != 0 or size_max is not None:
+            print(
+                "Note: size filters are ignored for Sourcegraph backend.",
+                file=sys.stderr,
+            )
 
     global RATE_LIMIT_WAIT
     global RATE_LIMIT_SLEEP
@@ -825,6 +909,7 @@ def main() -> int:
     skipped_by_name: dict[str, int] = defaultdict(int)
     skipped_by_content: dict[str, int] = defaultdict(int)
     skipped_by_skiplist: dict[str, int] = defaultdict(int)
+    skipped_by_backend: dict[str, int] = defaultdict(int)
 
     skip_repos, skip_paths = load_skiplist(skiplist_path)
 
@@ -841,31 +926,78 @@ def main() -> int:
     seen: set[tuple[str, str]] = set()
     per_repo: dict[str, int] = defaultdict(int)
 
-    fetch_items_for_size_range(
-        size_min,
-        size_max,
-        args.query_extra,
-        license_cache,
-        allow_licenses,
-        deny_licenses,
-        args.skip_unknown_license,
-        skipped_by_license,
-        args.exact_basename,
-        skipped_by_name,
-        skip_repos,
-        skip_paths,
-        skipped_by_skiplist,
-        selected,
-        seen,
-        per_repo,
-        args.max_per_repo,
-        args.count,
-        args.per_page,
-    )
+    if args.backend == "github":
+        fetch_items_for_size_range(
+            size_min,
+            size_max,
+            args.query_extra,
+            license_cache,
+            allow_licenses,
+            deny_licenses,
+            args.skip_unknown_license,
+            skipped_by_license,
+            args.exact_basename,
+            skipped_by_name,
+            skip_repos,
+            skip_paths,
+            skipped_by_skiplist,
+            selected,
+            seen,
+            per_repo,
+            args.max_per_repo,
+            args.count,
+            args.per_page,
+        )
+    else:
+        if not shutil.which("src"):
+            print("Sourcegraph backend requires the `src` CLI on PATH.", file=sys.stderr)
+            print("Install: https://docs.sourcegraph.com/cli", file=sys.stderr)
+            return 2
+        if args.allow_license or args.deny_license or args.skip_unknown_license:
+            print(
+                "Note: license filters are not enforced for Sourcegraph searches.",
+                file=sys.stderr,
+            )
+        auto_limit = max(args.count * 2, args.count + 50)
+        search_limit = args.search_limit if args.search_limit > 0 else min(auto_limit, 1000)
+        query = sourcegraph_query(args.query_extra)
+        items, backend_skipped = sourcegraph_search(query, search_limit)
+        for key, value in backend_skipped.items():
+            skipped_by_backend[key] += value
+        for item in items:
+            key = (item.repo, item.path)
+            if key in seen:
+                continue
+            if args.exact_basename and not is_cmakelists_path(item.path):
+                skipped_by_name["basename_mismatch"] += 1
+                continue
+            if item.repo in skip_repos:
+                skipped_by_skiplist["repo"] += 1
+                continue
+            repo_path = f"{item.repo}/{item.path}"
+            if repo_path in skip_paths:
+                skipped_by_skiplist["path"] += 1
+                continue
+            if per_repo[item.repo] >= args.max_per_repo:
+                continue
+            selected.append(item)
+            seen.add(key)
+            per_repo[item.repo] += 1
+            if len(selected) >= args.count:
+                break
 
     if not selected:
-        print("No files found. Try adjusting --size-min/--size-max or --query-extra.", file=sys.stderr)
+        print(
+            "No files found. Try adjusting size filters, --query-extra, or --search-limit.",
+            file=sys.stderr,
+        )
         return 1
+    if args.backend == "sourcegraph" and len(selected) < args.count:
+        print(
+            f"Only collected {len(selected)} files from Sourcegraph. "
+            "Increase --search-limit or loosen filters.",
+            file=sys.stderr,
+        )
 
     license_cache_path.parent.mkdir(parents=True, exist_ok=True)
     license_cache_path.write_text(
@@ -923,7 +1055,7 @@ def main() -> int:
         for name, count in sorted(skipped_by_skiplist.items()):
             print(f"  {name}: {count}")
 
-    if SEARCH_CACHE_ENABLED and SEARCH_CACHE_PATH:
+    if SEARCH_CACHE_ENABLED and SEARCH_CACHE_PATH and args.backend == "github":
         SEARCH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         SEARCH_CACHE_PATH.write_text(
             json.dumps(SEARCH_CACHE, indent=2), encoding="utf-8"
@@ -936,6 +1068,10 @@ def main() -> int:
                 SEARCH_CACHE_PATH,
             )
         )
+    if skipped_by_backend:
+        print("Skipped by backend:")
+        for name, count in sorted(skipped_by_backend.items()):
+            print(f"  {name}: {count}")
     return 0
 
 

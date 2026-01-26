@@ -73,6 +73,12 @@ Search results are cached locally to reduce GitHub API usage. Configure with:
 - `cache_enabled`, `cache_ttl_seconds`, and `search_cache`
 - CLI: `--no-cache`, `--cache-ttl`, `--search-cache`
 
+Sourcegraph backend:
+- Use `--backend sourcegraph` and install the `src` CLI: https://docs.sourcegraph.com/cli
+- License filters are not enforced for Sourcegraph searches (assume index is acceptable).
+- `--search-limit` controls how many results to fetch from Sourcegraph.
+- Size filters are ignored for Sourcegraph searches.
+
 Skiplist support:
 - `tools/cmake_corpus/skiplist.toml` lets you skip known-bad repos/paths.
 - Entries can be `owner/repo/path` or a GitHub file URL.

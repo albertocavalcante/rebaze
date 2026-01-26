@@ -15,6 +15,10 @@ query_extra = ""
 no_fetch = false
 wait = false
 sleep = 0.0
+# Search backend: "github" or "sourcegraph".
+search_backend = "github"
+# For Sourcegraph, limit number of results to fetch (0 = auto).
+search_limit = 0
 allow_license = []
 deny_license = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 skip_unknown_license = false
