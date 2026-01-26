@@ -40,7 +40,7 @@ cargo clippy
 
 ## Code Style
 
-- Follow Rust 2021 edition idioms
+- Follow Rust 2024 edition idioms
 - Use `anyhow` for error handling in binaries
 - Use `thiserror` for library error types
 - Prefer `tracing` over `println!` for logging

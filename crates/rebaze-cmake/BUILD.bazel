@@ -3,6 +3,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 rust_library(
     name = "rebaze-cmake",
     srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
         "@crates//:chumsky",
@@ -17,11 +18,13 @@ rust_library(
 rust_test(
     name = "rebaze-cmake_test",
     crate = ":rebaze-cmake",
+    edition = "2024",
 )
 
 rust_binary(
     name = "cmake_corpus",
     srcs = ["src/bin/corpus.rs"],
+    edition = "2024",
     deps = [
         ":rebaze-cmake",
         "@crates//:anyhow",

@@ -145,7 +145,7 @@ fn main() -> Result<()> {
                 bazelle_bin: bazelle_bin.as_deref(),
                 unsafe_mode,
             };
-            rebaze_core::migrate(options)?;
+            rebaze_core::migrate(&options)?;
         }
         Commands::Validate { path, unsafe_mode } => {
             tracing::info!("Validating Bazel files at: {}", path);
@@ -153,7 +153,7 @@ fn main() -> Result<()> {
                 path: &path,
                 unsafe_mode,
             };
-            rebaze_core::validate(options)?;
+            rebaze_core::validate(&options)?;
         }
     }
 

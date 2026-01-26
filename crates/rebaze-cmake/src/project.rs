@@ -143,15 +143,13 @@ pub fn extract_project_with_context(
     crate::eval::evaluate(file, ctx);
 
     // Extract C/C++ standards from variables (CMAKE_CXX_STANDARD, CMAKE_C_STANDARD)
-    if let Some(values) = ctx.get("CMAKE_CXX_STANDARD") {
-        if let Some(std) = values.first() {
-            project.cxx_standard = Some(std.clone());
-        }
+    if let Some(values) = ctx.get("CMAKE_CXX_STANDARD")
+        && let Some(std) = values.first()
+    {
+        project.cxx_standard = Some(std.clone());
     }
-    if let Some(values) = ctx.get("CMAKE_C_STANDARD") {
-        if let Some(std) = values.first() {
-            project.c_standard = Some(std.clone());
-        }
+    if let Some(values) = ctx.get("CMAKE_C_STANDARD") && let Some(std) = values.first() {
+        project.c_standard = Some(std.clone());
     }
 
     // First pass: extract basic project info and targets
@@ -341,15 +339,14 @@ fn extract_cmake_version(cmd: &Command, project: &mut CMakeProject) {
         let Some(arg) = cmd.arguments[i].as_literal() else {
             continue;
         };
-        if arg.eq_ignore_ascii_case("VERSION") {
-            if let Some(version) = cmd
+        if arg.eq_ignore_ascii_case("VERSION")
+            && let Some(version) = cmd
                 .arguments
                 .get(i + 1)
                 .and_then(Argument::as_literal)
-            {
-                project.cmake_minimum_version = Some(version.to_string());
-                return;
-            }
+        {
+            project.cmake_minimum_version = Some(version.to_string());
+            return;
         }
     }
 }

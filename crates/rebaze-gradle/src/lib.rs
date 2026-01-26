@@ -97,14 +97,13 @@ fn extract_project_name(settings_file: &Path) -> Result<String> {
     // Simple regex-free parsing for rootProject.name
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("rootProject.name") {
-            if let Some(name) = line
+        if line.starts_with("rootProject.name")
+            && let Some(name) = line
                 .split('=')
                 .nth(1)
                 .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\''))
-            {
-                return Ok(name.to_string());
-            }
+        {
+            return Ok(name.to_string());
         }
     }
 

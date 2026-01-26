@@ -127,10 +127,10 @@ fn default_artifacts_dir() -> PathBuf {
     if let Ok(dir) = env::var("REBAZE_CMAKE_CORPUS_DIR") {
         return PathBuf::from(dir);
     }
-    if let Ok(current) = env::current_dir() {
-        if let Some(root) = find_repo_root(&current) {
-            return root.join(".rebaze").join("cmake-corpus");
-        }
+    if let Ok(current) = env::current_dir()
+        && let Some(root) = find_repo_root(&current)
+    {
+        return root.join(".rebaze").join("cmake-corpus");
     }
     if let Ok(dir) = env::var("XDG_CACHE_HOME") {
         return PathBuf::from(dir).join("rebaze").join("cmake-corpus");

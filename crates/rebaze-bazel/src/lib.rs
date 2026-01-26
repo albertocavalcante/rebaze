@@ -135,10 +135,8 @@ fn generate_cpp_bazelrc(project: &rebaze_cmake::CMakeProject, system_includes: &
         let mut sandbox_paths: Vec<String> = Vec::new();
         for path in system_includes {
             // Find the Homebrew/system root (e.g., /opt/homebrew, /usr/local, /usr)
-            if let Some(root) = find_sandbox_root(path) {
-                if !sandbox_paths.contains(&root) {
-                    sandbox_paths.push(root);
-                }
+            if let Some(root) = find_sandbox_root(path) && !sandbox_paths.contains(&root) {
+                sandbox_paths.push(root);
             }
         }
 

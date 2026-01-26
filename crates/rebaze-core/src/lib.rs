@@ -69,7 +69,7 @@ pub fn analyze(path: &str) -> Result<String> {
 }
 
 /// Migrate a project to Bazel.
-pub fn migrate(options: MigrateOptions<'_>) -> Result<()> {
+pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
     let path = Path::new(options.path);
     let bazelle_available = bazelle_available(options.bazelle_bin, options.bazelle_root);
 
@@ -109,20 +109,21 @@ pub fn migrate(options: MigrateOptions<'_>) -> Result<()> {
                     }
                 }
                 BuildGenerator::Bazelle => {
+                    let languages = bazelle_languages_for_cmake(&project);
                     run_bazelle_generation(
                         path,
                         &project.name,
-                        bazelle_languages_for_cmake(&project),
+                        &languages,
                         options.bazelle_root,
                         options.bazelle_bin,
                         options.dry_run,
                     )?;
 
-                    if !options.dry_run {
+                    if options.dry_run {
+                        print_bazel_scaffolding();
+                    } else {
                         write_bazel_version(path)?;
                         write_cpp_bazelrc(path)?;
-                    } else {
-                        print_bazel_scaffolding();
                     }
                 }
                 BuildGenerator::Auto => unreachable!("auto resolved"),
@@ -177,7 +178,7 @@ pub struct ValidateOptions<'a> {
     pub unsafe_mode: bool,
 }
 
-pub fn validate(options: ValidateOptions<'_>) -> Result<()> {
+pub fn validate(options: &ValidateOptions<'_>) -> Result<()> {
     let path = Path::new(options.path);
 
     if !path.join("MODULE.bazel").exists() && !path.join("WORKSPACE").exists() {
@@ -285,7 +286,7 @@ fn bazelle_available(bazelle_bin: Option<&str>, bazelle_root: Option<&str>) -> b
 fn run_bazelle_generation(
     project_root: &Path,
     module_name: &str,
-    languages: Vec<String>,
+    languages: &[String],
     bazelle_root: Option<&str>,
     bazelle_bin: Option<&str>,
     dry_run: bool,
@@ -384,14 +385,14 @@ fn write_bazel_version(root: &Path) -> Result<()> {
 
     if path.exists() {
         let content = std::fs::read_to_string(&path)?;
-        if let Some(version) = content.lines().next() {
-            if !version.trim().starts_with('9') {
-                anyhow::bail!(
-                    "Unsupported Bazel version in {}: {} (rebaze supports Bazel 9 only)",
-                    path.display(),
-                    version.trim()
-                );
-            }
+        if let Some(version) = content.lines().next()
+            && !version.trim().starts_with('9')
+        {
+            anyhow::bail!(
+                "Unsupported Bazel version in {}: {} (rebaze supports Bazel 9 only)",
+                path.display(),
+                version.trim()
+            );
         }
         return Ok(());
     }
@@ -443,9 +444,8 @@ fn pre_validate_cmake(
     cmake_build_dir: Option<&str>,
     cmake_config: Option<&str>,
 ) -> Result<()> {
-    let build_dir = cmake_build_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| project_root.join(".rebaze/cmake-build"));
+    let build_dir =
+        cmake_build_dir.map_or_else(|| project_root.join(".rebaze/cmake-build"), PathBuf::from);
     std::fs::create_dir_all(&build_dir)?;
 
     let mut configure = Command::new("cmake");

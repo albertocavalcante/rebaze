@@ -3,6 +3,7 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 rust_library(
     name = "rebaze-cmake-file-api",
     srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
         "//crates/rebaze-cmake",
@@ -14,4 +15,5 @@ rust_library(
 rust_test(
     name = "rebaze-cmake-file-api_test",
     crate = ":rebaze-cmake-file-api",
+    edition = "2024",
 )

@@ -91,14 +91,12 @@ impl EvalContext {
     /// Expand an ArgumentValue, returning expanded string(s).
     fn expand_argument_value(&self, value: &ArgumentValue) -> Vec<String> {
         // Special case: single variable reference expands to list
-        if value.parts.len() == 1 {
-            if let ArgumentPart::Variable(var_name) = &value.parts[0] {
-                return self
-                    .variables
-                    .get(var_name)
-                    .cloned()
-                    .unwrap_or_default();
-            }
+        if value.parts.len() == 1 && let ArgumentPart::Variable(var_name) = &value.parts[0] {
+            return self
+                .variables
+                .get(var_name)
+                .cloned()
+                .unwrap_or_default();
         }
 
         // General case: concatenate all parts into a single string
@@ -163,28 +161,28 @@ fn eval_set(cmd: &Command, ctx: &mut EvalContext) {
 
     // Check for PARENT_SCOPE, CACHE, etc. - skip these for now
     for arg in cmd.arguments.iter().skip(1) {
-        if let Some(lit) = arg.as_literal() {
-            if matches!(
+        if let Some(lit) = arg.as_literal()
+            && matches!(
                 lit.to_uppercase().as_str(),
                 "PARENT_SCOPE" | "CACHE" | "FORCE"
-            ) {
-                // Just process normally for now, ignore the modifier
-                break;
-            }
+            )
+        {
+            // Just process normally for now, ignore the modifier
+            break;
         }
     }
 
     // Collect values (skip modifiers)
     let mut values = Vec::new();
     for arg in cmd.arguments.iter().skip(1) {
-        if let Some(lit) = arg.as_literal() {
-            if matches!(
+        if let Some(lit) = arg.as_literal()
+            && matches!(
                 lit.to_uppercase().as_str(),
                 "PARENT_SCOPE" | "CACHE" | "FORCE" | "STRING" | "BOOL" | "PATH" | "FILEPATH"
                     | "INTERNAL"
-            ) {
-                continue;
-            }
+            )
+        {
+            continue;
         }
         // Expand any variable references in the value
         let expanded = ctx.expand_argument(arg);

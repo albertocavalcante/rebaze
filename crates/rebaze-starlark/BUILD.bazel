@@ -1,16 +1,12 @@
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 rust_library(
-    name = "rebaze-gradle",
+    name = "rebaze-starlark",
     srcs = glob(["src/**/*.rs"]),
     edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
-        "@crates//:anyhow",
-        "@crates//:globset",
         "@crates//:serde",
-        "@crates//:thiserror",
-        "@crates//:tracing",
-        "@crates//:walkdir",
+        "@crates//:serde_starlark",
     ],
 )

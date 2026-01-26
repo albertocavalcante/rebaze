@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Main configuration for CMake to Bazel migration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MigrationConfig {
     /// Bazel dependency versions
@@ -32,17 +32,8 @@ pub struct MigrationConfig {
     pub strategy: StrategyConfig,
 }
 
-impl Default for MigrationConfig {
-    fn default() -> Self {
-        Self {
-            versions: VersionConfig::default(),
-            mappings: MappingConfig::default(),
-            filters: FilterConfig::default(),
-            build: BuildConfig::default(),
-            strategy: StrategyConfig::default(),
-        }
-    }
-}
+#[allow(clippy::literal_string_with_formatting_args)]
+const COMPONENT_PLACEHOLDER: &str = "{component}";
 
 impl MigrationConfig {
     /// Load configuration from a TOML file, merging with defaults.
@@ -102,7 +93,11 @@ impl MigrationConfig {
                 return Some(target.clone());
             }
             // Use default target pattern with component substitution
-            return Some(pkg_config.target_pattern.replace("{component}", component));
+            return Some(
+                pkg_config
+                    .target_pattern
+                    .replace(COMPONENT_PLACEHOLDER, component),
+            );
         }
         None
     }
@@ -148,181 +143,142 @@ pub struct MappingConfig {
 
 impl Default for MappingConfig {
     fn default() -> Self {
-        let mut system_libraries = BTreeMap::new();
+        Self {
+            system_libraries: Self::default_system_libraries(),
+            implicit_system_libs: Self::default_implicit_system_libs(),
+            packages: Self::default_packages(),
+        }
+    }
+}
 
-        // Compression libraries
-        system_libraries.insert("z".to_string(), "@zlib".to_string());
-        system_libraries.insert("zlib".to_string(), "@zlib".to_string());
-        system_libraries.insert("bz2".to_string(), "@bzip2".to_string());
-        system_libraries.insert("bzip2".to_string(), "@bzip2".to_string());
-        system_libraries.insert("lzma".to_string(), "@lzma".to_string());
-        system_libraries.insert("lz4".to_string(), "@lz4".to_string());
-        system_libraries.insert("zstd".to_string(), "@zstd".to_string());
+impl MappingConfig {
+    fn default_system_libraries() -> BTreeMap<String, String> {
+        [
+            // Compression libraries
+            ("z", "@zlib"),
+            ("zlib", "@zlib"),
+            ("bz2", "@bzip2"),
+            ("bzip2", "@bzip2"),
+            ("lzma", "@lzma"),
+            ("lz4", "@lz4"),
+            ("zstd", "@zstd"),
+            // Crypto/SSL
+            ("ssl", "@openssl"),
+            ("crypto", "@openssl"),
+            ("openssl", "@openssl"),
+            // XML/JSON
+            ("expat", "@expat"),
+            ("xml2", "@libxml2"),
+            // Database
+            ("sqlite3", "@sqlite3"),
+            // Network
+            ("curl", "@curl"),
+            // Regex
+            ("pcre", "@pcre"),
+            ("pcre2-8", "@pcre"),
+            // Testing
+            ("gtest", "@googletest//:gtest"),
+            ("gtest_main", "@googletest//:gtest_main"),
+            ("gmock", "@googletest//:gmock"),
+            ("gmock_main", "@googletest//:gmock_main"),
+            ("benchmark", "@google_benchmark//:benchmark"),
+            ("benchmark_main", "@google_benchmark//:benchmark"),
+            // Protobuf/gRPC
+            ("protobuf", "@com_google_protobuf//:protobuf"),
+            ("grpc", "@com_github_grpc_grpc//:grpc"),
+            ("grpc++", "@com_github_grpc_grpc//:grpc++"),
+        ]
+        .into_iter()
+        .map(|(name, target)| (name.to_string(), target.to_string()))
+        .collect()
+    }
 
-        // Crypto/SSL
-        system_libraries.insert("ssl".to_string(), "@openssl".to_string());
-        system_libraries.insert("crypto".to_string(), "@openssl".to_string());
-        system_libraries.insert("openssl".to_string(), "@openssl".to_string());
+    fn default_implicit_system_libs() -> Vec<String> {
+        [
+            "pthread", "c", "m", "dl", "rt", "util", "resolv", "nsl", "socket",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
 
-        // XML/JSON
-        system_libraries.insert("expat".to_string(), "@expat".to_string());
-        system_libraries.insert("xml2".to_string(), "@libxml2".to_string());
-
-        // Database
-        system_libraries.insert("sqlite3".to_string(), "@sqlite3".to_string());
-
-        // Network
-        system_libraries.insert("curl".to_string(), "@curl".to_string());
-
-        // Regex
-        system_libraries.insert("pcre".to_string(), "@pcre".to_string());
-        system_libraries.insert("pcre2-8".to_string(), "@pcre".to_string());
-
-        // Testing
-        system_libraries.insert("gtest".to_string(), "@googletest//:gtest".to_string());
-        system_libraries.insert("gtest_main".to_string(), "@googletest//:gtest_main".to_string());
-        system_libraries.insert("gmock".to_string(), "@googletest//:gmock".to_string());
-        system_libraries.insert("gmock_main".to_string(), "@googletest//:gmock_main".to_string());
-        system_libraries.insert("benchmark".to_string(), "@google_benchmark//:benchmark".to_string());
-        system_libraries.insert("benchmark_main".to_string(), "@google_benchmark//:benchmark".to_string());
-
-        // Protobuf/gRPC
-        system_libraries.insert("protobuf".to_string(), "@com_google_protobuf//:protobuf".to_string());
-        system_libraries.insert("grpc".to_string(), "@com_github_grpc_grpc//:grpc".to_string());
-        system_libraries.insert("grpc++".to_string(), "@com_github_grpc_grpc//:grpc++".to_string());
-
-        // Implicit system libraries (no Bazel target needed)
-        let implicit_system_libs = vec![
-            "pthread".to_string(),
-            "c".to_string(),
-            "m".to_string(),
-            "dl".to_string(),
-            "rt".to_string(),
-            "util".to_string(),
-            "resolv".to_string(),
-            "nsl".to_string(),
-            "socket".to_string(),
-        ];
-
-        // Package mappings
+    fn default_packages() -> BTreeMap<String, PackageMapping> {
         let mut packages = BTreeMap::new();
 
-        packages.insert(
-            "Boost".to_string(),
-            PackageMapping {
-                target_pattern: "@boost//:{component}".to_string(),
-                components: BTreeMap::new(),
-            },
-        );
+        packages.insert("Boost".to_string(), package_mapping("@boost//:{component}", &[]));
 
         packages.insert(
             "OpenSSL".to_string(),
-            PackageMapping {
-                target_pattern: "@openssl//:{component}".to_string(),
-                components: [
-                    ("SSL".to_string(), "@openssl//:ssl".to_string()),
-                    ("Crypto".to_string(), "@openssl//:crypto".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-            },
+            package_mapping(
+                "@openssl//:{component}",
+                &[
+                    ("SSL", "@openssl//:ssl"),
+                    ("Crypto", "@openssl//:crypto"),
+                ],
+            ),
         );
 
-        packages.insert(
-            "ZLIB".to_string(),
-            PackageMapping {
-                target_pattern: "@zlib".to_string(),
-                components: BTreeMap::new(),
-            },
-        );
+        packages.insert("ZLIB".to_string(), package_mapping("@zlib", &[]));
 
         packages.insert(
             "Protobuf".to_string(),
-            PackageMapping {
-                target_pattern: "@com_google_protobuf//:{component}".to_string(),
-                components: [
-                    ("protobuf".to_string(), "@com_google_protobuf//:protobuf".to_string()),
-                    ("protobuf_lite".to_string(), "@com_google_protobuf//:protobuf_lite".to_string()),
-                    ("protoc".to_string(), "@com_google_protobuf//:protoc".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-            },
+            package_mapping(
+                "@com_google_protobuf//:{component}",
+                &[
+                    ("protobuf", "@com_google_protobuf//:protobuf"),
+                    ("protobuf_lite", "@com_google_protobuf//:protobuf_lite"),
+                    ("protoc", "@com_google_protobuf//:protoc"),
+                ],
+            ),
         );
 
         packages.insert(
             "gRPC".to_string(),
-            PackageMapping {
-                target_pattern: "@com_github_grpc_grpc//:{component}".to_string(),
-                components: [
-                    ("grpc".to_string(), "@com_github_grpc_grpc//:grpc".to_string()),
-                    ("grpc++".to_string(), "@com_github_grpc_grpc//:grpc++".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-            },
+            package_mapping(
+                "@com_github_grpc_grpc//:{component}",
+                &[("grpc", "@com_github_grpc_grpc//:grpc"), ("grpc++", "@com_github_grpc_grpc//:grpc++")],
+            ),
         );
 
         packages.insert(
             "absl".to_string(),
-            PackageMapping {
-                target_pattern: "@com_google_absl//absl/{component}".to_string(),
-                components: BTreeMap::new(),
-            },
+            package_mapping("@com_google_absl//absl/{component}", &[]),
         );
 
         packages.insert(
             "GTest".to_string(),
-            PackageMapping {
-                target_pattern: "@googletest//:{component}".to_string(),
-                components: [
-                    ("gtest".to_string(), "@googletest//:gtest".to_string()),
-                    ("gtest_main".to_string(), "@googletest//:gtest_main".to_string()),
-                    ("gmock".to_string(), "@googletest//:gmock".to_string()),
-                    ("gmock_main".to_string(), "@googletest//:gmock_main".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-            },
+            package_mapping(
+                "@googletest//:{component}",
+                &[
+                    ("gtest", "@googletest//:gtest"),
+                    ("gtest_main", "@googletest//:gtest_main"),
+                    ("gmock", "@googletest//:gmock"),
+                    ("gmock_main", "@googletest//:gmock_main"),
+                ],
+            ),
         );
 
         packages.insert(
             "googletest".to_string(),
-            PackageMapping {
-                target_pattern: "@googletest//:{component}".to_string(),
-                components: BTreeMap::new(),
-            },
+            package_mapping("@googletest//:{component}", &[]),
         );
 
         packages.insert(
             "benchmark".to_string(),
-            PackageMapping {
-                target_pattern: "@google_benchmark//:{component}".to_string(),
-                components: BTreeMap::new(),
-            },
+            package_mapping("@google_benchmark//:{component}", &[]),
         );
 
         packages.insert(
             "nlohmann_json".to_string(),
-            PackageMapping {
-                target_pattern: "@nlohmann_json//:json".to_string(),
-                components: BTreeMap::new(),
-            },
+            package_mapping("@nlohmann_json//:json", &[]),
         );
 
         packages.insert(
             "PkgConfig".to_string(),
-            PackageMapping {
-                target_pattern: "//third_party:{component}".to_string(),
-                components: BTreeMap::new(),
-            },
+            package_mapping("//third_party:{component}", &[]),
         );
 
-        Self {
-            system_libraries,
-            implicit_system_libs,
-            packages,
-        }
+        packages
     }
 }
 
@@ -335,6 +291,18 @@ pub struct PackageMapping {
     /// Component-specific target overrides.
     #[serde(default)]
     pub components: BTreeMap<String, String>,
+}
+
+fn package_mapping(target_pattern: &str, components: &[(&str, &str)]) -> PackageMapping {
+    let components = components
+        .iter()
+        .map(|(name, target)| (String::from(*name), String::from(*target)))
+        .collect();
+
+    PackageMapping {
+        target_pattern: target_pattern.to_string(),
+        components,
+    }
 }
 
 /// Filter configuration for cleaning up CMake artifacts.

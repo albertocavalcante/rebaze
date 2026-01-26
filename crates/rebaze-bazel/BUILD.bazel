@@ -3,13 +3,16 @@ load("@rules_rust//rust:defs.bzl", "rust_library")
 rust_library(
     name = "rebaze-bazel",
     srcs = glob(["src/**/*.rs"]),
-    edition = "2021",
+    edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
+        "//crates/rebaze-cmake",
         "//crates/rebaze-gradle",
+        "//crates/rebaze-starlark",
         "@crates//:anyhow",
         "@crates//:serde",
         "@crates//:thiserror",
+        "@crates//:toml",
         "@crates//:tracing",
     ],
 )

@@ -60,37 +60,37 @@ fn detect_external_deps(project: &CMakeProject) -> DetectedDeps {
 
 use crate::config::MigrationConfig;
 
-/// Generate a MODULE.bazel file for a CMake project.
-#[must_use]
-pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -> String {
-    let mut parts = Vec::new();
+fn serialize_starlark<T: serde::Serialize>(value: &T) -> String {
+    crate::starlark::serde_starlark::to_string(value).unwrap_or_else(|e| format!("# Error: {e}"))
+}
 
-    // Add docstring
+fn push_module_header(parts: &mut Vec<String>, project: &CMakeProject, config: &MigrationConfig) {
     parts.push(format!(
         "\"\"\"Bazel module for {} - migrated from CMake by rebaze.\"\"\"",
         project.name
     ));
 
-    // Module declaration
     let module = Module {
         name: project.name.to_lowercase().replace('-', "_"),
         version: config.build.module_version.clone(),
     };
-    parts.push(
-        crate::starlark::serde_starlark::to_string(&module).unwrap_or_else(|e| format!("# Error: {e}")),
-    );
+    parts.push(serialize_starlark(&module));
+}
 
-    // C/C++ toolchain dependency
+fn push_rules_cc(parts: &mut Vec<String>, config: &MigrationConfig) {
     parts.push("# C/C++ toolchain".to_string());
     let rules_cc = BazelDep {
         name: "rules_cc".to_string(),
         version: config.versions.rules_cc.clone(),
     };
-    parts.push(
-        crate::starlark::serde_starlark::to_string(&rules_cc).unwrap_or_else(|e| format!("# Error: {e}")),
-    );
+    parts.push(serialize_starlark(&rules_cc));
+}
 
-    // Detect and add external test/benchmark dependencies
+fn push_detected_frameworks(
+    parts: &mut Vec<String>,
+    project: &CMakeProject,
+    config: &MigrationConfig,
+) {
     let detected = detect_external_deps(project);
     if detected.googletest {
         parts.push("# Testing framework (auto-detected from CMake)".to_string());
@@ -98,9 +98,7 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
             name: "googletest".to_string(),
             version: config.versions.googletest.clone(),
         };
-        parts.push(
-            crate::starlark::serde_starlark::to_string(&googletest).unwrap_or_else(|e| format!("# Error: {e}")),
-        );
+        parts.push(serialize_starlark(&googletest));
     }
     if detected.benchmark {
         parts.push("# Benchmarking framework (auto-detected from CMake)".to_string());
@@ -108,85 +106,99 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
             name: "google_benchmark".to_string(),
             version: config.versions.google_benchmark.clone(),
         };
-        parts.push(
-            crate::starlark::serde_starlark::to_string(&benchmark).unwrap_or_else(|e| format!("# Error: {e}")),
-        );
+        parts.push(serialize_starlark(&benchmark));
+    }
+}
+
+fn push_platforms(parts: &mut Vec<String>, project: &CMakeProject, config: &MigrationConfig) {
+    if project.packages.is_empty() {
+        return;
     }
 
-    // Add platform support if needed
-    if !project.packages.is_empty() {
-        parts.push("# Platform and dependency management".to_string());
-        let platforms = BazelDep {
-            name: "platforms".to_string(),
-            version: config.versions.platforms.clone(),
-        };
-        parts.push(
-            crate::starlark::serde_starlark::to_string(&platforms).unwrap_or_else(|e| format!("# Error: {e}")),
-        );
+    parts.push("# Platform and dependency management".to_string());
+    let platforms = BazelDep {
+        name: "platforms".to_string(),
+        version: config.versions.platforms.clone(),
+    };
+    parts.push(serialize_starlark(&platforms));
+}
+
+fn push_pkg_config_extensions(
+    parts: &mut Vec<String>,
+    project: &CMakeProject,
+    config: &MigrationConfig,
+) {
+    if project.pkg_config_modules.is_empty() {
+        return;
     }
 
-    // Add rules_foreign_cc for pkg-config dependencies
-    if !project.pkg_config_modules.is_empty() {
-        parts.push("# Foreign build system support (for building deps from source)".to_string());
-        let rules_foreign_cc = BazelDep {
-            name: "rules_foreign_cc".to_string(),
-            version: config.versions.rules_foreign_cc.clone(),
-        };
-        parts.push(
-            crate::starlark::serde_starlark::to_string(&rules_foreign_cc).unwrap_or_else(|e| format!("# Error: {e}")),
-        );
+    parts.push("# Foreign build system support (for building deps from source)".to_string());
+    let rules_foreign_cc = BazelDep {
+        name: "rules_foreign_cc".to_string(),
+        version: config.versions.rules_foreign_cc.clone(),
+    };
+    parts.push(serialize_starlark(&rules_foreign_cc));
 
-        // Collect all package names including transitive deps for source builds
-        let mut all_source_packages = std::collections::BTreeSet::new();
-        for pkg in &project.pkg_config_modules {
-            let name = pkg.prefix.to_lowercase().replace('-', "_");
-            all_source_packages.insert(name.clone());
-            // Add known transitive deps
-            for dep in get_known_transitive_deps(&name) {
-                all_source_packages.insert(dep.to_string());
-            }
+    let mut all_source_packages = BTreeSet::new();
+    for pkg in &project.pkg_config_modules {
+        let name = pkg.prefix.to_lowercase().replace('-', "_");
+        all_source_packages.insert(name.clone());
+        for dep in get_known_transitive_deps(&name) {
+            all_source_packages.insert(dep.to_string());
         }
-
-        // Add system_deps module extension for system library wrappers
-        // Use BTreeSet to deduplicate and maintain consistent ordering
-        let system_dep_names: Vec<String> = project
-            .pkg_config_modules
-            .iter()
-            .map(|pkg| format!("system_{}", pkg.prefix.to_lowercase().replace('-', "_")))
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-
-        parts.push("# System library wrappers (strategy = \"system\", the default)".to_string());
-        parts.push("# NOTE: These wrap system-installed libraries - adjust paths in third_party/system_deps.bzl".to_string());
-        parts.push(format!(
-            r#"system_deps = use_extension("//third_party:system_deps.bzl", "system_deps")
-use_repo(system_deps, {})"#,
-            system_dep_names
-                .iter()
-                .map(|n| format!("\"{n}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-
-        // Add source_deps module extension for building from source
-        let source_dep_names: Vec<String> = all_source_packages
-            .iter()
-            .map(|name| format!("{name}_src"))
-            .collect();
-
-        parts.push("# Source downloads (strategy = \"source\" - hermetic builds)".to_string());
-        parts.push("# NOTE: Uncomment to enable building dependencies from source".to_string());
-        parts.push(format!(
-            r#"# source_deps = use_extension("//third_party:source.bzl", "source_deps")
-# use_repo(source_deps, {})"#,
-            source_dep_names
-                .iter()
-                .map(|n| format!("\"{n}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
     }
+
+    let system_dep_names: Vec<String> = project
+        .pkg_config_modules
+        .iter()
+        .map(|pkg| format!("system_{}", pkg.prefix.to_lowercase().replace('-', "_")))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    parts.push("# System library wrappers (strategy = \"system\", the default)".to_string());
+    parts.push(
+        "# NOTE: These wrap system-installed libraries - adjust paths in third_party/system_deps.bzl"
+            .to_string(),
+    );
+    parts.push(format!(
+        r#"system_deps = use_extension("//third_party:system_deps.bzl", "system_deps")
+use_repo(system_deps, {})"#,
+        system_dep_names
+            .iter()
+            .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+
+    let source_dep_names: Vec<String> = all_source_packages
+        .iter()
+        .map(|name| format!("{name}_src"))
+        .collect();
+
+    parts.push("# Source downloads (strategy = \"source\" - hermetic builds)".to_string());
+    parts.push("# NOTE: Uncomment to enable building dependencies from source".to_string());
+    parts.push(format!(
+        r#"# source_deps = use_extension("//third_party:source.bzl", "source_deps")
+# use_repo(source_deps, {})"#,
+        source_dep_names
+            .iter()
+            .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+}
+
+/// Generate a MODULE.bazel file for a CMake project.
+#[must_use]
+pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -> String {
+    let mut parts = Vec::new();
+
+    push_module_header(&mut parts, project, config);
+    push_rules_cc(&mut parts, config);
+    push_detected_frameworks(&mut parts, project, config);
+    push_platforms(&mut parts, project, config);
+    push_pkg_config_extensions(&mut parts, project, config);
 
     parts.join("\n\n") + "\n"
 }

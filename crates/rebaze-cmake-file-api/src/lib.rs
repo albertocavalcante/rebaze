@@ -78,10 +78,10 @@ pub fn project_from_codemodel(
         ..Default::default()
     };
 
-    if let Some(dir_ref) = config.directory_refs.first() {
-        if let Some(min) = &dir_ref.minimum_cmake_version {
-            project.cmake_minimum_version = Some(min.version.clone());
-        }
+    if let Some(dir_ref) = config.directory_refs.first()
+        && let Some(min) = &dir_ref.minimum_cmake_version
+    {
+        project.cmake_minimum_version = Some(min.version.clone());
     }
 
     let mut languages = HashSet::new();
@@ -256,10 +256,8 @@ fn collect_dependencies(
 ) -> Vec<String> {
     let mut set = HashSet::new();
     for dep in &target.dependencies {
-        if let Some((name, _)) = id_to_name.get(&dep.id) {
-            if name != &target.name {
-                set.insert(name.clone());
-            }
+        if let Some((name, _)) = id_to_name.get(&dep.id) && name != &target.name {
+            set.insert(name.clone());
         }
     }
     sorted_vec(set)
