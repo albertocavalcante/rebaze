@@ -1,0 +1,43 @@
+# CMake Test Corpus
+# Format: STATUS URL NOTES
+# STATUS: PASS = builds successfully, FAIL = build fails, SKIP = cmake configure fails
+
+# Fully Working (8 projects)
+PASS https://github.com/gabime/spdlog            # Logging library
+PASS https://github.com/madler/zlib              # Compression library
+PASS https://github.com/jbeder/yaml-cpp          # YAML parser
+PASS https://github.com/fmtlib/fmt               # Formatting library
+PASS https://github.com/catchorg/Catch2          # Testing framework
+PASS https://github.com/google/googletest        # Testing framework
+PASS https://github.com/nlohmann/json            # JSON library
+PASS https://github.com/leethomason/tinyxml2     # XML parser
+
+# Build Failures (need generator fixes)
+FAIL https://github.com/libuv/libuv              # Include path issue (src/*.h not found)
+FAIL https://github.com/ToruNiina/toml11         # Missing @boost external dep
+FAIL https://github.com/zeux/pugixml             # Define with spaces breaks bazel
+FAIL https://github.com/yhirose/cpp-httplib      # Duplicate use_repo in MODULE.bazel
+FAIL https://github.com/Neargye/magic_enum       # Duplicate use_repo in MODULE.bazel
+FAIL https://github.com/simdjson/simdjson        # Double path (dependencies/dependencies/)
+FAIL https://github.com/jarro2783/cxxopts        # macOS SDK version issue with std::filesystem
+FAIL https://github.com/richgel999/miniz         # Missing main in fuzz targets
+FAIL https://github.com/p-ranav/argparse         # Existing BUILD files conflict + path issue
+
+# CMake Configure Failures (external dependency or env issues)
+SKIP https://github.com/abseil/abseil-cpp        # Requires C++17 compiler
+SKIP https://github.com/grpc/grpc                # Large project, many deps
+SKIP https://github.com/protocolbuffers/protobuf # Large project, many deps
+SKIP https://github.com/DaveGamble/cJSON         # CMake version < 3.5 not supported
+SKIP https://github.com/doctest/doctest          # Cross-compilation error on macOS
+SKIP https://github.com/Tencent/rapidjson        # CMake version < 3.5 not supported
+SKIP https://github.com/google/re2               # Requires abseil
+SKIP https://github.com/google/benchmark         # Requires googletest sources
+SKIP https://github.com/glfw/glfw                # MODULE.bazel not detected in subdir
+
+# Not CMake Projects
+SKIP https://github.com/nothings/stb             # Header-only, no CMake
+
+# Summary:
+# - PASS: 8 projects build and link successfully
+# - FAIL: 9 projects have generator bugs that can be fixed
+# - SKIP: 10 projects have external/env issues
