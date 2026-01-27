@@ -237,77 +237,28 @@ jobs:
 
       - name: Update Homebrew tap
         if: steps.eukia.outcome == 'success' && !contains(steps.tag.outputs.tag, '-')
+        uses: albertocavalcante/actions/update-homebrew-tap@main
         continue-on-error: true
-        env:
-          GH_TOKEN: ${{ steps.eukia.outputs.token }}
-        run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          VERSION="${TAG#v}"
-
-          # Extract SHA256 hashes
-          SHA256_DARWIN_ARM64=$(awk '{print $1}' release-assets/rebaze-darwin-arm64.tar.gz.sha256)
-          SHA256_DARWIN_AMD64=$(awk '{print $1}' release-assets/rebaze-darwin-amd64.tar.gz.sha256)
-          SHA256_LINUX_ARM64=$(awk '{print $1}' release-assets/rebaze-linux-aarch64.tar.gz.sha256)
-          SHA256_LINUX_AMD64=$(awk '{print $1}' release-assets/rebaze-linux-amd64.tar.gz.sha256)
-
-          # Generate formula
-          cat > rebaze.rb << EOF
-          class Rebaze < Formula
-            desc "CLI tool to migrate projects to Bazel"
-            homepage "https://github.com/albertocavalcante/rebaze"
-            version "${VERSION}"
-            license "Apache-2.0"
-
-            on_macos do
-              if Hardware::CPU.arm?
-                url "https://github.com/albertocavalcante/rebaze/releases/download/${TAG}/rebaze-darwin-arm64.tar.gz"
-                sha256 "${SHA256_DARWIN_ARM64}"
-              else
-                url "https://github.com/albertocavalcante/rebaze/releases/download/${TAG}/rebaze-darwin-amd64.tar.gz"
-                sha256 "${SHA256_DARWIN_AMD64}"
-              end
-            end
-
-            on_linux do
-              if Hardware::CPU.arm?
-                url "https://github.com/albertocavalcante/rebaze/releases/download/${TAG}/rebaze-linux-aarch64.tar.gz"
-                sha256 "${SHA256_LINUX_ARM64}"
-              else
-                url "https://github.com/albertocavalcante/rebaze/releases/download/${TAG}/rebaze-linux-amd64.tar.gz"
-                sha256 "${SHA256_LINUX_AMD64}"
-              end
-            end
-
-            conflicts_with "rebaze-nightly", because: "both install rebaze binary"
-
-            def install
-              bin.install "rebaze"
-            end
-
-            test do
-              assert_match "rebaze", shell_output("#{bin}/rebaze --version")
-            end
-          end
-          EOF
-
-          # Get current file SHA
-          CURRENT_SHA=$(gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze.rb --jq '.sha' 2>/dev/null || echo "")
-
-          # Update formula
-          if [ -n "$CURRENT_SHA" ]; then
-            gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze.rb \
-              --method PUT \
-              -f message="Update rebaze to ${VERSION}" \
-              -f content="$(base64 -w0 rebaze.rb)" \
-              -f sha="$CURRENT_SHA" \
-              -f "committer[name]=Eukia[bot]" \
-              -f "committer[email]=eukia[bot]@users.noreply.github.com"
-          else
-            gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze.rb \
-              --method PUT \
-              -f message="Add rebaze formula ${VERSION}" \
-              -f content="$(base64 -w0 rebaze.rb)" \
-              -f "committer[name]=Eukia[bot]" \
-              -f "committer[email]=eukia[bot]@users.noreply.github.com"
-          fi
-          echo "Updated homebrew-tap formula"
+        with:
+          tap-repo: albertocavalcante/homebrew-tap
+          formula-name: rebaze
+          version: ${{ steps.tag.outputs.tag }}
+          template: packaging/homebrew/rebaze.rb.in
+          github-token: ${{ steps.eukia.outputs.token }}
+          git-user-name: "Eukia[bot]"
+          git-user-email: "eukia[bot]@users.noreply.github.com"
+          assets: |
+            {
+              "darwin-arm64": {
+                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ steps.tag.outputs.tag }}/rebaze-darwin-arm64.tar.gz"
+              },
+              "darwin-x64": {
+                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ steps.tag.outputs.tag }}/rebaze-darwin-amd64.tar.gz"
+              },
+              "linux-arm64": {
+                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ steps.tag.outputs.tag }}/rebaze-linux-aarch64.tar.gz"
+              },
+              "linux-x64": {
+                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ steps.tag.outputs.tag }}/rebaze-linux-amd64.tar.gz"
+              }
+            }

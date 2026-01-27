@@ -1,5 +1,5 @@
-class RebazeNightly < Formula
-  desc "CLI tool to migrate projects to Bazel (nightly build)"
+class Rebaze < Formula
+  desc "CLI tool to migrate projects to Bazel"
   homepage "https://github.com/albertocavalcante/rebaze"
   version "{{version}}"
   license "Apache-2.0"
@@ -31,7 +31,7 @@ class RebazeNightly < Formula
     end
   end
 
-  conflicts_with "rebaze", because: "both install rebaze binary"
+  conflicts_with "rebaze-nightly", because: "both install rebaze binary"
 
   def install
     bin.install "rebaze"
