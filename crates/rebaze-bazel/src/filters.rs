@@ -394,144 +394,29 @@ fn normalize_and_filter_include(inc: &str) -> Option<String> {
     Some(result)
 }
 
-/// Comprehensive CMake to Bazel dependency mapping.
+use crate::config::MigrationConfig;
+
+/// Comprehensive CMake to Bazel dependency mapping using configuration.
 ///
 /// Maps common CMake package names and imported targets to their
 /// Bazel equivalents. Returns None for system libraries that don't
 /// need explicit deps (pthread, m, dl, etc.)
+///
+/// This is the config-driven version that should be preferred.
+pub fn map_dependency_with_config(cmake_name: &str, config: &MigrationConfig) -> Option<String> {
+    config.map_dependency(cmake_name)
+}
+
+/// Comprehensive CMake to Bazel dependency mapping using default configuration.
+///
+/// This is a convenience wrapper that uses the default MigrationConfig.
+/// For customized mappings, use `map_dependency_with_config` instead.
 pub fn map_dependency(cmake_name: &str) -> Option<String> {
-    // Handle -l flags from pkg-config
-    if let Some(lib) = cmake_name.strip_prefix("-l") {
-        return map_system_library(lib);
+    // Use a lazily-initialized default config for backward compatibility
+    thread_local! {
+        static DEFAULT_CONFIG: MigrationConfig = MigrationConfig::default();
     }
-
-    // Handle CMake imported targets (Package::Component)
-    if cmake_name.contains("::") {
-        return map_imported_target(cmake_name);
-    }
-
-    // Handle plain library names
-    map_plain_library(cmake_name)
-}
-
-fn map_system_library(lib: &str) -> Option<String> {
-    match lib {
-        // Standard C/POSIX libraries (usually don't need explicit deps)
-        "pthread" | "c" | "m" | "dl" | "rt" | "util" => None,
-
-        // Compression
-        "z" | "zlib" => Some("@zlib".to_string()),
-        "bz2" | "bzip2" => Some("@bzip2".to_string()),
-        "lzma" | "lz4" | "zstd" => Some(format!("@{lib}")),
-
-        // Crypto/SSL
-        "ssl" | "crypto" => Some("@openssl".to_string()),
-
-        // XML/JSON
-        "expat" => Some("@expat".to_string()),
-        "xml2" => Some("@libxml2".to_string()),
-
-        // Database
-        "sqlite3" => Some("@sqlite3".to_string()),
-
-        // Misc
-        "curl" => Some("@curl".to_string()),
-        "pcre" | "pcre2-8" => Some("@pcre".to_string()),
-
-        // Unknown - generate comment
-        _ => Some(format!("# TODO: Map -l{lib} to Bazel dependency")),
-    }
-}
-
-fn map_imported_target(cmake_name: &str) -> Option<String> {
-    let parts: Vec<&str> = cmake_name.split("::").collect();
-    if parts.len() != 2 {
-        return Some(format!("# TODO: Map {cmake_name} to Bazel"));
-    }
-
-    let package = parts[0].to_lowercase();
-    let component = parts[1].to_lowercase();
-
-    match package.as_str() {
-        // Libraries that are implicit or bundled - no external dep needed
-        "threads" | "fmt" | "spdlog" => None,
-
-        // Boost
-        "boost" => Some(format!("@boost//:{component}")),
-
-        // OpenSSL - all components map to @openssl//:component
-        "openssl" => Some(format!("@openssl//:{component}")),
-
-        // ZLIB
-        "zlib" => Some("@zlib".to_string()),
-
-        // Protobuf
-        "protobuf" => match component.as_str() {
-            "protobuf" | "libprotobuf" => Some("@com_google_protobuf//:protobuf".to_string()),
-            "protobuf-lite" | "libprotobuf-lite" => {
-                Some("@com_google_protobuf//:protobuf_lite".to_string())
-            }
-            "protoc" => Some("@com_google_protobuf//:protoc".to_string()),
-            _ => Some(format!("@com_google_protobuf//:{component}")),
-        },
-
-        // gRPC
-        "grpc" => match component.as_str() {
-            "grpc" => Some("@com_github_grpc_grpc//:grpc".to_string()),
-            "grpc++" => Some("@com_github_grpc_grpc//:grpc++".to_string()),
-            _ => Some(format!("@com_github_grpc_grpc//:{component}")),
-        },
-
-        // Abseil
-        "absl" => Some(format!("@com_google_absl//absl/{component}")),
-
-        // Google Test - all components map to @googletest//:component
-        "gtest" | "googletest" => Some(format!("@googletest//:{component}")),
-
-        // Google Benchmark
-        "benchmark" => Some(format!("@google_benchmark//:{component}")),
-
-        // nlohmann_json
-        "nlohmann_json" => Some("@nlohmann_json//:json".to_string()),
-
-        // CURL
-        "curl" => Some("@curl".to_string()),
-
-        // SQLite
-        "sqlite" | "sqlite3" => Some("@sqlite3".to_string()),
-
-        // PkgConfig (usually from pkg_check_modules)
-        "pkgconfig" => Some(format!("//third_party:{component}")),
-
-        // Unknown package
-        _ => Some(format!("# TODO: Map {cmake_name} to Bazel")),
-    }
-}
-
-fn map_plain_library(lib: &str) -> Option<String> {
-    match lib.to_lowercase().as_str() {
-        // Standard libraries (no explicit dep needed) + commonly bundled libs
-        "pthread" | "threads::threads" | "m" | "dl" | "rt" | "c" | "fmt" | "spdlog" => None,
-
-        // Common libraries with known Bazel targets
-        "zlib" | "z" => Some("@zlib".to_string()),
-        "openssl" | "ssl" | "crypto" => Some("@openssl".to_string()),
-        "boost" => Some("@boost".to_string()),
-        "protobuf" => Some("@com_google_protobuf//:protobuf".to_string()),
-        "grpc" | "grpc++" => Some("@com_github_grpc_grpc//:grpc++".to_string()),
-
-        // Google Test/Mock - map to @googletest (requires bazel_dep in MODULE.bazel)
-        "gtest" => Some("@googletest//:gtest".to_string()),
-        "gtest_main" => Some("@googletest//:gtest_main".to_string()),
-        "gmock" => Some("@googletest//:gmock".to_string()),
-        "gmock_main" => Some("@googletest//:gmock_main".to_string()),
-
-        // Google Benchmark - map to @google_benchmark
-        "benchmark" | "benchmark_main" => Some("@google_benchmark//:benchmark".to_string()),
-
-        // Unknown - generate TODO comment
-        _ => Some(format!("# TODO: Map '{lib}' to Bazel dependency")),
-    }
+    DEFAULT_CONFIG.with(|config| config.map_dependency(cmake_name))
 }
 
 #[cfg(test)]

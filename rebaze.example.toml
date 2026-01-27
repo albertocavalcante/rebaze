@@ -99,6 +99,79 @@ implicit_system_libs = [
 ]
 
 # =============================================================================
+# Plain Library Mappings
+# =============================================================================
+# Map plain library names (without -l prefix or :: separator) to Bazel targets.
+# These are used when CMake target_link_libraries uses plain names like "gtest".
+
+[mappings.plain_libraries]
+gtest = "@googletest//:gtest"
+gtest_main = "@googletest//:gtest_main"
+gmock = "@googletest//:gmock"
+gmock_main = "@googletest//:gmock_main"
+benchmark = "@google_benchmark//:benchmark"
+boost = "@boost"
+# Add your custom plain library mappings here:
+# mylib = "@my_repo//:mylib"
+
+# =============================================================================
+# Ignored Libraries
+# =============================================================================
+# Libraries to ignore completely - no dependency will be generated.
+# Use for bundled/header-only libraries that don't need external deps.
+
+[mappings]
+ignored_libraries = [
+    "fmt",      # Often bundled as header-only
+    "spdlog",   # Often bundled as header-only
+    "Threads::Threads",  # Handled by toolchain
+]
+
+# =============================================================================
+# Transitive Dependencies
+# =============================================================================
+# Define transitive dependencies for packages.
+# When a package is used, its transitive deps are also included.
+
+[mappings.transitive_deps]
+glib = ["pcre2", "libffi", "zlib"]
+"glib-2.0" = ["pcre2", "libffi", "zlib"]
+gobject = ["glib", "libffi", "pcre2", "zlib"]
+"gobject-2.0" = ["glib", "libffi", "pcre2", "zlib"]
+
+# =============================================================================
+# System Linkopts
+# =============================================================================
+# Fallback linkopts for packages when pkg-config is not available.
+# Maps package names to their linker flags.
+
+[mappings.system_linkopts]
+"glib-2.0" = ["-lglib-2.0"]
+"gobject-2.0" = ["-lgobject-2.0"]
+"gio-2.0" = ["-lgio-2.0"]
+curl = ["-lcurl"]
+openssl = ["-lssl", "-lcrypto"]
+zlib = ["-lz"]
+"libxml-2.0" = ["-lxml2"]
+
+# =============================================================================
+# Known Packages (Source Builds)
+# =============================================================================
+# Metadata for building packages from source with rules_foreign_cc.
+# Used when strategy = "source" for hermetic builds.
+
+# [mappings.known_packages.zlib]
+# version = "1.3.1"
+# url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+# sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+# strip_prefix = "zlib-1.3.1"
+# build_system = "cmake"  # "cmake" | "meson" | "autotools"
+# out_static_libs = ["libz.a"]
+# out_shared_libs = []
+# deps = []
+# build_options = []
+
+# =============================================================================
 # CMake Package Mappings
 # =============================================================================
 # Map CMake find_package() targets to Bazel targets.
@@ -150,6 +223,26 @@ header_patterns = ["**/*.h", "**/*.hpp"]
 default_cxx_standard = "17"
 default_c_standard = "11"
 module_version = "0.1.0"
+
+# =============================================================================
+# Custom Rules (Optional)
+# =============================================================================
+# Configure custom Bazel rules instead of standard cc_library/cc_binary.
+# This is useful for organizations with their own rule wrappers (like Spotify).
+
+[build.rules]
+# Rule name for libraries (default: "cc_library")
+library_rule = "cc_library"
+# Rule name for binaries (default: "cc_binary")
+binary_rule = "cc_binary"
+# Rule name for tests (default: "cc_test")
+test_rule = "cc_test"
+
+# Extra load statements needed for custom rules
+# Example for a company with custom rules:
+# [[build.rules.extra_loads]]
+# bzl = "@company//build:rules.bzl"
+# items = ["company_library", "company_binary"]
 
 # =============================================================================
 # Filter Configuration

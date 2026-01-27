@@ -4,19 +4,9 @@ use std::collections::BTreeSet;
 
 use rebaze_cmake::{CMakeProject, Executable, Library, LibraryKind};
 
-use crate::filters::{
-    filter_copts, filter_defines, filter_includes, filter_sources, map_dependency,
-};
+use crate::config::MigrationConfig;
+use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources};
 use crate::starlark::{BazelDep, CcBinary, CcLibrary, Glob, Load, Module, Package, SrcsWithHdrs};
-
-/// Get known transitive dependencies for a package.
-fn get_known_transitive_deps(pkg_name: &str) -> Vec<&'static str> {
-    match pkg_name {
-        "glib" | "glib-2.0" => vec!["pcre2", "libffi", "zlib"],
-        "gobject" | "gobject-2.0" => vec!["glib", "libffi", "pcre2", "zlib"],
-        _ => vec![],
-    }
-}
 
 /// Detected external dependencies that need bazel_dep entries.
 #[derive(Debug, Default)]
@@ -67,8 +57,6 @@ fn detect_external_deps(project: &CMakeProject) -> DetectedDeps {
 
     deps
 }
-
-use crate::config::MigrationConfig;
 
 fn serialize_starlark<T: serde::Serialize>(value: &T) -> String {
     crate::starlark::serde_starlark::to_string(value).unwrap_or_else(|e| format!("# Error: {e}"))
@@ -153,8 +141,9 @@ fn push_pkg_config_extensions(
     for pkg in &project.pkg_config_modules {
         let name = pkg.prefix.to_lowercase().replace('-', "_");
         all_source_packages.insert(name.clone());
-        for dep in get_known_transitive_deps(&name) {
-            all_source_packages.insert(dep.to_string());
+        // Get transitive deps from config instead of hardcoded function
+        for dep in config.get_transitive_deps(&name) {
+            all_source_packages.insert(dep);
         }
     }
 
@@ -217,7 +206,7 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
 #[must_use]
 // BUILD file generation needs sequential sections (loads, package, targets) that can't be easily split
 #[allow(clippy::too_many_lines)]
-pub fn generate_root_build(project: &CMakeProject) -> String {
+pub fn generate_root_build(project: &CMakeProject, config: &MigrationConfig) -> String {
     let mut parts = Vec::new();
 
     // Add header comment with review notes
@@ -235,7 +224,11 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         project.name, pkg_note
     ));
 
-    // Load statement
+    // Load statement - include standard rules and any custom rules from config
+    let uses_custom_rules = config.build.rules.library_rule != "cc_library"
+        || config.build.rules.binary_rule != "cc_binary";
+
+    // Standard cc rules load
     let mut items = BTreeSet::new();
     items.insert("cc_binary".to_string());
     items.insert("cc_library".to_string());
@@ -247,6 +240,29 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         crate::starlark::serde_starlark::to_string(&load)
             .unwrap_or_else(|e| format!("# Error: {e}")),
     );
+
+    // Add extra load statements from config (for custom rules)
+    for extra_load in &config.build.rules.extra_loads {
+        let load = Load {
+            bzl: extra_load.bzl.clone(),
+            items: extra_load.items.iter().cloned().collect(),
+        };
+        parts.push(
+            crate::starlark::serde_starlark::to_string(&load)
+                .unwrap_or_else(|e| format!("# Error: {e}")),
+        );
+    }
+
+    // Add note if custom rules are configured
+    if uses_custom_rules {
+        parts.push(format!(
+            r#"# NOTE: Custom rules configured in rebaze.toml:
+#   library_rule = "{}"
+#   binary_rule = "{}"
+# The rules below use standard cc_library/cc_binary - replace as needed."#,
+            config.build.rules.library_rule, config.build.rules.binary_rule
+        ));
+    }
 
     // Add pkg-config dependency note
     if !project.pkg_config_modules.is_empty() {
@@ -277,7 +293,7 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
     for lib in &project.libraries {
         let target_name = lib.name.replace('-', "_");
         if seen_libs.insert(target_name) {
-            let cc_lib = build_cc_library(lib, &project.libraries, &project.aliases);
+            let cc_lib = build_cc_library(lib, &project.libraries, &project.aliases, config);
             parts.push(
                 crate::starlark::serde_starlark::to_string(&cc_lib)
                     .unwrap_or_else(|e| format!("# Error: {e}")),
@@ -292,6 +308,7 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
             &project.libraries,
             &project.pkg_config_modules,
             &project.aliases,
+            config,
         );
         parts.push(
             crate::starlark::serde_starlark::to_string(&cc_bin)
@@ -307,6 +324,7 @@ fn build_cc_library(
     lib: &Library,
     all_libs: &[Library],
     aliases: &std::collections::HashMap<String, String>,
+    config: &MigrationConfig,
 ) -> CcLibrary {
     let target_name = lib.name.replace('-', "_");
 
@@ -347,7 +365,7 @@ fn build_cc_library(
         )
     };
 
-    // Map link dependencies using comprehensive mapper (filters out # TODO comments)
+    // Map link dependencies using config-driven mapper (filters out # TODO comments)
     // Deduplicate deps - CMake may report the same dependency multiple ways (e.g., fmt and fmt::fmt)
     let deps: Vec<String> = {
         let mut seen = std::collections::BTreeSet::new();
@@ -369,7 +387,7 @@ fn build_cc_library(
                 if internal_lib_names.contains(lib_name) {
                     Some(format!(":{}", lib_name.replace('-', "_")))
                 } else {
-                    map_dependency(resolved_name)
+                    config.map_dependency(resolved_name)
                 }
             })
             .filter(|dep| !dep.starts_with('#'))
@@ -401,6 +419,7 @@ fn build_cc_binary(
     libs: &[Library],
     pkg_config_modules: &[rebaze_cmake::PkgConfigModule],
     aliases: &std::collections::HashMap<String, String>,
+    config: &MigrationConfig,
 ) -> CcBinary {
     let target_name = exe.name.replace('-', "_");
 
@@ -442,7 +461,7 @@ fn build_cc_binary(
         .flat_map(|dir| vec![format!("{dir}/**/*.h"), format!("{dir}/**/*.hpp")])
         .collect();
 
-    // Collect dependencies from link_libraries using comprehensive mapper
+    // Collect dependencies from link_libraries using config-driven mapper
     // Deduplicate deps deterministically with BTreeSet
     let mut seen_deps = std::collections::BTreeSet::new();
     let mut deps: Vec<String> = exe
@@ -466,7 +485,7 @@ fn build_cc_binary(
             if internal_lib_names.contains(lib_name) {
                 Some(format!(":{}", lib_name.replace('-', "_")))
             } else {
-                map_dependency(resolved_name)
+                config.map_dependency(resolved_name)
             }
         })
         .filter(|dep| !dep.starts_with('#'))
@@ -589,7 +608,8 @@ mod tests {
     #[test]
     fn test_generate_root_build() {
         let project = test_project();
-        let content = generate_root_build(&project);
+        let config = crate::config::MigrationConfig::default();
+        let content = generate_root_build(&project, &config);
 
         assert!(content.contains("cc_library("));
         assert!(content.contains("cc_binary("));
@@ -629,7 +649,8 @@ mod tests {
     #[test]
     fn test_generate_root_build_format() {
         let project = test_project();
-        let content = generate_root_build(&project);
+        let config = crate::config::MigrationConfig::default();
+        let content = generate_root_build(&project, &config);
 
         // Check load statement
         assert!(content.contains("load("));
@@ -651,7 +672,7 @@ mod tests {
         let config = crate::config::MigrationConfig::default();
 
         let module = generate_module_bazel(&project, &config);
-        let build = generate_root_build(&project);
+        let build = generate_root_build(&project, &config);
 
         // This test verifies that the output is properly formatted Starlark
         // by checking the overall structure

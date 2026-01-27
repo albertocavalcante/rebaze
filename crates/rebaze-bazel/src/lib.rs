@@ -64,7 +64,7 @@ pub fn generate_from_cmake_with_config(
     files.insert("MODULE.bazel".to_string(), module_bazel);
 
     // Generate root BUILD.bazel
-    let root_build = cmake_generator::generate_root_build(project);
+    let root_build = cmake_generator::generate_root_build(project, config);
     files.insert("BUILD.bazel".to_string(), root_build);
 
     // Generate .bazelversion
