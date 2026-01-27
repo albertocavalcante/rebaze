@@ -1,0 +1,79 @@
+---
+title: Getting Started
+description: Migrate your build system to Bazel
+---
+
+rebaze is a CLI tool that migrates projects from CMake and Gradle to Bazel.
+
+## Installation
+
+Build from source using Bazel:
+
+```bash
+bazel build //crates/rebaze-cli:rebaze
+```
+
+The binary will be at `bazel-bin/crates/rebaze-cli/rebaze`.
+
+## Quick Start
+
+### Analyze a project
+
+Detect the build system used by a project:
+
+```bash
+rebaze analyze /path/to/project
+```
+
+### Migrate to Bazel
+
+Generate Bazel build files:
+
+```bash
+rebaze migrate /path/to/project
+```
+
+This will:
+1. Detect the source build system (CMake or Gradle)
+2. Parse the project structure
+3. Generate `MODULE.bazel` and `BUILD.bazel` files
+
+### Validate the migration
+
+Verify the generated Bazel files build successfully:
+
+```bash
+rebaze validate /path/to/project
+```
+
+## Supported Build Systems
+
+| Source | Status |
+|--------|--------|
+| CMake | Supported |
+| Gradle | Supported |
+
+## CLI Options
+
+```bash
+rebaze migrate /path/to/project \
+  --config rebaze.toml \    # Custom configuration file
+  --dry-run \               # Preview without writing files
+  --from cmake              # Specify source build system
+```
+
+For CMake projects, additional options are available:
+
+```bash
+rebaze migrate /path/to/project \
+  --cmake-build-dir build \     # Use cmake-file-api data
+  --cmake-config Release        # CMake configuration name
+```
+
+## Configuration
+
+Create a `rebaze.toml` file in your project root to customize the migration. See the [Configuration Reference](/docs/reference/config) for details.
+
+## Requirements
+
+- Bazel 9.x

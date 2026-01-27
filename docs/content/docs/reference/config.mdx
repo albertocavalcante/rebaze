@@ -1,0 +1,191 @@
+---
+title: Configuration Reference
+description: rebaze.toml configuration options
+---
+
+rebaze uses a `rebaze.toml` file for configuration. Place this file in your project root.
+
+## Versions
+
+Control Bazel dependency versions in generated `MODULE.bazel`:
+
+```toml
+[versions]
+rules_cc = "0.1.1"
+platforms = "0.0.11"
+rules_foreign_cc = "0.14.0"
+googletest = "1.15.2"
+google_benchmark = "1.9.1"
+```
+
+## Strategy
+
+Define how external dependencies are resolved:
+
+```toml
+[strategy]
+default = "system"  # "system" | "source" | "conan" | "vcpkg"
+
+# Per-package overrides
+[strategy.overrides]
+glib = "source"
+openssl = "vcpkg"
+```
+
+| Strategy | Description |
+|----------|-------------|
+| `system` | Use system-installed libraries (non-hermetic) |
+| `source` | Build from source using rules_foreign_cc (hermetic) |
+| `conan` | Use Conan package manager |
+| `vcpkg` | Use vcpkg package manager |
+
+## Mappings
+
+### System Libraries
+
+Map system library names (from `-l` flags) to Bazel targets:
+
+```toml
+[mappings.system_libraries]
+z = "@zlib"
+ssl = "@openssl"
+gtest = "@googletest//:gtest"
+```
+
+### Implicit System Libraries
+
+Libraries that don't need Bazel targets (provided by the system):
+
+```toml
+[mappings]
+implicit_system_libs = ["pthread", "c", "m", "dl", "rt"]
+```
+
+### Plain Libraries
+
+Map plain library names to Bazel targets:
+
+```toml
+[mappings.plain_libraries]
+gtest = "@googletest//:gtest"
+boost = "@boost"
+```
+
+### Ignored Libraries
+
+Libraries to skip entirely:
+
+```toml
+[mappings]
+ignored_libraries = ["fmt", "spdlog", "Threads::Threads"]
+```
+
+### CMake Package Mappings
+
+Map CMake `find_package()` targets to Bazel:
+
+```toml
+[mappings.packages.GTest]
+target_pattern = "@googletest//:{component}"
+
+[mappings.packages.GTest.components]
+gtest = "@googletest//:gtest"
+gtest_main = "@googletest//:gtest_main"
+```
+
+### Transitive Dependencies
+
+Define transitive dependencies for packages:
+
+```toml
+[mappings.transitive_deps]
+glib = ["pcre2", "libffi", "zlib"]
+gobject = ["glib", "libffi", "pcre2", "zlib"]
+```
+
+### System Linkopts
+
+Fallback linker flags when pkg-config is unavailable:
+
+```toml
+[mappings.system_linkopts]
+"glib-2.0" = ["-lglib-2.0"]
+curl = ["-lcurl"]
+zlib = ["-lz"]
+```
+
+### Known Packages
+
+Metadata for building packages from source:
+
+```toml
+[mappings.known_packages.zlib]
+version = "1.3.1"
+url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+strip_prefix = "zlib-1.3.1"
+build_system = "cmake"  # "cmake" | "meson" | "autotools"
+out_static_libs = ["libz.a"]
+```
+
+## Build
+
+Configure generated BUILD files:
+
+```toml
+[build]
+default_visibility = "//visibility:public"
+header_patterns = ["**/*.h", "**/*.hpp"]
+default_cxx_standard = "17"
+default_c_standard = "11"
+module_version = "0.1.0"
+```
+
+### Custom Rules
+
+Use custom Bazel rules instead of standard `cc_library`/`cc_binary`:
+
+```toml
+[build.rules]
+library_rule = "cc_library"
+binary_rule = "cc_binary"
+test_rule = "cc_test"
+
+# Extra load statements for custom rules
+[[build.rules.extra_loads]]
+bzl = "@company//build:rules.bzl"
+items = ["company_library", "company_binary"]
+```
+
+## Filters
+
+Filter out platform-specific or unwanted artifacts:
+
+```toml
+[filters]
+# File extensions to exclude from sources
+excluded_source_extensions = [
+    "rc", "res", "ico",  # Windows
+    "plist", "xib",      # macOS
+    "o", "obj", "a",     # Prebuilt
+]
+
+# Compiler defines to exclude
+excluded_define_patterns = [
+    "_WIN32", "WIN32", "_MSC_VER",
+    "__APPLE__", "__MACH__",
+]
+
+# Compiler flags to exclude
+excluded_copt_patterns = [
+    "/",       # MSVC flags
+    "-O",      # Optimization
+    "-std=",   # Standard (toolchain handles this)
+]
+
+# Include paths to exclude
+excluded_include_patterns = [
+    "/usr/",
+    "/opt/",
+]
+```
