@@ -1,0 +1,133 @@
+---
+title: Dependency Strategies
+description: Understanding how rebaze resolves external dependencies
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Rebaze supports multiple strategies for resolving external dependencies.
+
+## Available Strategies
+
+| Strategy | Hermetic | Speed | Setup |
+|----------|----------|-------|-------|
+| `system` | No | Fast | Minimal |
+| `source` | Yes | Slow (first build) | Moderate |
+| `vcpkg` | Partial | Moderate | vcpkg install |
+| `conan` | Partial | Moderate | Conan install |
+
+## System Strategy (Default)
+
+Uses system-installed libraries via pkg-config.
+
+```toml
+[strategy]
+default = "system"
+```
+
+**How it works:**
+1. Generates `cc_library` targets with `linkopts`
+2. At build time, pkg-config resolves library paths
+3. System libraries are linked
+
+**Pros:**
+- Fast builds
+- Simple setup
+- Works with existing packages
+
+**Cons:**
+- Non-hermetic
+- Version may vary across machines
+- Not reproducible
+
+**Generated:**
+```python
+cc_library(
+    name = "zlib",
+    linkopts = ["-lz"],
+)
+```
+
+## Source Strategy
+
+Builds dependencies from source using `rules_foreign_cc`.
+
+```toml
+[strategy]
+default = "source"
+```
+
+**How it works:**
+1. Downloads source archives
+2. `rules_foreign_cc` builds them
+3. Built libraries are used as deps
+
+**Pros:**
+- Fully hermetic
+- Reproducible builds
+- Same version everywhere
+
+**Cons:**
+- Slower first build
+- Requires package metadata
+
+**Generated:**
+```python
+cmake(
+    name = "zlib",
+    lib_source = "@zlib//:all_srcs",
+    out_static_libs = ["libz.a"],
+)
+```
+
+## Per-Package Overrides
+
+Mix strategies based on your needs:
+
+```toml
+[strategy]
+default = "system"
+
+[strategy.overrides]
+openssl = "source"  # Hermetic
+zlib = "source"     # Hermetic
+qt = "system"       # Large, use system
+```
+
+## Choosing a Strategy
+
+### Use `system` when:
+- Developing locally
+- Dependencies are stable system packages
+- Build speed is important
+
+### Use `source` when:
+- Reproducibility is critical
+- Building in varied environments
+- Creating release builds
+
+<Aside type="tip">
+**Hybrid approach:** Use `system` for local development, `source` for CI:
+
+```toml
+[strategy]
+default = "system"
+
+[strategy.overrides]
+openssl = "source"
+```
+</Aside>
+
+## CI Considerations
+
+For CI pipelines:
+
+```toml
+# rebaze.ci.toml
+[strategy]
+default = "source"
+```
+
+```bash
+rebaze migrate . --config rebaze.ci.toml
+```

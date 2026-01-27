@@ -1,0 +1,163 @@
+---
+title: Configuration
+description: rebaze.toml configuration reference
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Create a `rebaze.toml` in your project root to customize migration.
+
+## Versions
+
+Control Bazel dependency versions:
+
+```toml
+[versions]
+rules_cc = "0.1.1"
+platforms = "0.0.11"
+rules_foreign_cc = "0.14.0"
+googletest = "1.15.2"
+google_benchmark = "1.9.1"
+```
+
+## Strategy
+
+Define dependency resolution strategy:
+
+```toml
+[strategy]
+default = "system"  # system | source | conan | vcpkg
+
+[strategy.overrides]
+zlib = "source"
+openssl = "source"
+```
+
+| Strategy | Description |
+|----------|-------------|
+| `system` | System libraries via pkg-config |
+| `source` | Build from source (hermetic) |
+| `conan` | Conan package manager |
+| `vcpkg` | vcpkg package manager |
+
+## Mappings
+
+### System Libraries
+
+Map `-l` flags to Bazel targets:
+
+```toml
+[mappings.system_libraries]
+z = "@zlib"
+ssl = "@openssl//:ssl"
+gtest = "@googletest//:gtest"
+```
+
+### Plain Libraries
+
+Map plain library names:
+
+```toml
+[mappings.plain_libraries]
+gtest = "@googletest//:gtest"
+boost = "@boost"
+```
+
+### CMake Packages
+
+Map `find_package()` targets:
+
+```toml
+[mappings.packages.OpenSSL]
+target_pattern = "@openssl//:{component}"
+
+[mappings.packages.OpenSSL.components]
+SSL = "@openssl//:ssl"
+Crypto = "@openssl//:crypto"
+```
+
+### Implicit System Libraries
+
+```toml
+[mappings]
+implicit_system_libs = ["pthread", "c", "m", "dl", "rt"]
+```
+
+### Ignored Libraries
+
+```toml
+[mappings]
+ignored_libraries = ["fmt", "spdlog", "Threads::Threads"]
+```
+
+### Transitive Dependencies
+
+```toml
+[mappings.transitive_deps]
+glib = ["pcre2", "libffi", "zlib"]
+curl = ["zlib", "openssl"]
+```
+
+### System Linkopts
+
+```toml
+[mappings.system_linkopts]
+"glib-2.0" = ["-lglib-2.0"]
+curl = ["-lcurl"]
+```
+
+### Known Packages
+
+For source builds:
+
+```toml
+[mappings.known_packages.zlib]
+version = "1.3.1"
+url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+strip_prefix = "zlib-1.3.1"
+build_system = "cmake"  # cmake | meson | autotools
+out_static_libs = ["libz.a"]
+```
+
+## Build
+
+Configure generated BUILD files:
+
+```toml
+[build]
+default_visibility = "//visibility:public"
+header_patterns = ["**/*.h", "**/*.hpp"]
+default_cxx_standard = "17"
+default_c_standard = "11"
+module_version = "0.1.0"
+```
+
+### Custom Rules
+
+```toml
+[build.rules]
+library_rule = "my_cc_library"
+binary_rule = "my_cc_binary"
+test_rule = "my_cc_test"
+
+[[build.rules.extra_loads]]
+bzl = "@company//build:rules.bzl"
+items = ["my_cc_library", "my_cc_binary"]
+```
+
+## Filters
+
+Filter platform-specific artifacts:
+
+```toml
+[filters]
+excluded_source_extensions = ["rc", "res", "plist", "o", "obj"]
+excluded_define_patterns = ["_WIN32", "__APPLE__", "_DEBUG"]
+excluded_copt_patterns = ["/", "-O", "-g", "-std="]
+excluded_include_patterns = ["/usr/", "/opt/"]
+```
+
+<Aside type="tip">
+See [rebaze.example.toml](https://github.com/albertocavalcante/rebaze/blob/main/rebaze.example.toml) for a complete example with all options.
+</Aside>

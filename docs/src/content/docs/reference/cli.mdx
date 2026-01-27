@@ -1,0 +1,123 @@
+---
+title: CLI Reference
+description: Complete reference for rebaze commands and options
+---
+
+## Global Options
+
+| Option | Description |
+|--------|-------------|
+| `-v, --verbose` | Enable verbose output |
+| `--version` | Print version information |
+| `-h, --help` | Print help information |
+
+## rebaze analyze
+
+Detect the build system of a project.
+
+```bash
+rebaze analyze [PATH]
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `PATH` | `.` | Path to project root |
+
+**Detected systems:** cmake, gradle, maven, make, cargo
+
+---
+
+## rebaze migrate
+
+Migrate a project to Bazel.
+
+```bash
+rebaze migrate [OPTIONS] [PATH]
+```
+
+### Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `PATH` | `.` | Path to project root |
+
+### General Options
+
+| Option | Description |
+|--------|-------------|
+| `-f, --from <SYSTEM>` | Source build system (auto-detected) |
+| `-c, --config <FILE>` | Path to rebaze.toml |
+| `--dry-run` | Preview without writing files |
+| `--unsafe-mode` | Skip validation checks |
+
+### CMake Options
+
+| Option | Description |
+|--------|-------------|
+| `--cmake-build-dir <DIR>` | CMake build directory with file-api |
+| `--cmake-config <NAME>` | Configuration name (Debug/Release) |
+| `--cmake-file-api-only` | Fail if file-api unavailable |
+
+### Generator Options
+
+| Option | Description |
+|--------|-------------|
+| `--build-generator <TYPE>` | `auto`, `native`, or `bazelle` |
+| `--bazelle-root <DIR>` | Path to bazelle workspace |
+| `--bazelle-bin <PATH>` | Path to bazelle binary |
+
+### Examples
+
+```bash
+# Basic migration
+rebaze migrate /path/to/project
+
+# Preview changes
+rebaze migrate /path/to/project --dry-run
+
+# With custom config
+rebaze migrate . --config custom.toml
+
+# CMake with File API
+rebaze migrate . --cmake-build-dir build --cmake-config Release
+
+# Force native generator
+rebaze migrate . --build-generator native
+```
+
+---
+
+## rebaze validate
+
+Validate generated Bazel files.
+
+```bash
+rebaze validate [OPTIONS] [PATH]
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `PATH` | `.` | Path to project root |
+
+| Option | Description |
+|--------|-------------|
+| `--unsafe-mode` | Skip bazel build validation |
+
+---
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `RUST_LOG` | Log level (`debug`, `info`, `warn`) |
+
+```bash
+RUST_LOG=debug rebaze migrate .
+```

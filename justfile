@@ -42,22 +42,10 @@ docs-dev:
 docs-build:
     cd docs && bun run build
 
-# Preview production docs build
+# Preview production docs build locally
 docs-preview:
-    cd docs && bun run build && bun run start
+    cd docs && bun run build && bun run preview
 
-# Build docs for GitHub Pages (static export)
-docs-gh-pages:
-    cd docs && bun run build:gh-pages
-
-# Test GitHub Pages build locally
-docs-gh-pages-preview:
-    cd docs && bun run build:gh-pages && bunx serve out
-
-# Format docs code
-docs-fmt:
-    cd docs && bun run format
-
-# Lint docs code
-docs-lint:
-    cd docs && bun run lint
+# Serve built docs (after docs-build)
+docs-serve:
+    cd docs && bunx serve dist

@@ -1,0 +1,129 @@
+---
+title: Generated Files
+description: Understanding the files rebaze generates
+---
+
+import { FileTree, Aside } from '@astrojs/starlight/components';
+
+This page describes all files that rebaze generates during migration.
+
+## Core Files
+
+### MODULE.bazel
+
+The Bazel module definition file:
+
+```python
+module(
+    name = "myproject",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "rules_cc", version = "0.1.1")
+bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "googletest", version = "1.15.2")
+```
+
+### BUILD.bazel
+
+The root build file with targets:
+
+```python
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+cc_library(
+    name = "mylib",
+    srcs = ["src/lib.cpp"],
+    hdrs = ["include/mylib.h"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "myapp",
+    srcs = ["src/main.cpp"],
+    deps = [":mylib"],
+)
+```
+
+### .bazelversion
+
+Pins the Bazel version:
+
+```
+9.0.0
+```
+
+### .bazelrc
+
+Build configuration:
+
+```bash
+build --cxxopt=-std=c++17
+build --host_cxxopt=-std=c++17
+build --copt=-fPIC
+build --copt=-Wall
+test --test_output=errors
+```
+
+## Third-Party Files
+
+Generated when using pkg-config dependencies:
+
+### third_party/BUILD.bazel
+
+Alias targets for dependency resolution:
+
+```python
+load(":config.bzl", "STRATEGY")
+
+alias(
+    name = "zlib",
+    actual = select({
+        ":use_system": ":zlib_system",
+        ":use_source": ":zlib_source",
+    }),
+    visibility = ["//visibility:public"],
+)
+```
+
+### third_party/config.bzl
+
+Central configuration:
+
+```python
+STRATEGY = {
+    "default": "system",
+    "zlib": "source",
+}
+```
+
+## Project Structure After Migration
+
+<FileTree>
+- myproject/
+  - MODULE.bazel
+  - BUILD.bazel
+  - .bazelversion
+  - .bazelrc
+  - third_party/ (if pkg-config deps)
+    - BUILD.bazel
+    - config.bzl
+    - source.bzl
+    - system_deps.bzl
+  - src/
+  - include/
+</FileTree>
+
+<Aside type="note">
+Rebaze doesn't overwrite existing files by default, so your customizations are preserved on re-runs.
+</Aside>
+
+## Customizing Generated Files
+
+After migration, you can customize:
+
+1. **MODULE.bazel** - Add dependencies, change versions
+2. **BUILD.bazel** - Add targets, modify visibility
+3. **third_party/config.bzl** - Change strategies per-package
+4. **.bazelrc** - Add custom build configurations

@@ -1,0 +1,129 @@
+---
+title: Quick Start
+description: Migrate your first project in 5 minutes
+---
+
+import { Steps, Aside, Code } from '@astrojs/starlight/components';
+
+This guide walks you through migrating a project to Bazel in just a few steps.
+
+<Steps>
+
+1. **Analyze your project**
+
+   First, detect which build system your project uses:
+
+   ```bash
+   rebaze analyze /path/to/project
+   ```
+
+   Output:
+   ```
+   Detected build systems: cmake
+   ```
+
+2. **Preview the migration**
+
+   See what files will be generated without writing anything:
+
+   ```bash
+   rebaze migrate /path/to/project --dry-run
+   ```
+
+   This outputs the generated `MODULE.bazel` and `BUILD.bazel` content.
+
+3. **Run the migration**
+
+   Generate the Bazel files:
+
+   ```bash
+   rebaze migrate /path/to/project
+   ```
+
+   This creates:
+   - `MODULE.bazel` - Module definition with dependencies
+   - `BUILD.bazel` - Build targets
+   - `.bazelversion` - Pins Bazel 9.x
+   - `.bazelrc` - Build configuration
+
+4. **Validate the migration**
+
+   Verify everything builds correctly:
+
+   ```bash
+   rebaze validate /path/to/project
+   ```
+
+   Or build directly with Bazel:
+
+   ```bash
+   cd /path/to/project
+   bazel build //...
+   ```
+
+</Steps>
+
+## Example Output
+
+For a CMake project like this:
+
+```cmake
+cmake_minimum_required(VERSION 3.14)
+project(myapp)
+
+add_library(mylib src/lib.cpp)
+add_executable(myapp src/main.cpp)
+target_link_libraries(myapp mylib)
+```
+
+rebaze generates:
+
+```python
+# MODULE.bazel
+module(name = "myapp", version = "0.1.0")
+bazel_dep(name = "rules_cc", version = "0.1.1")
+```
+
+```python
+# BUILD.bazel
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+cc_library(
+    name = "mylib",
+    srcs = ["src/lib.cpp"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "myapp",
+    srcs = ["src/main.cpp"],
+    deps = [":mylib"],
+)
+```
+
+## Configuration
+
+For more control, create a `rebaze.toml` in your project root:
+
+```toml
+[versions]
+rules_cc = "0.1.1"
+googletest = "1.15.2"
+
+[mappings.system_libraries]
+z = "@zlib"
+ssl = "@openssl"
+
+[strategy]
+default = "system"
+```
+
+<Aside type="tip">
+See the [Configuration Reference](/rebaze/reference/config/) for all available options.
+</Aside>
+
+## Next Steps
+
+- [CMake Migration Tutorial](/rebaze/tutorials/cmake/) - Detailed walkthrough
+- [Gradle Migration Tutorial](/rebaze/tutorials/gradle/) - For JVM projects
+- [Dependency Mappings](/rebaze/guides/dependency-mappings/) - Customize how deps are resolved

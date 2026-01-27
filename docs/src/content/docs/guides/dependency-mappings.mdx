@@ -1,0 +1,122 @@
+---
+title: Dependency Mappings
+description: How to map CMake dependencies to Bazel targets
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+When migrating from CMake, rebaze needs to know how to translate CMake dependencies to Bazel targets.
+
+## Types of Dependencies
+
+CMake projects reference dependencies in several ways:
+
+| CMake Pattern | Example | Mapping Section |
+|---------------|---------|-----------------|
+| `-l` flag | `-lz`, `-lssl` | `system_libraries` |
+| Plain name | `gtest`, `boost` | `plain_libraries` |
+| Package::Component | `OpenSSL::SSL` | `packages` |
+| Implicit | `pthread`, `m` | `implicit_system_libs` |
+
+## System Libraries
+
+Map `-l` flags to Bazel targets:
+
+```toml
+[mappings.system_libraries]
+z = "@zlib"
+zlib = "@zlib"
+ssl = "@openssl//:ssl"
+crypto = "@openssl//:crypto"
+curl = "@curl"
+```
+
+## Plain Libraries
+
+Map plain library names (without `-l` or `::`):
+
+```toml
+[mappings.plain_libraries]
+gtest = "@googletest//:gtest"
+gtest_main = "@googletest//:gtest_main"
+gmock = "@googletest//:gmock"
+benchmark = "@google_benchmark//:benchmark"
+```
+
+## CMake Packages
+
+Map `find_package()` targets using patterns:
+
+```toml
+[mappings.packages.Boost]
+target_pattern = "@boost//:{component}"
+
+[mappings.packages.Boost.components]
+filesystem = "@boost//:filesystem"
+system = "@boost//:system"
+```
+
+The `{component}` placeholder is replaced with the actual component name.
+
+### Example: OpenSSL
+
+```toml
+[mappings.packages.OpenSSL]
+target_pattern = "@openssl//:{component}"
+
+[mappings.packages.OpenSSL.components]
+SSL = "@openssl//:ssl"
+Crypto = "@openssl//:crypto"
+```
+
+Maps:
+- `OpenSSL::SSL` → `@openssl//:ssl`
+- `OpenSSL::Crypto` → `@openssl//:crypto`
+
+## Implicit System Libraries
+
+Libraries provided by the system:
+
+```toml
+[mappings]
+implicit_system_libs = ["pthread", "c", "m", "dl", "rt"]
+```
+
+These are silently ignored during migration.
+
+## Ignored Libraries
+
+Libraries to skip completely:
+
+```toml
+[mappings]
+ignored_libraries = ["fmt", "spdlog", "Threads::Threads"]
+```
+
+## Transitive Dependencies
+
+Define dependencies that should be pulled in transitively:
+
+```toml
+[mappings.transitive_deps]
+glib = ["pcre2", "libffi", "zlib"]
+curl = ["zlib", "openssl"]
+```
+
+## Priority Order
+
+When resolving a dependency:
+
+1. `ignored_libraries` - Skip if listed
+2. `implicit_system_libs` - Skip if listed
+3. `-l` prefix → `system_libraries`
+4. `::` separator → `packages`
+5. Plain name → `plain_libraries`
+6. Default → Warning, dependency skipped
+
+<Aside type="tip">
+Use `--dry-run` to see how dependencies are resolved:
+```bash
+rebaze migrate . --dry-run 2>&1 | grep -i "unknown"
+```
+</Aside>

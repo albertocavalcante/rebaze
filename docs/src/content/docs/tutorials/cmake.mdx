@@ -1,0 +1,184 @@
+---
+title: Migrate a CMake Project
+description: Step-by-step guide to migrating a CMake project to Bazel
+---
+
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+
+This tutorial walks through migrating a CMake C++ project to Bazel using rebaze.
+
+## What You'll Learn
+
+- How to analyze a CMake project
+- How to run the migration
+- How to customize dependency mappings
+- How to validate the generated Bazel files
+
+## Prerequisites
+
+- A CMake project with `CMakeLists.txt`
+- Bazel 9.x installed
+- rebaze binary (see [Installation](/rebaze/getting-started/installation/))
+
+## Project Structure
+
+Let's start with a simple CMake project:
+
+<FileTree>
+- myproject/
+  - CMakeLists.txt
+  - src/
+    - main.cpp
+    - lib.cpp
+  - include/
+    - lib.h
+</FileTree>
+
+With this `CMakeLists.txt`:
+
+```cmake
+cmake_minimum_required(VERSION 3.14)
+project(myproject)
+
+find_package(ZLIB REQUIRED)
+
+add_library(mylib src/lib.cpp)
+target_include_directories(mylib PUBLIC include)
+target_link_libraries(mylib ZLIB::ZLIB)
+
+add_executable(myapp src/main.cpp)
+target_link_libraries(myapp mylib)
+```
+
+<Steps>
+
+1. **Analyze the project**
+
+   ```bash
+   rebaze analyze myproject/
+   ```
+
+   Output:
+   ```
+   Detected build systems: cmake
+   ```
+
+2. **Preview the migration**
+
+   Run in dry-run mode first:
+
+   ```bash
+   rebaze migrate myproject/ --dry-run
+   ```
+
+   This shows what would be generated:
+
+   ```python
+   # MODULE.bazel
+   module(name = "myproject", version = "0.1.0")
+   bazel_dep(name = "rules_cc", version = "0.1.1")
+   ```
+
+   ```python
+   # BUILD.bazel
+   load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+   cc_library(
+       name = "mylib",
+       srcs = ["src/lib.cpp"],
+       hdrs = ["include/lib.h"],
+       includes = ["include"],
+       deps = ["@zlib"],
+       visibility = ["//visibility:public"],
+   )
+
+   cc_binary(
+       name = "myapp",
+       srcs = ["src/main.cpp"],
+       deps = [":mylib"],
+   )
+   ```
+
+3. **Run the migration**
+
+   If the output looks correct:
+
+   ```bash
+   rebaze migrate myproject/
+   ```
+
+4. **Customize dependencies** (if needed)
+
+   Create `rebaze.toml` for custom mappings:
+
+   ```toml
+   [mappings.system_libraries]
+   myvendorlib = "@myvendor//:lib"
+
+   [mappings.packages.MyVendor]
+   target_pattern = "@myvendor//:{component}"
+   ```
+
+   Then re-run:
+
+   ```bash
+   rebaze migrate myproject/ --config rebaze.toml
+   ```
+
+5. **Validate the migration**
+
+   ```bash
+   rebaze validate myproject/
+   ```
+
+   Or build directly:
+
+   ```bash
+   cd myproject && bazel build //...
+   ```
+
+</Steps>
+
+## Using cmake-file-api
+
+For more accurate migration, use CMake's File API:
+
+```bash
+# Configure CMake first
+cd myproject
+cmake -S . -B build
+
+# Then migrate using the build directory
+rebaze migrate . --cmake-build-dir build
+```
+
+<Aside type="tip">
+The File API provides exact source lists, resolved include paths, and actual compiler flags used during configuration.
+</Aside>
+
+## Troubleshooting
+
+### Missing dependency mappings
+
+If you see:
+```
+WARN: Unknown library 'customlib', skipping
+```
+
+Add to `rebaze.toml`:
+```toml
+[mappings.system_libraries]
+customlib = "@customlib"
+```
+
+### Build failures after migration
+
+1. Check that all source files are included
+2. Verify include paths match your directory structure
+3. Ensure external dependencies are correctly mapped
+
+## Next Steps
+
+- [Dependency Strategies](/rebaze/concepts/dependency-strategies/) - Understand resolution options
+- [CLI Reference](/rebaze/reference/cli/) - All available options
+- [Build from Source](/rebaze/guides/source-builds/) - Hermetic builds

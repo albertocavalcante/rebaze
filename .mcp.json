@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "bunx",
+      "args": ["@playwright/mcp@0.0.61"],
+      "//version": "0.0.61",
+      "//commit": "cd9819d0e885bbfed879b7316a088ab369a2a21f",
+      "//repo": "https://github.com/microsoft/playwright-mcp"
+    }
+  }
+}

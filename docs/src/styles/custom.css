@@ -1,0 +1,276 @@
+/* Mintlify-inspired custom styles for Starlight */
+
+/* Color scheme - Modern blue/purple gradient inspired by Mintlify */
+:root {
+	--sl-color-accent-low: #1e1b4b;
+	--sl-color-accent: #6366f1;
+	--sl-color-accent-high: #a5b4fc;
+	--sl-color-white: #ffffff;
+	--sl-color-gray-1: #f8fafc;
+	--sl-color-gray-2: #f1f5f9;
+	--sl-color-gray-3: #e2e8f0;
+	--sl-color-gray-4: #94a3b8;
+	--sl-color-gray-5: #64748b;
+	--sl-color-gray-6: #334155;
+	--sl-color-black: #0f172a;
+
+	/* Typography */
+	--sl-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--sl-font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+	/* Borders and shadows */
+	--sl-border-radius: 0.75rem;
+}
+
+:root[data-theme='dark'] {
+	--sl-color-accent-low: #312e81;
+	--sl-color-accent: #818cf8;
+	--sl-color-accent-high: #c7d2fe;
+	--sl-color-white: #0f172a;
+	--sl-color-gray-1: #1e293b;
+	--sl-color-gray-2: #334155;
+	--sl-color-gray-3: #475569;
+	--sl-color-gray-4: #64748b;
+	--sl-color-gray-5: #94a3b8;
+	--sl-color-gray-6: #e2e8f0;
+	--sl-color-black: #f8fafc;
+}
+
+/* Smooth scrolling */
+html {
+	scroll-behavior: smooth;
+}
+
+/* Better link styling */
+.sl-markdown-content a:not([class]) {
+	color: var(--sl-color-accent);
+	text-decoration: none;
+	border-bottom: 1px solid transparent;
+	transition: border-color 0.2s ease;
+}
+
+.sl-markdown-content a:not([class]):hover {
+	border-bottom-color: var(--sl-color-accent);
+}
+
+/* Code blocks - Mintlify style */
+.sl-markdown-content pre {
+	border-radius: var(--sl-border-radius);
+	border: 1px solid var(--sl-color-gray-3);
+}
+
+:root[data-theme='dark'] .sl-markdown-content pre {
+	border-color: var(--sl-color-gray-2);
+	background: var(--sl-color-gray-1) !important;
+}
+
+/* Inline code */
+.sl-markdown-content :not(pre) > code {
+	background: var(--sl-color-gray-2);
+	padding: 0.15em 0.4em;
+	border-radius: 0.375rem;
+	font-size: 0.875em;
+}
+
+/* Tables - cleaner style */
+.sl-markdown-content table {
+	border-collapse: separate;
+	border-spacing: 0;
+	border-radius: var(--sl-border-radius);
+	overflow: hidden;
+	border: 1px solid var(--sl-color-gray-3);
+}
+
+.sl-markdown-content th {
+	background: var(--sl-color-gray-2);
+	font-weight: 600;
+}
+
+.sl-markdown-content td,
+.sl-markdown-content th {
+	border: none;
+	border-bottom: 1px solid var(--sl-color-gray-3);
+}
+
+.sl-markdown-content tr:last-child td {
+	border-bottom: none;
+}
+
+/* Sidebar styling */
+nav.sidebar {
+	border-right: 1px solid var(--sl-color-gray-3);
+}
+
+.sidebar-content a[aria-current='page'] {
+	background: linear-gradient(135deg, var(--sl-color-accent-low), transparent);
+	border-left: 2px solid var(--sl-color-accent);
+}
+
+/* Card-like callouts */
+.sl-markdown-content .starlight-aside {
+	border-radius: var(--sl-border-radius);
+	border: 1px solid var(--sl-color-gray-3);
+	background: var(--sl-color-gray-1);
+}
+
+.sl-markdown-content .starlight-aside--note {
+	border-left: 4px solid var(--sl-color-accent);
+}
+
+.sl-markdown-content .starlight-aside--tip {
+	border-left: 4px solid #10b981;
+}
+
+.sl-markdown-content .starlight-aside--caution {
+	border-left: 4px solid #f59e0b;
+}
+
+.sl-markdown-content .starlight-aside--danger {
+	border-left: 4px solid #ef4444;
+}
+
+/* Header styling */
+header.header {
+	backdrop-filter: blur(12px);
+	background: rgba(255, 255, 255, 0.8);
+	border-bottom: 1px solid var(--sl-color-gray-3);
+}
+
+:root[data-theme='dark'] header.header {
+	background: rgba(15, 23, 42, 0.8);
+}
+
+/* Search button */
+site-search button {
+	border-radius: 0.5rem;
+	border: 1px solid var(--sl-color-gray-3);
+}
+
+/* Hero section enhancements */
+.hero {
+	text-align: center;
+	padding: 4rem 1rem;
+}
+
+.hero h1 {
+	font-size: 3.5rem;
+	font-weight: 800;
+	background: linear-gradient(135deg, var(--sl-color-accent), #8b5cf6);
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	background-clip: text;
+	margin-bottom: 1rem;
+}
+
+.hero .tagline {
+	font-size: 1.25rem;
+	color: var(--sl-color-gray-5);
+	max-width: 600px;
+	margin: 0 auto 2rem;
+}
+
+/* Button styling - Mintlify inspired */
+.hero .action-buttons {
+	display: flex;
+	gap: 1rem;
+	justify-content: center;
+	flex-wrap: wrap;
+}
+
+.hero .primary-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.75rem 1.5rem;
+	background: linear-gradient(135deg, var(--sl-color-accent), #8b5cf6);
+	color: white;
+	border-radius: 0.5rem;
+	font-weight: 600;
+	text-decoration: none;
+	transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.hero .primary-button:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 10px 20px rgba(99, 102, 241, 0.3);
+}
+
+.hero .secondary-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.75rem 1.5rem;
+	background: var(--sl-color-gray-2);
+	color: var(--sl-color-gray-6);
+	border-radius: 0.5rem;
+	font-weight: 600;
+	text-decoration: none;
+	border: 1px solid var(--sl-color-gray-3);
+	transition: background 0.2s;
+}
+
+.hero .secondary-button:hover {
+	background: var(--sl-color-gray-3);
+}
+
+/* Feature cards */
+.features {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+	gap: 1.5rem;
+	margin-top: 3rem;
+	padding: 0 1rem;
+}
+
+.feature-card {
+	padding: 1.5rem;
+	background: var(--sl-color-gray-1);
+	border: 1px solid var(--sl-color-gray-3);
+	border-radius: var(--sl-border-radius);
+	transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.feature-card:hover {
+	transform: translateY(-4px);
+	box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
+}
+
+.feature-card h3 {
+	font-size: 1.125rem;
+	font-weight: 600;
+	margin-bottom: 0.5rem;
+}
+
+.feature-card p {
+	color: var(--sl-color-gray-5);
+	font-size: 0.9375rem;
+}
+
+/* Page content max width */
+.main-frame {
+	max-width: 1400px;
+}
+
+/* Headings */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3 {
+	font-weight: 700;
+}
+
+.sl-markdown-content h2 {
+	margin-top: 2.5rem;
+	padding-bottom: 0.5rem;
+	border-bottom: 1px solid var(--sl-color-gray-3);
+}
+
+/* Mobile improvements */
+@media (max-width: 768px) {
+	.hero h1 {
+		font-size: 2.5rem;
+	}
+
+	.features {
+		grid-template-columns: 1fr;
+	}
+}

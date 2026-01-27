@@ -1,0 +1,106 @@
+---
+title: Custom Bazel Rules
+description: How to configure rebaze to generate custom rule calls
+---
+
+Organizations often have custom Bazel rules that wrap `cc_library`, `cc_binary`, etc. with additional functionality. Rebaze can generate calls to your custom rules.
+
+## Why Custom Rules?
+
+Custom rules can:
+- Enforce coding standards
+- Add default compiler flags
+- Integrate with internal tooling
+- Provide consistent build configuration
+
+## Configure Custom Rules
+
+In `rebaze.toml`:
+
+```toml
+[build.rules]
+library_rule = "my_cc_library"
+binary_rule = "my_cc_binary"
+test_rule = "my_cc_test"
+
+[[build.rules.extra_loads]]
+bzl = "@mycompany//build:rules.bzl"
+items = ["my_cc_library", "my_cc_binary", "my_cc_test"]
+```
+
+## Generated Output
+
+Instead of:
+
+```python
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+
+cc_library(
+    name = "mylib",
+    srcs = ["lib.cpp"],
+)
+
+cc_binary(
+    name = "myapp",
+    srcs = ["main.cpp"],
+    deps = [":mylib"],
+)
+```
+
+Rebaze generates:
+
+```python
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load("@mycompany//build:rules.bzl", "my_cc_library", "my_cc_binary")
+
+my_cc_library(
+    name = "mylib",
+    srcs = ["lib.cpp"],
+)
+
+my_cc_binary(
+    name = "myapp",
+    srcs = ["main.cpp"],
+    deps = [":mylib"],
+)
+```
+
+## Example: Spotify-Style Rules
+
+```toml
+[build.rules]
+library_rule = "spotify_cc_library"
+binary_rule = "spotify_cc_binary"
+test_rule = "spotify_cc_test"
+
+[[build.rules.extra_loads]]
+bzl = "@spotify//build:cc.bzl"
+items = ["spotify_cc_library", "spotify_cc_binary", "spotify_cc_test"]
+```
+
+## Multiple Load Statements
+
+```toml
+[[build.rules.extra_loads]]
+bzl = "@mycompany//build:cc.bzl"
+items = ["my_cc_library", "my_cc_binary"]
+
+[[build.rules.extra_loads]]
+bzl = "@mycompany//build:test.bzl"
+items = ["my_cc_test"]
+```
+
+## Partial Customization
+
+Customize only some rules:
+
+```toml
+[build.rules]
+library_rule = "my_cc_library"  # Custom
+binary_rule = "cc_binary"       # Standard
+test_rule = "cc_test"           # Standard
+
+[[build.rules.extra_loads]]
+bzl = "@mycompany//build:rules.bzl"
+items = ["my_cc_library"]
+```

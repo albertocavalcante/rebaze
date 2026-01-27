@@ -1,0 +1,98 @@
+---
+title: Use cmake-file-api
+description: How to use CMake's File API for more accurate migrations
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+CMake's File API provides detailed build information that results in more accurate Bazel file generation.
+
+## Why Use cmake-file-api?
+
+The default CMakeLists.txt parser works well for most projects, but cmake-file-api provides:
+
+- **Exact source lists** - Including generated files
+- **Resolved paths** - Absolute include directories
+- **Actual compiler flags** - As CMake would use them
+- **Configuration-specific settings** - Debug vs Release
+
+## Prerequisites
+
+- CMake 3.14 or later
+- An existing CMake build directory (or ability to create one)
+
+<Steps>
+
+1. **Configure your CMake project**
+
+   ```bash
+   cd myproject
+   cmake -S . -B build
+   ```
+
+   For a specific configuration:
+
+   ```bash
+   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+   ```
+
+2. **Run migration with File API**
+
+   ```bash
+   rebaze migrate . --cmake-build-dir build
+   ```
+
+   For a specific configuration:
+
+   ```bash
+   rebaze migrate . --cmake-build-dir build --cmake-config Release
+   ```
+
+3. **Require File API (optional)**
+
+   To fail if File API isn't available:
+
+   ```bash
+   rebaze migrate . --cmake-build-dir build --cmake-file-api-only
+   ```
+
+</Steps>
+
+## How It Works
+
+1. rebaze reads the `.cmake/api/v1/reply/` directory
+2. Parses the codemodel JSON files
+3. Extracts targets, sources, includes, and dependencies
+4. Generates Bazel files from this accurate data
+
+## Troubleshooting
+
+### "Failed to load cmake-file-api"
+
+Ensure CMake was configured with version 3.14+:
+
+```bash
+cmake --version
+```
+
+Re-run CMake configuration:
+
+```bash
+cmake -S . -B build
+```
+
+### Missing targets
+
+Some targets may only exist in certain configurations:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+rebaze migrate . --cmake-build-dir build --cmake-config Debug
+```
+
+<Aside type="tip">
+**Best Practices:**
+1. Always configure CMake before migration
+2. Match configurations between CMake and rebaze
+3. Use `--cmake-file-api-only` in CI for consistency
+</Aside>

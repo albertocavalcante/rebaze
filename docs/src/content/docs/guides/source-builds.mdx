@@ -1,0 +1,124 @@
+---
+title: Build from Source
+description: How to configure hermetic builds using rules_foreign_cc
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+By default, rebaze uses system libraries. For hermetic, reproducible builds, you can build dependencies from source using `rules_foreign_cc`.
+
+## System vs Source Builds
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| System libraries | Fast, simple setup | Non-hermetic, version varies |
+| Source builds | Hermetic, reproducible | Slower first build |
+
+## Configure Source Strategy
+
+In `rebaze.toml`:
+
+```toml
+[strategy]
+default = "source"
+```
+
+Or for specific packages:
+
+```toml
+[strategy]
+default = "system"
+
+[strategy.overrides]
+zlib = "source"
+openssl = "source"
+```
+
+## Define Package Metadata
+
+For packages built from source, define their metadata:
+
+```toml
+[mappings.known_packages.zlib]
+version = "1.3.1"
+url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+strip_prefix = "zlib-1.3.1"
+build_system = "cmake"
+out_static_libs = ["libz.a"]
+
+[mappings.known_packages.openssl]
+version = "3.2.0"
+url = "https://github.com/openssl/openssl/releases/download/openssl-3.2.0/openssl-3.2.0.tar.gz"
+sha256 = "..."
+strip_prefix = "openssl-3.2.0"
+build_system = "autotools"
+out_static_libs = ["libssl.a", "libcrypto.a"]
+deps = []
+build_options = ["no-shared"]
+```
+
+## Supported Build Systems
+
+| Value | Tool Used |
+|-------|-----------|
+| `cmake` | `cmake_external` from rules_foreign_cc |
+| `autotools` | `configure_make` from rules_foreign_cc |
+| `meson` | `meson` from rules_foreign_cc |
+
+## Generated Files
+
+When using source strategy, rebaze generates:
+
+### `third_party/source.bzl`
+
+```python
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+
+def _zlib_impl():
+    cmake(
+        name = "zlib",
+        lib_source = "@zlib//:all_srcs",
+        out_static_libs = ["libz.a"],
+    )
+```
+
+### `MODULE.bazel`
+
+```python
+bazel_dep(name = "rules_foreign_cc", version = "0.14.0")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "zlib",
+    url = "https://...",
+    sha256 = "...",
+    strip_prefix = "zlib-1.3.1",
+)
+```
+
+## Troubleshooting
+
+### Build fails with missing headers
+
+Add transitive dependencies:
+
+```toml
+[mappings.transitive_deps]
+curl = ["zlib", "openssl"]
+```
+
+### Wrong library output name
+
+Check the actual output name:
+
+```toml
+out_static_libs = ["libz.a"]  # Linux
+# or
+out_static_libs = ["z.lib"]   # Windows
+```
+
+<Aside type="tip">
+Source builds are recommended for CI and release builds where reproducibility matters.
+</Aside>

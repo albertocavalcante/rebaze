@@ -1,0 +1,56 @@
+---
+title: rebaze
+description: CLI tool for migrating build systems to Bazel
+template: splash
+hero:
+  tagline: Migrate your CMake and Gradle projects to Bazel with a single command.
+  actions:
+    - text: Get Started
+      link: /rebaze/getting-started/introduction/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/albertocavalcante/rebaze
+      icon: github
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Features
+
+<CardGrid>
+	<Card title="Fast Migration" icon="rocket">
+		Analyze and migrate your project in seconds. No manual BUILD file writing required.
+	</Card>
+	<Card title="Smart Dependencies" icon="puzzle">
+		Automatically maps CMake find_package() and Gradle dependencies to Bazel targets.
+	</Card>
+	<Card title="Configurable" icon="setting">
+		Customize mappings, rules, and strategies via rebaze.toml configuration.
+	</Card>
+	<Card title="Hermetic Builds" icon="approve-check-circle">
+		Optional source builds with rules_foreign_cc for fully reproducible builds.
+	</Card>
+</CardGrid>
+
+## Supported Build Systems
+
+| Source | Status | Notes |
+|--------|--------|-------|
+| CMake | ✅ Supported | Full parser + cmake-file-api integration |
+| Gradle | ✅ Supported | Groovy and Kotlin DSL |
+| Maven | 🔜 Planned | Detection only |
+
+## Quick Example
+
+```bash
+# Analyze your project
+rebaze analyze /path/to/project
+# Output: Detected build systems: cmake
+
+# Migrate to Bazel
+rebaze migrate /path/to/project
+
+# Validate the migration
+rebaze validate /path/to/project
+```

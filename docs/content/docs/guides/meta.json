@@ -1,4 +1,0 @@
-{
-  "title": "How-to Guides",
-  "pages": ["cmake-file-api", "source-builds", "custom-rules", "dependency-mappings"]
-}

@@ -1,0 +1,57 @@
+---
+title: Introduction
+description: What is rebaze and why use it
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+**rebaze** is a CLI tool that migrates projects from CMake and Gradle to Bazel.
+
+## Why Bazel?
+
+Bazel offers significant advantages for large codebases:
+
+- **Fast incremental builds** - Only rebuilds what changed
+- **Hermetic builds** - Same inputs always produce same outputs
+- **Multi-language support** - C++, Java, Python, Go, and more
+- **Remote caching** - Share build artifacts across teams
+- **Remote execution** - Distribute builds across machines
+
+## Why rebaze?
+
+Migrating to Bazel manually is tedious:
+
+1. Learning Starlark syntax
+2. Writing BUILD files for every directory
+3. Mapping all dependencies to Bazel targets
+4. Handling platform-specific configurations
+
+**rebaze automates this process.**
+
+## What rebaze does
+
+1. **Analyzes** your existing build system
+2. **Parses** CMakeLists.txt or build.gradle files
+3. **Maps** dependencies to Bazel targets
+4. **Generates** MODULE.bazel and BUILD.bazel files
+5. **Validates** the migration by building
+
+## Supported Build Systems
+
+| Source | Status |
+|--------|--------|
+| CMake | ✅ Full support |
+| Gradle | ✅ Full support |
+| Maven | 🔜 Detection only |
+
+<Aside type="tip">
+rebaze works best with well-structured projects that follow standard conventions for their build system.
+</Aside>
+
+## Next Steps
+
+Ready to get started?
+
+1. [Install rebaze](/rebaze/getting-started/installation/)
+2. [Try the quick start guide](/rebaze/getting-started/quickstart/)
+3. [Follow a migration tutorial](/rebaze/tutorials/cmake/)

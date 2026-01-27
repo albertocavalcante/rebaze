@@ -1,0 +1,123 @@
+---
+title: How Rebaze Works
+description: Understanding the migration process
+---
+
+Rebaze analyzes your existing build system and generates equivalent Bazel build files.
+
+## Migration Pipeline
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Analyze   │ ──▶ │    Parse    │ ──▶ │   Transform │ ──▶ │   Generate  │
+│             │     │             │     │             │     │             │
+│ Detect build│     │ Extract     │     │ Map deps,   │     │ Write Bazel │
+│ system      │     │ targets     │     │ filter      │     │ files       │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+```
+
+## Phase 1: Analysis
+
+Rebaze detects the build system by looking for marker files:
+
+| File | Build System |
+|------|--------------|
+| `CMakeLists.txt` | CMake |
+| `build.gradle` / `build.gradle.kts` | Gradle |
+| `pom.xml` | Maven |
+| `Makefile` | Make |
+| `Cargo.toml` | Cargo |
+
+## Phase 2: Parsing
+
+### CMake Parser
+
+The CMake parser handles:
+
+- **Commands**: `project()`, `add_executable()`, `add_library()`, etc.
+- **Variables**: `${VAR}`, `$ENV{VAR}`, `$CACHE{VAR}`
+- **Control flow**: `if()`, `foreach()`, `function()`, `macro()`
+- **Generator expressions**: `$<TARGET_FILE:...>`
+
+Two parsing modes:
+
+1. **CMakeLists.txt parsing** - Analyzes CMake files directly
+2. **cmake-file-api** - Uses CMake's File API for exact build info
+
+### Gradle Parser
+
+Extracts:
+- Project structure from `settings.gradle`
+- Dependencies from `build.gradle`
+- Plugins and versions
+- Source sets
+
+## Phase 3: Transformation
+
+1. **Maps dependencies** - Translates CMake/Gradle deps to Bazel targets
+2. **Filters artifacts** - Removes platform-specific files and flags
+3. **Resolves includes** - Converts include paths to Bazel format
+4. **Groups sources** - Organizes files into appropriate targets
+
+### Dependency Mapping Example
+
+```
+CMake                          Bazel
+─────                          ─────
+find_package(ZLIB)      ──▶    @zlib
+target_link_libraries(         deps = [
+  mylib                          "@zlib",
+  ZLIB::ZLIB                     "@openssl//:ssl",
+  OpenSSL::SSL                 ]
+)
+```
+
+### Filtering
+
+Rebaze filters out:
+- Platform-specific sources (`.rc`, `.plist`)
+- Build-type defines (`_DEBUG`, `NDEBUG`)
+- Compiler-specific flags (`/W4`, `-march=native`)
+- System include paths (`/usr/include`)
+
+## Phase 4: Generation
+
+### Always Generated
+
+| File | Purpose |
+|------|---------|
+| `MODULE.bazel` | Module definition, dependencies |
+| `BUILD.bazel` | Build targets |
+| `.bazelversion` | Pins Bazel version |
+| `.bazelrc` | Build configuration |
+
+### For CMake with pkg-config
+
+| File | Purpose |
+|------|---------|
+| `third_party/BUILD.bazel` | Dependency aliases |
+| `third_party/config.bzl` | Strategy configuration |
+
+## Build Generators
+
+| Generator | Description |
+|-----------|-------------|
+| `native` | Pure Rust implementation, always available |
+| `bazelle` | Uses gazelle_cc for complex projects |
+| `auto` | Prefers bazelle if available |
+
+## Architecture
+
+```
+rebaze-cli         Command-line interface
+    │
+rebaze-core        Orchestration, shared logic
+    │
+    ├── rebaze-cmake          CMake parser
+    ├── rebaze-cmake-file-api CMake File API
+    ├── rebaze-gradle         Gradle parser
+    │
+rebaze-bazel       Bazel file generator
+    │
+rebaze-starlark    Starlark AST/serialization
+```

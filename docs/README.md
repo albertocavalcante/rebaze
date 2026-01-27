@@ -1,45 +1,49 @@
-# docs
+# Starlight Starter Kit: Basics
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
 
-Run development server:
-
-```bash
-npm run dev
-# or
-pnpm dev
-# or
-yarn dev
+```
+bun create astro@latest -- --template starlight
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
 
-## Explore
+## 🚀 Project Structure
 
-In the project, you can see:
+Inside of your Astro + Starlight project, you'll see the following folders and files:
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
+```
+.
+├── public/
+├── src/
+│   ├── assets/
+│   ├── content/
+│   │   └── docs/
+│   └── content.config.ts
+├── astro.config.mjs
+├── package.json
+└── tsconfig.json
+```
 
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
+Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
 
-### Fumadocs MDX
+Images can be added to `src/assets/` and embedded in Markdown with a relative link.
 
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
+Static assets, like favicons, can be placed in the `public/` directory.
 
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
+## 🧞 Commands
 
-## Learn More
+All commands are run from the root of the project, from a terminal:
 
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
+| Command                   | Action                                           |
+| :------------------------ | :----------------------------------------------- |
+| `bun install`             | Installs dependencies                            |
+| `bun dev`             | Starts local dev server at `localhost:4321`      |
+| `bun build`           | Build your production site to `./dist/`          |
+| `bun preview`         | Preview your build locally, before deploying     |
+| `bun astro ...`       | Run CLI commands like `astro add`, `astro check` |
+| `bun astro -- --help` | Get help using the Astro CLI                     |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+## 👀 Want to learn more?
+
+Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).

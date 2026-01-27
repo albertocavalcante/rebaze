@@ -1,0 +1,80 @@
+---
+title: Installation
+description: How to install rebaze
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+## Build from Source
+
+rebaze is built with Bazel. Clone the repository and build:
+
+```bash
+git clone https://github.com/albertocavalcante/rebaze.git
+cd rebaze
+bazel build //crates/rebaze-cli:rebaze
+```
+
+The binary will be at:
+```
+bazel-bin/crates/rebaze-cli/rebaze
+```
+
+## Add to PATH
+
+<Tabs>
+  <TabItem label="macOS/Linux">
+    ```bash
+    # Option 1: Symlink to a directory in PATH
+    sudo ln -s $(pwd)/bazel-bin/crates/rebaze-cli/rebaze /usr/local/bin/rebaze
+
+    # Option 2: Add to PATH in your shell profile
+    echo 'export PATH="$PATH:/path/to/rebaze/bazel-bin/crates/rebaze-cli"' >> ~/.zshrc
+    source ~/.zshrc
+    ```
+  </TabItem>
+  <TabItem label="Windows">
+    ```powershell
+    # Add to user PATH
+    $env:PATH += ";C:\path\to\rebaze\bazel-bin\crates\rebaze-cli"
+    ```
+  </TabItem>
+</Tabs>
+
+## Verify Installation
+
+```bash
+rebaze --version
+```
+
+## Requirements
+
+- **Bazel 9.x** - Required for building rebaze and for migrated projects
+- **CMake 3.14+** - Optional, for cmake-file-api integration
+- **Rust toolchain** - Only needed if building from source with Cargo
+
+<Aside type="note">
+rebaze generates Bazel 9 compatible output. Ensure you have Bazel 9.x installed for running the migrated projects.
+</Aside>
+
+## Development Setup
+
+If you want to contribute or modify rebaze:
+
+```bash
+# Clone with submodules
+git clone --recursive https://github.com/albertocavalcante/rebaze.git
+cd rebaze
+
+# Build all targets
+bazel build //...
+
+# Run tests
+bazel test //...
+
+# Format code
+cargo fmt
+
+# Run linter
+cargo clippy
+```
