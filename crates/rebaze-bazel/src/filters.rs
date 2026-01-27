@@ -631,7 +631,7 @@ mod tests {
             "/opt/homebrew/include".to_string(),               // System path
             "${CMAKE_CURRENT_SOURCE_DIR}/include".to_string(), // CMake var
             "${CMAKE_BINARY_DIR}/generated".to_string(),       // Should be filtered
-            String::new(), // Empty
+            String::new(),                                     // Empty
         ];
 
         let filtered = filter_includes(&includes);

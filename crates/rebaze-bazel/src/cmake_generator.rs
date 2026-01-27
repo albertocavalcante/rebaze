@@ -277,7 +277,7 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
     for lib in &project.libraries {
         let target_name = lib.name.replace('-', "_");
         if seen_libs.insert(target_name) {
-            let cc_lib = build_cc_library(lib);
+            let cc_lib = build_cc_library(lib, &project.libraries, &project.aliases);
             parts.push(
                 crate::starlark::serde_starlark::to_string(&cc_lib)
                     .unwrap_or_else(|e| format!("# Error: {e}")),
@@ -287,7 +287,12 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
 
     // Generate executables
     for exe in &project.executables {
-        let cc_bin = build_cc_binary(exe, &project.libraries, &project.pkg_config_modules);
+        let cc_bin = build_cc_binary(
+            exe,
+            &project.libraries,
+            &project.pkg_config_modules,
+            &project.aliases,
+        );
         parts.push(
             crate::starlark::serde_starlark::to_string(&cc_bin)
                 .unwrap_or_else(|e| format!("# Error: {e}")),
@@ -298,8 +303,16 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
 }
 
 /// Build a CcLibrary struct from a CMake Library.
-fn build_cc_library(lib: &Library) -> CcLibrary {
+fn build_cc_library(
+    lib: &Library,
+    all_libs: &[Library],
+    aliases: &std::collections::HashMap<String, String>,
+) -> CcLibrary {
     let target_name = lib.name.replace('-', "_");
+
+    // Build a set of internal library names for O(1) lookups
+    let internal_lib_names: std::collections::BTreeSet<&str> =
+        all_libs.iter().map(|l| l.name.as_str()).collect();
 
     // Determine if this is header-only
     let is_header_only = lib.kind == LibraryKind::Interface || lib.sources.is_empty();
@@ -340,7 +353,25 @@ fn build_cc_library(lib: &Library) -> CcLibrary {
         let mut seen = std::collections::BTreeSet::new();
         lib.link_libraries
             .iter()
-            .filter_map(|dep| map_dependency(dep))
+            .filter_map(|link_lib| {
+                // First, resolve any alias to its real target name
+                let resolved_name = aliases
+                    .get(link_lib)
+                    .map_or(link_lib.as_str(), |s| s.as_str());
+
+                // Check if it's an internal library
+                let lib_name = if resolved_name.contains("::") {
+                    resolved_name.split("::").last().unwrap_or(resolved_name)
+                } else {
+                    resolved_name
+                };
+
+                if internal_lib_names.contains(lib_name) {
+                    Some(format!(":{}", lib_name.replace('-', "_")))
+                } else {
+                    map_dependency(resolved_name)
+                }
+            })
             .filter(|dep| !dep.starts_with('#'))
             .filter(|dep| seen.insert(dep.clone()))
             .collect()
@@ -369,6 +400,7 @@ fn build_cc_binary(
     exe: &Executable,
     libs: &[Library],
     pkg_config_modules: &[rebaze_cmake::PkgConfigModule],
+    aliases: &std::collections::HashMap<String, String>,
 ) -> CcBinary {
     let target_name = exe.name.replace('-', "_");
 
@@ -417,19 +449,24 @@ fn build_cc_binary(
         .link_libraries
         .iter()
         .filter_map(|link_lib| {
+            // First, resolve any alias to its real target name
+            let resolved_name = aliases
+                .get(link_lib)
+                .map_or(link_lib.as_str(), |s| s.as_str());
+
             // Check if it's an internal library (handle both "spdlog" and "spdlog::spdlog" formats)
-            let lib_name = if link_lib.contains("::") {
+            let lib_name = if resolved_name.contains("::") {
                 // Extract the component name (e.g., "spdlog::spdlog_header_only" -> "spdlog_header_only")
-                link_lib.split("::").last().unwrap_or(link_lib)
+                resolved_name.split("::").last().unwrap_or(resolved_name)
             } else {
-                link_lib.as_str()
+                resolved_name
             };
 
             // O(log n) lookup instead of O(n)
             if internal_lib_names.contains(lib_name) {
                 Some(format!(":{}", lib_name.replace('-', "_")))
             } else {
-                map_dependency(link_lib)
+                map_dependency(resolved_name)
             }
         })
         .filter(|dep| !dep.starts_with('#'))
@@ -533,6 +570,7 @@ mod tests {
             global_include_directories: vec![],
             cxx_standard: Some("17".to_string()),
             c_standard: None,
+            aliases: std::collections::HashMap::new(),
         }
     }
 

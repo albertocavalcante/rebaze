@@ -67,6 +67,9 @@ pub struct CMakeProject {
     pub cxx_standard: Option<String>,
     /// C standard version detected (e.g., "99", "11", "17", "23").
     pub c_standard: Option<String>,
+    /// Target aliases (alias_name -> real_target_name).
+    /// Created by add_library(alias_name ALIAS real_target) commands.
+    pub aliases: std::collections::HashMap<String, String>,
 }
 
 /// An executable target.
@@ -519,7 +522,8 @@ fn extract_library(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext)
 
     let mut kind = LibraryKind::Unknown;
     let mut sources = Vec::new();
-    let mut skip_target = false;
+    let mut is_imported = false;
+    let mut is_alias = false;
 
     for arg in cmd.arguments.iter().skip(1) {
         // Try to get as literal first
@@ -531,9 +535,11 @@ fn extract_library(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext)
                 "OBJECT" => kind = LibraryKind::Object,
                 "INTERFACE" => kind = LibraryKind::Interface,
                 "EXCLUDE_FROM_ALL" => {}
-                "IMPORTED" | "ALIAS" => {
-                    skip_target = true;
-                    break;
+                "IMPORTED" => {
+                    is_imported = true;
+                }
+                "ALIAS" => {
+                    is_alias = true;
                 }
                 _ => sources.push(lit.to_string()),
             }
@@ -548,21 +554,30 @@ fn extract_library(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext)
                     "OBJECT" => kind = LibraryKind::Object,
                     "INTERFACE" => kind = LibraryKind::Interface,
                     "EXCLUDE_FROM_ALL" => {}
-                    "IMPORTED" | "ALIAS" => {
-                        skip_target = true;
-                        break;
+                    "IMPORTED" => {
+                        is_imported = true;
+                    }
+                    "ALIAS" => {
+                        is_alias = true;
                     }
                     _ => sources.push(val),
                 }
             }
-            if skip_target {
-                break;
-            }
         }
     }
 
-    if skip_target {
-        tracing::debug!("Skipping imported or alias library target '{name}'");
+    // Handle alias: add_library(alias_name ALIAS real_target)
+    // Record the mapping but don't create a library target
+    if is_alias {
+        if let Some(real_target) = sources.into_iter().next() {
+            tracing::debug!("Recording alias '{name}' -> '{real_target}'");
+            project.aliases.insert(name, real_target);
+        }
+        return;
+    }
+
+    if is_imported {
+        tracing::debug!("Skipping imported library target '{name}'");
         return;
     }
 
@@ -724,6 +739,26 @@ fn normalize_include_path(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("${CMAKE_SOURCE_DIR}/") {
         return rest.to_string();
     }
+    // Handle ${PROJECT_SOURCE_DIR} - same as CMAKE_SOURCE_DIR for most projects
+    if path == "${PROJECT_SOURCE_DIR}" {
+        return ".".to_string();
+    }
+    if let Some(rest) = path.strip_prefix("${PROJECT_SOURCE_DIR}/") {
+        return rest.to_string();
+    }
+    // Handle paths that start with / but aren't absolute system paths
+    // This can happen when a CMake variable expands to empty, leaving "/subdir"
+    if let Some(rest) = path.strip_prefix('/') {
+        // Only strip if it's not a system path
+        if !path.starts_with("/usr/")
+            && !path.starts_with("/opt/")
+            && !path.starts_with("/lib")
+            && !path.starts_with("/System/")
+            && !path.starts_with("/Library/")
+        {
+            return rest.to_string();
+        }
+    }
     path.to_string()
 }
 
@@ -845,7 +880,11 @@ fn apply_include_directories(cmd: &Command, project: &mut CMakeProject, ctx: &Ev
             ) {
                 continue;
             }
-            dirs.push(lit.to_string());
+            // Normalize the path to handle CMake variables and leading slashes
+            let normalized = normalize_include_path(lit);
+            if !normalized.is_empty() {
+                dirs.push(normalized);
+            }
         } else {
             // Expand variable references
             let expanded = ctx.expand_argument(arg);
@@ -856,7 +895,11 @@ fn apply_include_directories(cmd: &Command, project: &mut CMakeProject, ctx: &Ev
                 ) {
                     continue;
                 }
-                dirs.push(val);
+                // Normalize expanded paths too
+                let normalized = normalize_include_path(&val);
+                if !normalized.is_empty() {
+                    dirs.push(normalized);
+                }
             }
         }
     }
@@ -1264,6 +1307,34 @@ mod tests {
 
         assert_eq!(project.libraries.len(), 1);
         assert_eq!(project.libraries[0].name, "real_lib");
+        // Verify alias was tracked
+        assert_eq!(project.aliases.len(), 1);
+        assert_eq!(
+            project.aliases.get("alias_lib"),
+            Some(&"real_lib".to_string())
+        );
+    }
+
+    #[test]
+    fn test_alias_with_namespace() {
+        let project = parse_and_extract(
+            "
+            project(mylib)
+            add_library(mylib_impl SHARED src/impl.cpp)
+            add_library(my::lib ALIAS mylib_impl)
+            add_executable(myapp src/main.cpp)
+            target_link_libraries(myapp PRIVATE my::lib)
+        ",
+        );
+
+        // Verify alias was tracked with namespace
+        assert_eq!(
+            project.aliases.get("my::lib"),
+            Some(&"mylib_impl".to_string())
+        );
+        // Verify executable has the alias in its link_libraries
+        let exe = &project.executables[0];
+        assert!(exe.link_libraries.contains(&"my::lib".to_string()));
     }
 
     #[test]
@@ -1568,6 +1639,60 @@ add_executable(level2_exe main.cpp)
             project
                 .global_include_directories
                 .contains(&"valid_dir".to_string())
+        );
+    }
+
+    #[test]
+    fn test_target_include_directories_normalizes_project_source_dir() {
+        let project = parse_and_extract(
+            "
+            project(mylib)
+            add_library(mylib STATIC lib.cpp)
+            target_include_directories(mylib PUBLIC ${PROJECT_SOURCE_DIR}/include)
+            target_include_directories(mylib PRIVATE ${CMAKE_SOURCE_DIR}/src)
+        ",
+        );
+
+        assert_eq!(project.libraries.len(), 1);
+        let lib = &project.libraries[0];
+        // PROJECT_SOURCE_DIR/include should normalize to just "include"
+        assert!(
+            lib.include_directories.contains(&"include".to_string()),
+            "Expected 'include' but got: {:?}",
+            lib.include_directories
+        );
+        // CMAKE_SOURCE_DIR/src should normalize to just "src"
+        assert!(
+            lib.include_directories.contains(&"src".to_string()),
+            "Expected 'src' but got: {:?}",
+            lib.include_directories
+        );
+        // Should NOT have leading slashes
+        assert!(
+            !lib.include_directories.iter().any(|d| d.starts_with('/')),
+            "Include directories should not have leading slashes: {:?}",
+            lib.include_directories
+        );
+    }
+
+    #[test]
+    fn test_target_include_directories_strips_leading_slash() {
+        // This tests the case where a CMake variable expands to empty, leaving "/subdir"
+        let project = parse_and_extract(
+            "
+            project(mylib)
+            add_library(mylib STATIC lib.cpp)
+            target_include_directories(mylib PUBLIC /include)
+        ",
+        );
+
+        assert_eq!(project.libraries.len(), 1);
+        let lib = &project.libraries[0];
+        // "/include" should normalize to "include"
+        assert!(
+            lib.include_directories.contains(&"include".to_string()),
+            "Expected 'include' but got: {:?}",
+            lib.include_directories
         );
     }
 

@@ -296,12 +296,16 @@ fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>
         .collect::<String>()
         .map(ArgumentPart::Text);
 
-    let var_ref = variable_reference();
+    // In quoted strings, use variable_reference_no_genexpr to avoid parsing
+    // incomplete generator expressions (like "$<BUILD_INTERFACE:...") which
+    // are valid CMake when combined with list(TRANSFORM ... APPEND ">")
+    let var_ref = variable_reference_no_genexpr();
 
-    // Bare dollar sign: $ not followed by {, E (for ENV), C (for CACHE), or < (for generator expr)
-    // This handles cases like $" or $foo where $ should be treated as literal text
+    // Bare dollar sign: $ not followed by {, E (for ENV), or C (for CACHE)
+    // Note: $< is handled by treating it as literal "$<" since we don't
+    // parse generator expressions in quoted strings
     let bare_dollar = just('$')
-        .then_ignore(none_of("{EC<").rewind().or(end().to('\0')))
+        .then_ignore(none_of("{EC").rewind().or(end().to('\0')))
         .map(|_| ArgumentPart::Text("$".to_string()));
 
     choice((var_ref, bare_dollar, text)).repeated()
@@ -376,6 +380,68 @@ fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>>
             .map(ArgumentPart::GeneratorExpr);
 
         choice((env_var, cache_var, normal_var, gen_expr))
+    })
+}
+
+/// Parser for variable references without generator expressions.
+/// Used inside quoted strings where incomplete generator expressions
+/// (like "$<BUILD_INTERFACE:...") are valid CMake syntax.
+fn variable_reference_no_genexpr() -> impl Parser<char, ArgumentPart, Error = Simple<char>> {
+    recursive(|var_ref| {
+        // Escape sequences inside variable names (for things like $ENV{ProgramFiles\(x86\)})
+        let escape_in_var = just('\\').ignore_then(any()).map(|c| c.to_string());
+
+        // Plain characters in variable names (alphanumeric, underscore, hyphen, dot)
+        let plain_chars =
+            filter(|c: &char| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+                .map(|c: char| c.to_string());
+
+        // Nested variable reference: ${...}
+        let nested_var = just("${")
+            .then(
+                var_ref
+                    .clone()
+                    .map(|part| match part {
+                        ArgumentPart::Variable(s) => format!("${{{s}}}"),
+                        ArgumentPart::EnvVariable(s) => format!("$ENV{{{s}}}"),
+                        ArgumentPart::CacheVariable(s) => format!("$CACHE{{{s}}}"),
+                        _ => String::new(),
+                    })
+                    .or(plain_chars)
+                    .or(escape_in_var)
+                    .repeated()
+                    .at_least(1)
+                    .collect::<Vec<String>>(),
+            )
+            .then_ignore(just('}'))
+            .map(|(_, parts)| parts.join(""));
+
+        // Content inside ${} can be plain chars, escape sequences, or nested refs
+        let var_content = plain_chars
+            .or(escape_in_var)
+            .or(nested_var.clone())
+            .repeated()
+            .at_least(1)
+            .collect::<Vec<String>>()
+            .map(|parts| parts.join(""));
+
+        let normal_var = just("${")
+            .ignore_then(var_content.clone())
+            .then_ignore(just('}'))
+            .map(ArgumentPart::Variable);
+
+        let env_var = just("$ENV{")
+            .ignore_then(var_content.clone())
+            .then_ignore(just('}'))
+            .map(ArgumentPart::EnvVariable);
+
+        let cache_var = just("$CACHE{")
+            .ignore_then(var_content)
+            .then_ignore(just('}'))
+            .map(ArgumentPart::CacheVariable);
+
+        // No generator expression parsing - these are skipped in quoted strings
+        choice((env_var, cache_var, normal_var))
     })
 }
 
@@ -596,6 +662,25 @@ add_executable(myapp
             "target_include_directories(mylib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)",
         );
         assert_eq!(file.commands.len(), 1);
+    }
+
+    #[test]
+    fn test_incomplete_generator_expression_in_quoted_string() {
+        // Incomplete generator expressions in quoted strings are valid CMake
+        // (used with list(TRANSFORM ... APPEND ">") patterns)
+        let file =
+            parse_ok(r#"list(TRANSFORM FOO PREPEND "$<BUILD_INTERFACE:${SRC_DIR}/include/")"#);
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("list"));
+
+        // Arguments: TRANSFORM, FOO, PREPEND, "$<BUILD_INTERFACE:${SRC_DIR}/include/"
+        // The quoted string with incomplete genexpr is the 4th argument (index 3)
+        let arg = &file.commands[0].arguments[3];
+        let s = arg.to_string_lossy();
+        assert!(
+            s.contains("$<BUILD_INTERFACE:"),
+            "Expected incomplete genexpr, got: {s}"
+        );
     }
 
     #[test]
