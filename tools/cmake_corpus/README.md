@@ -1,4 +1,71 @@
-# CMake Corpus Collection
+# CMake Corpus Tools
+
+This directory contains tools for testing rebaze against CMake projects:
+
+1. **`test_migration.py`** - Migration test runner against curated repos
+2. **`collect.py`** - Corpus collector for parser testing
+
+---
+
+## Migration Testing
+
+Test rebaze migration against well-known CMake projects.
+
+### Quick start
+
+```bash
+# Build rebaze first
+cargo build --release
+
+# Run migration tests on all curated repos
+uv run tools/cmake_corpus/test_migration.py
+
+# Test specific repos
+uv run tools/cmake_corpus/test_migration.py --filter fmt,json,spdlog
+
+# Run in parallel
+uv run tools/cmake_corpus/test_migration.py --parallel 4
+
+# Keep cloned repos for inspection
+uv run tools/cmake_corpus/test_migration.py --keep --work-dir ./test-repos
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--repos PATH` | Path to repos.toml (default: `tools/cmake_corpus/repos.toml`) |
+| `--filter NAMES` | Comma-separated list of repo names to test |
+| `--parallel N` | Number of parallel tests (default: 1) |
+| `--keep` | Keep cloned repositories after testing |
+| `--work-dir PATH` | Working directory for clones |
+| `--output PATH` | Output directory for reports (default: `tools/cmake_corpus/reports`) |
+| `--rebaze PATH` | Path to rebaze binary (default: auto-detect) |
+| `--include-skipped` | Include repos marked as skip=true |
+| `--timeout SECS` | Timeout per migration (default: 120) |
+
+### Adding repos
+
+Edit `repos.toml` to add new test repos:
+
+```toml
+[[repos]]
+name = "mylib"
+url = "https://github.com/owner/mylib"
+description = "Description of the library"
+features = ["library", "tests"]
+# skip = true  # Uncomment to skip by default
+```
+
+### Reports
+
+After running, reports are generated in `tools/cmake_corpus/reports/`:
+- `report.json` - Machine-readable results
+- `report.md` - Human-readable markdown report
+
+---
+
+## CMake Corpus Collection
 
 This tool collects a CMake file corpus from GitHub using the `gh` CLI and prepares
 the files for parser testing via sparse checkouts.

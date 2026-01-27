@@ -1,0 +1,195 @@
+# Curated list of well-known CMake projects for migration testing.
+#
+# Selection criteria:
+# - Popular, actively maintained projects
+# - Diverse build patterns (libraries, executables, tests)
+# - Various CMake features (find_package, FetchContent, etc.)
+# - Permissive licenses (MIT, Apache-2.0, BSD)
+#
+# Each entry should have:
+# - name: Short identifier
+# - url: GitHub clone URL
+# - ref: Branch/tag to clone (optional, defaults to HEAD)
+# - description: Brief description
+# - features: CMake features used (for categorization)
+
+[[repos]]
+name = "googletest"
+url = "https://github.com/google/googletest"
+description = "Google's C++ testing framework"
+features = ["library", "install", "options"]
+
+[[repos]]
+name = "fmt"
+url = "https://github.com/fmtlib/fmt"
+description = "Modern C++ formatting library"
+features = ["library", "header-only", "install", "tests"]
+
+[[repos]]
+name = "spdlog"
+url = "https://github.com/gabime/spdlog"
+description = "Fast C++ logging library"
+features = ["library", "header-only", "find_package", "tests"]
+
+[[repos]]
+name = "json"
+url = "https://github.com/nlohmann/json"
+description = "JSON for Modern C++"
+features = ["header-only", "tests", "install"]
+
+[[repos]]
+name = "catch2"
+url = "https://github.com/catchorg/Catch2"
+description = "C++ test framework"
+features = ["library", "header-only", "install"]
+
+[[repos]]
+name = "benchmark"
+url = "https://github.com/google/benchmark"
+description = "Google microbenchmark library"
+features = ["library", "tests", "install"]
+
+[[repos]]
+name = "abseil-cpp"
+url = "https://github.com/abseil/abseil-cpp"
+description = "Abseil C++ common libraries"
+features = ["library", "tests", "install", "complex"]
+
+[[repos]]
+name = "protobuf"
+url = "https://github.com/protocolbuffers/protobuf"
+description = "Protocol Buffers"
+features = ["library", "codegen", "complex", "tests"]
+
+[[repos]]
+name = "grpc"
+url = "https://github.com/grpc/grpc"
+description = "gRPC C++ library"
+features = ["library", "complex", "submodules", "codegen"]
+
+[[repos]]
+name = "leveldb"
+url = "https://github.com/google/leveldb"
+description = "Fast key-value storage library"
+features = ["library", "tests", "benchmarks"]
+
+[[repos]]
+name = "rocksdb"
+url = "https://github.com/facebook/rocksdb"
+description = "Embeddable key-value store"
+features = ["library", "complex", "tests", "options"]
+
+[[repos]]
+name = "opencv"
+url = "https://github.com/opencv/opencv"
+description = "Computer vision library"
+features = ["library", "complex", "modules", "find_package"]
+skip = true  # Very large, enable manually
+
+[[repos]]
+name = "cpr"
+url = "https://github.com/libcpr/cpr"
+description = "C++ HTTP requests library"
+features = ["library", "find_package", "fetchcontent"]
+
+[[repos]]
+name = "cxxopts"
+url = "https://github.com/jarro2783/cxxopts"
+description = "Lightweight C++ option parser"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "doctest"
+url = "https://github.com/doctest/doctest"
+description = "Fast C++ testing framework"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "magic_enum"
+url = "https://github.com/Neargye/magic_enum"
+description = "Enum reflection for C++"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "toml++"
+url = "https://github.com/marzer/tomlplusplus"
+description = "TOML parser for C++"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "httplib"
+url = "https://github.com/yhirose/cpp-httplib"
+description = "Single-header HTTP/HTTPS library"
+features = ["header-only", "tests", "ssl"]
+
+[[repos]]
+name = "indicators"
+url = "https://github.com/p-ranav/indicators"
+description = "Progress bar library"
+features = ["header-only", "examples"]
+
+[[repos]]
+name = "tabulate"
+url = "https://github.com/p-ranav/tabulate"
+description = "Table formatting library"
+features = ["header-only", "examples"]
+
+[[repos]]
+name = "argparse"
+url = "https://github.com/p-ranav/argparse"
+description = "Argument parser for C++"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "expected"
+url = "https://github.com/TartanLlama/expected"
+description = "C++11/14/17 std::expected implementation"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "entt"
+url = "https://github.com/skypjack/entt"
+description = "Entity-component-system library"
+features = ["header-only", "tests", "examples"]
+
+[[repos]]
+name = "taskflow"
+url = "https://github.com/taskflow/taskflow"
+description = "Parallel task programming library"
+features = ["header-only", "tests", "examples"]
+
+[[repos]]
+name = "simdjson"
+url = "https://github.com/simdjson/simdjson"
+description = "Fast JSON parser"
+features = ["library", "tests", "benchmarks"]
+
+[[repos]]
+name = "rapidjson"
+url = "https://github.com/Tencent/rapidjson"
+description = "Fast JSON parser/generator"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "yaml-cpp"
+url = "https://github.com/jbeder/yaml-cpp"
+description = "YAML parser for C++"
+features = ["library", "tests", "install"]
+
+[[repos]]
+name = "sqlite_orm"
+url = "https://github.com/fnc12/sqlite_orm"
+description = "SQLite ORM for C++"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "date"
+url = "https://github.com/HowardHinnant/date"
+description = "Date/time library (pre-C++20)"
+features = ["header-only", "tests"]
+
+[[repos]]
+name = "rang"
+url = "https://github.com/agauniyal/rang"
+description = "Terminal colors library"
+features = ["header-only", "examples"]
