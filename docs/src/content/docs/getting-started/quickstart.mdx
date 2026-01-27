@@ -3,7 +3,7 @@ title: Quick Start
 description: Migrate your first project in 60 seconds
 ---
 
-import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Steps, Aside, Tabs, TabItem, FileTree } from '@astrojs/starlight/components';
 
 Migrate any CMake or Gradle project to Bazel in three commands.
 
@@ -24,7 +24,12 @@ Migrate any CMake or Gradle project to Bazel in three commands.
    rebaze migrate .
    ```
 
-   Creates: `MODULE.bazel`, `BUILD.bazel`, `.bazelversion`, `.bazelrc`
+   <FileTree>
+   - MODULE.bazel
+   - BUILD.bazel
+   - .bazelversion
+   - .bazelrc
+   </FileTree>
 
 3. **Build** — Verify it works
 

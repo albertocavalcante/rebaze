@@ -1,0 +1,303 @@
+---
+// Copy Page as Markdown component
+// Uses proper DOM traversal instead of regex for HTML to Markdown conversion
+// Only shows on content pages, not on the homepage
+---
+
+<script>
+/**
+ * Lightweight HTML to Markdown converter using DOM traversal
+ * Inspired by Turndown's rule-based architecture
+ */
+class HtmlToMarkdown {
+	private rules: Array<{
+		filter: string | string[] | ((node: Element) => boolean);
+		replacement: (content: string, node: Element) => string;
+	}>;
+
+	constructor() {
+		this.rules = [
+			// Headings
+			{
+				filter: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+				replacement: (content, node) => {
+					const level = parseInt(node.nodeName.charAt(1), 10);
+					return '\n\n' + '#'.repeat(level) + ' ' + content.trim() + '\n\n';
+				},
+			},
+			// Paragraphs
+			{
+				filter: 'p',
+				replacement: (content) => '\n\n' + content.trim() + '\n\n',
+			},
+			// Line breaks
+			{
+				filter: 'br',
+				replacement: () => '  \n',
+			},
+			// Bold
+			{
+				filter: ['strong', 'b'],
+				replacement: (content) => '**' + content + '**',
+			},
+			// Italic
+			{
+				filter: ['em', 'i'],
+				replacement: (content) => '_' + content + '_',
+			},
+			// Links
+			{
+				filter: (node) => node.nodeName === 'A' && node.hasAttribute('href'),
+				replacement: (content, node) => {
+					const href = node.getAttribute('href') || '';
+					return '[' + content + '](' + href + ')';
+				},
+			},
+			// Images
+			{
+				filter: 'img',
+				replacement: (_, node) => {
+					const alt = node.getAttribute('alt') || '';
+					const src = node.getAttribute('src') || '';
+					return '![' + alt + '](' + src + ')';
+				},
+			},
+			// Inline code (not inside pre)
+			{
+				filter: (node) =>
+					node.nodeName === 'CODE' && node.parentElement?.nodeName !== 'PRE',
+				replacement: (content) => '`' + content + '`',
+			},
+			// Code blocks
+			{
+				filter: 'pre',
+				replacement: (_, node) => {
+					const code = node.querySelector('code');
+					const text = code?.textContent || node.textContent || '';
+					const langClass = code?.className.match(/language-(\w+)/);
+					const lang = langClass?.[1] || '';
+					return '\n\n```' + lang + '\n' + text.trim() + '\n```\n\n';
+				},
+			},
+			// Blockquotes
+			{
+				filter: 'blockquote',
+				replacement: (content) => {
+					const lines = content.trim().split('\n');
+					return '\n\n' + lines.map((line) => '> ' + line).join('\n') + '\n\n';
+				},
+			},
+			// List items
+			{
+				filter: 'li',
+				replacement: (content, node) => {
+					const parent = node.parentElement;
+					if (parent?.nodeName === 'OL') {
+						const index = Array.from(parent.children).indexOf(node) + 1;
+						return index + '. ' + content.trim() + '\n';
+					}
+					return '- ' + content.trim() + '\n';
+				},
+			},
+			// Lists
+			{
+				filter: ['ul', 'ol'],
+				replacement: (content) => '\n\n' + content + '\n',
+			},
+			// Horizontal rule
+			{
+				filter: 'hr',
+				replacement: () => '\n\n---\n\n',
+			},
+			// Tables
+			{
+				filter: 'table',
+				replacement: (content) => '\n\n' + content + '\n\n',
+			},
+			{
+				filter: 'tr',
+				replacement: (content) => '|' + content + '\n',
+			},
+			{
+				filter: ['th', 'td'],
+				replacement: (content) => ' ' + content.trim() + ' |',
+			},
+			// Skip these elements
+			{
+				filter: ['script', 'style', 'nav', 'aside'],
+				replacement: () => '',
+			},
+		];
+	}
+
+	convert(element: Element): string {
+		const output = this.processNode(element);
+		return this.cleanOutput(output);
+	}
+
+	private processNode(node: Node): string {
+		if (node.nodeType === Node.TEXT_NODE) {
+			return this.normalizeWhitespace(node.textContent || '');
+		}
+
+		if (node.nodeType !== Node.ELEMENT_NODE) {
+			return '';
+		}
+
+		const element = node as Element;
+		const rule = this.rules.find((r) => this.matchesFilter(r.filter, element));
+
+		// Process children recursively
+		const childContent = Array.from(element.childNodes)
+			.map((child) => this.processNode(child))
+			.join('');
+
+		return rule ? rule.replacement(childContent, element) : childContent;
+	}
+
+	private matchesFilter(
+		filter: string | string[] | ((node: Element) => boolean),
+		node: Element
+	): boolean {
+		const tagName = node.nodeName.toLowerCase();
+
+		if (typeof filter === 'string') {
+			return filter === tagName;
+		}
+		if (Array.isArray(filter)) {
+			return filter.includes(tagName);
+		}
+		if (typeof filter === 'function') {
+			return filter(node);
+		}
+		return false;
+	}
+
+	private normalizeWhitespace(text: string): string {
+		return text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ');
+	}
+
+	private cleanOutput(text: string): string {
+		return text
+			.replace(/\n{3,}/g, '\n\n')
+			.replace(/^\s+|\s+$/g, '')
+			.replace(/[ \t]+$/gm, '');
+	}
+}
+
+// Button setup
+const BUTTON_ID = 'copy-page-markdown-btn';
+
+function isHomePage(): boolean {
+	return document.querySelector('.hero') !== null;
+}
+
+function setupCopyButton(): void {
+	if (isHomePage()) return;
+
+	const content = document.querySelector<HTMLElement>('main .sl-markdown-content');
+	if (!content || document.getElementById(BUTTON_ID)) return;
+
+	const heading = content.querySelector('h1');
+	if (!heading) return;
+
+	const container = document.createElement('div');
+	container.className = 'copy-md-container';
+
+	const button = document.createElement('button');
+	button.type = 'button';
+	button.id = BUTTON_ID;
+	button.className = 'copy-md-button';
+	button.setAttribute('aria-label', 'Copy page content as Markdown');
+	button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>Copy as Markdown</span>';
+
+	container.appendChild(button);
+	heading.insertAdjacentElement('afterend', container);
+
+	button.addEventListener('click', async () => {
+		const span = button.querySelector('span');
+		button.disabled = true;
+
+		try {
+			if (span) span.textContent = 'Copying…';
+
+			const clone = content.cloneNode(true) as HTMLElement;
+			clone.querySelector('.copy-md-container')?.remove();
+
+			const converter = new HtmlToMarkdown();
+			const markdown = converter.convert(clone);
+
+			await navigator.clipboard.writeText(markdown);
+			if (span) span.textContent = 'Copied!';
+		} catch (error) {
+			console.error('[rebaze docs] Copy failed:', error);
+			if (span) span.textContent = 'Failed';
+		} finally {
+			setTimeout(() => {
+				button.disabled = false;
+				const span = button.querySelector('span');
+				if (span) span.textContent = 'Copy as Markdown';
+			}, 2000);
+		}
+	});
+}
+
+document.addEventListener('astro:page-load', setupCopyButton);
+if (document.readyState !== 'loading') {
+	setupCopyButton();
+}
+</script>
+
+<style is:global>
+.copy-md-container {
+	display: flex;
+	justify-content: flex-end;
+	margin-bottom: 1rem;
+}
+
+.copy-md-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.5rem 0.875rem;
+	font-size: 0.8125rem;
+	font-weight: 500;
+	font-family: var(--sl-font);
+	color: var(--sl-color-gray-4);
+	background: var(--surface-elevated, rgba(30, 41, 59, 0.5));
+	border: var(--border-subtle, 1px solid rgba(255, 255, 255, 0.08));
+	border-radius: 6px;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.copy-md-button:hover {
+	color: var(--sl-color-white);
+	background: var(--sl-color-accent-low);
+	border-color: var(--emerald-400, #34d399);
+}
+
+.copy-md-button:focus-visible {
+	outline: 2px solid var(--emerald-400, #34d399);
+	outline-offset: 2px;
+}
+
+.copy-md-button:disabled {
+	opacity: 0.7;
+	cursor: not-allowed;
+}
+
+.copy-md-button svg {
+	flex-shrink: 0;
+}
+
+:root[data-theme='light'] .copy-md-button {
+	background: rgba(255, 255, 255, 0.8);
+	border-color: rgba(15, 23, 42, 0.06);
+}
+
+:root[data-theme='light'] .copy-md-button:hover {
+	background: var(--sl-color-accent-low);
+	border-color: var(--emerald-600, #059669);
+}
+</style>

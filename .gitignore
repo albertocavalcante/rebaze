@@ -22,6 +22,12 @@ Thumbs.db
 # Rebaze
 .rebaze/
 
+# Astro
+.astro/
+
+# Node
+node_modules/
+
 # Test fixtures (cloned third-party repos)
 /test-fixtures/
 

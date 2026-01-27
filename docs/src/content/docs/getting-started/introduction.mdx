@@ -3,7 +3,7 @@ title: Introduction
 description: What is rebaze and why use it
 ---
 
-import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+import { Aside, Card, CardGrid, Badge, LinkCard } from '@astrojs/starlight/components';
 
 **rebaze** analyzes your CMake or Gradle project and generates Bazel build files automatically.
 
@@ -61,9 +61,9 @@ rebaze handles all of this. You focus on your code.
 
 | Source | Status | Notes |
 |--------|--------|-------|
-| **CMake** | ✅ Supported | Full parser + cmake-file-api |
-| **Gradle** | ✅ Supported | Groovy and Kotlin DSL |
-| Maven | 🔜 Planned | Detection only |
+| **CMake** | <Badge text="Supported" variant="success" /> | Full parser + cmake-file-api |
+| **Gradle** | <Badge text="Supported" variant="success" /> | Groovy and Kotlin DSL |
+| Maven | <Badge text="Planned" variant="note" /> | Detection only |
 
 <Aside type="caution" title="Early development">
 rebaze is under active development. It works well for standard project structures but may need manual adjustments for complex builds.
@@ -81,7 +81,9 @@ Be aware of current limitations:
 
 Ready? Pick your path:
 
-1. **[Quick Start](/rebaze/getting-started/quickstart/)** — Migrate your first project in 60 seconds
-2. **[Installation](/rebaze/getting-started/installation/)** — Build from source
-3. **[CMake Tutorial](/rebaze/tutorials/cmake/)** — Detailed CMake walkthrough
-4. **[Gradle Tutorial](/rebaze/tutorials/gradle/)** — Detailed Gradle walkthrough
+<CardGrid>
+  <LinkCard title="Quick Start" description="Migrate your first project in 60 seconds" href="/rebaze/getting-started/quickstart/" />
+  <LinkCard title="Installation" description="Install via Homebrew or build from source" href="/rebaze/getting-started/installation/" />
+  <LinkCard title="CMake Tutorial" description="Detailed CMake migration walkthrough" href="/rebaze/tutorials/cmake/" />
+  <LinkCard title="Gradle Tutorial" description="Detailed Gradle migration walkthrough" href="/rebaze/tutorials/gradle/" />
+</CardGrid>
