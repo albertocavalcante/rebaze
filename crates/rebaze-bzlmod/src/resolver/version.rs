@@ -17,6 +17,7 @@ use std::cmp::Ordering;
 /// 2. Compare each segment numerically if both are numbers
 /// 3. Compare lexicographically otherwise
 /// 4. Pre-release versions (containing `-`) sort before their release counterparts
+#[must_use] 
 pub fn compare_versions(a: &str, b: &str) -> i32 {
     // Handle pre-release versions
     let (a_base, a_pre) = split_prerelease(a);

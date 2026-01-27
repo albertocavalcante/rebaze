@@ -1,0 +1,3 @@
+# Clippy configuration for rebaze-bzlmod crate
+# Allow these lints that are too strict for this crate's usage patterns
+too-many-lines-threshold = 200

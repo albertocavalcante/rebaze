@@ -221,16 +221,19 @@ impl RegistryClient {
     }
 
     /// Create a client for the default BCR.
+    #[must_use] 
     pub fn bcr() -> Self {
         Self::new(crate::DEFAULT_REGISTRY)
     }
 
     /// Create a client for the BCR GitHub mirror.
+    #[must_use] 
     pub fn bcr_mirror() -> Self {
         Self::new(crate::DEFAULT_REGISTRY_MIRROR)
     }
 
     /// Get the base URL of this registry.
+    #[must_use] 
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
@@ -325,7 +328,7 @@ impl RegistryClient {
             .map_err(|e| RegistryError::Http(e).into())
     }
 
-    /// Parse MODULE.bazel content into ModuleInfo.
+    /// Parse MODULE.bazel content into `ModuleInfo`.
     ///
     /// This is a simplified parser that extracts basic module information.
     /// For full parsing, the `parser` module should be used.
@@ -403,7 +406,7 @@ impl RegistryClient {
             })
     }
 
-    /// Extract bazel_dep declarations from MODULE.bazel content.
+    /// Extract `bazel_dep` declarations from MODULE.bazel content.
     fn extract_deps(content: &str, dev_only: bool) -> Vec<crate::Dependency> {
         let mut deps = Vec::new();
 
@@ -416,7 +419,7 @@ impl RegistryClient {
         };
 
         for cap in re.captures_iter(content) {
-            let args = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            let args = cap.get(1).map_or("", |m| m.as_str());
 
             // Extract name
             let name = match Self::extract_arg_string(args, "name") {
@@ -563,11 +566,13 @@ pub struct RegistryChain {
 
 impl RegistryChain {
     /// Create a new registry chain.
+    #[must_use] 
     pub fn new(registries: Vec<Arc<dyn Registry>>) -> Self {
         Self { registries }
     }
 
     /// Create default chain (BCR + mirror).
+    #[must_use] 
     pub fn default_chain() -> Self {
         Self::new(vec![
             Arc::new(RegistryClient::bcr()),
@@ -902,7 +907,7 @@ bazel_dep(name = "dep2", version = "2.0.0", dev_dependency = True)
 
     #[test]
     fn test_extract_int_field() {
-        let content = r#"compatibility_level = 42"#;
+        let content = "compatibility_level = 42";
         assert_eq!(
             RegistryClient::extract_int_field(content, "compatibility_level"),
             Some(42)

@@ -1,13 +1,13 @@
 //! MODULE.bazel file parsing.
 //!
-//! This module provides a regex-based parser for MODULE.bazel files.
-//! It extracts module declarations, dependencies, and overrides without
-//! requiring a full Starlark parser.
+//! This module provides a parser for MODULE.bazel files using the Starlark AST.
+//! It extracts module declarations, dependencies, and overrides.
 
 use crate::{Dependency, ModuleInfo, Override, Result};
-use regex::Regex;
-use std::collections::HashMap;
-use std::sync::LazyLock;
+use starlark::syntax::{AstModule, Dialect};
+use starlark_syntax::codemap::Spanned;
+use starlark_syntax::syntax::ast::{ArgumentP, AstLiteral, AstNoPayload, CallArgsP, ExprP, StmtP};
+use starlark_syntax::syntax::module::AstModuleFields;
 
 /// A parsed MODULE.bazel file.
 #[derive(Debug, Clone)]
@@ -37,46 +37,6 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-// Regex patterns for parsing MODULE.bazel
-// These patterns are compile-time constant strings, so unwrap is safe
-#[allow(clippy::unwrap_used)]
-static COMMENT_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#[^\n]*").unwrap());
-
-// Pattern to match function calls like module(...), bazel_dep(...), etc.
-// This handles multi-line calls by matching balanced parentheses
-#[allow(clippy::unwrap_used)]
-static FUNC_CALL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)(module|bazel_dep|single_version_override|git_override|local_path_override|archive_override|multiple_version_override)\s*\(")
-        .unwrap()
-});
-
-// Pattern for extracting named string arguments: name = "value" or name = 'value'
-#[allow(clippy::unwrap_used)]
-static STRING_ARG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(\w+)\s*=\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)')"#).unwrap()
-});
-
-// Pattern for extracting named integer arguments: name = 123
-#[allow(clippy::unwrap_used)]
-static INT_ARG_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*(-?\d+)").unwrap());
-
-// Pattern for extracting named boolean arguments: name = True/False
-#[allow(clippy::unwrap_used)]
-static BOOL_ARG_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*(True|False)").unwrap());
-
-// Pattern for extracting string list arguments: name = ["a", "b", "c"]
-#[allow(clippy::unwrap_used)]
-static STRING_LIST_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*\[([^\]]*)\]").unwrap());
-
-// Pattern for extracting individual strings from a list
-#[allow(clippy::unwrap_used)]
-static STRING_IN_LIST_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)')"#).unwrap()
-});
-
 impl ModuleFile {
     /// Parse `MODULE.bazel` content.
     ///
@@ -84,8 +44,39 @@ impl ModuleFile {
     ///
     /// Returns an error if the content is invalid or missing required declarations.
     pub fn parse(content: &str) -> Result<Self> {
-        let parser = Parser::new(content);
-        parser.parse()
+        // Use Extended dialect to support all Bazel MODULE.bazel constructs
+        let dialect = Dialect::Extended;
+        let ast = AstModule::parse("MODULE.bazel", content.to_owned(), &dialect)
+            .map_err(|e| crate::Error::Parse(e.to_string()))?;
+
+        let mut info = ModuleInfo {
+            name: crate::label::ModuleName::new("_root_")?,
+            version: crate::label::Version::new("0.0.0")?,
+            compatibility_level: 0,
+            bazel_compatibility: Vec::new(),
+            deps: Vec::new(),
+            dev_deps: Vec::new(),
+            overrides: Vec::new(),
+        };
+
+        let mut found_module = false;
+
+        // Get the AST parts - statement is the top-level statement
+        let (_, statement, _, _) = ast.into_parts();
+
+        // Visit all top-level statements
+        visit_stmt(&statement, &mut info, &mut found_module)?;
+
+        if !found_module {
+            return Err(crate::Error::Parse(
+                "no module() declaration found".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            info,
+            content: content.to_string(),
+        })
     }
 
     /// Parse `MODULE.bazel` from file path.
@@ -101,411 +92,339 @@ impl ModuleFile {
     }
 }
 
-/// Internal parser state.
-struct Parser<'a> {
-    content: &'a str,
-    /// Content with comments stripped for easier parsing.
-    stripped: String,
-}
-
-// Parser implementation uses unwrap on regex captures that are guaranteed to exist by pattern design
-#[allow(clippy::unwrap_used)]
-impl<'a> Parser<'a> {
-    fn new(content: &'a str) -> Self {
-        // Strip comments for easier parsing
-        let stripped = COMMENT_PATTERN.replace_all(content, "").to_string();
-        Self { content, stripped }
-    }
-
-    fn parse(self) -> Result<ModuleFile> {
-        let mut info = ModuleInfo {
-            name: crate::label::ModuleName::new("_root_")?,
-            version: crate::label::Version::new("0.0.0")?,
-            compatibility_level: 0,
-            bazel_compatibility: Vec::new(),
-            deps: Vec::new(),
-            dev_deps: Vec::new(),
-            overrides: Vec::new(),
-        };
-
-        let mut found_module = false;
-
-        // Find all function calls
-        for cap in FUNC_CALL_PATTERN.captures_iter(&self.stripped) {
-            let func_name = cap.get(1).unwrap().as_str();
-            let start_pos = cap.get(0).unwrap().end();
-
-            // Find the matching closing parenthesis
-            if let Some(args_str) = self.extract_balanced_parens(start_pos) {
-                match func_name {
-                    "module" => {
-                        found_module = true;
-                        self.parse_module(&args_str, &mut info)?;
-                    }
-                    "bazel_dep" => {
-                        if let Some(dep) = self.parse_bazel_dep(&args_str)? {
-                            if dep.dev_dependency {
-                                info.dev_deps.push(dep);
-                            } else {
-                                info.deps.push(dep);
-                            }
-                        }
-                    }
-                    "single_version_override" => {
-                        if let Some(ov) = self.parse_single_version_override(&args_str)? {
-                            info.overrides.push(ov);
-                        }
-                    }
-                    "git_override" => {
-                        if let Some(ov) = self.parse_git_override(&args_str)? {
-                            info.overrides.push(ov);
-                        }
-                    }
-                    "local_path_override" => {
-                        if let Some(ov) = self.parse_local_path_override(&args_str)? {
-                            info.overrides.push(ov);
-                        }
-                    }
-                    "archive_override" => {
-                        if let Some(ov) = self.parse_archive_override(&args_str)? {
-                            info.overrides.push(ov);
-                        }
-                    }
-                    "multiple_version_override" => {
-                        if let Some(ov) = self.parse_multiple_version_override(&args_str)? {
-                            info.overrides.push(ov);
-                        }
-                    }
-                    _ => {}
-                }
+/// Visit a statement and extract module information.
+fn visit_stmt(
+    stmt: &Spanned<StmtP<AstNoPayload>>,
+    info: &mut ModuleInfo,
+    found_module: &mut bool,
+) -> Result<()> {
+    match &stmt.node {
+        StmtP::Statements(stmts) => {
+            for s in stmts {
+                visit_stmt(s, info, found_module)?;
             }
         }
+        StmtP::Expression(expr) => {
+            visit_expr(expr, info, found_module)?;
+        }
+        // Ignore other statement types (load, def, if, for, etc.)
+        _ => {}
+    }
+    Ok(())
+}
 
-        if !found_module {
+/// Visit an expression and extract function calls.
+fn visit_expr(
+    expr: &Spanned<ExprP<AstNoPayload>>,
+    info: &mut ModuleInfo,
+    found_module: &mut bool,
+) -> Result<()> {
+    if let ExprP::Call(func_expr, args) = &expr.node {
+        // Get the function name
+        if let Some(name) = get_func_name(func_expr) {
+            match name.as_str() {
+                "module" => {
+                    *found_module = true;
+                    parse_module(args, info)?;
+                }
+                "bazel_dep" => {
+                    if let Some(dep) = parse_bazel_dep(args)? {
+                        if dep.dev_dependency {
+                            info.dev_deps.push(dep);
+                        } else {
+                            info.deps.push(dep);
+                        }
+                    }
+                }
+                "single_version_override" => {
+                    if let Some(ov) = parse_single_version_override(args)? {
+                        info.overrides.push(ov);
+                    }
+                }
+                "git_override" => {
+                    if let Some(ov) = parse_git_override(args)? {
+                        info.overrides.push(ov);
+                    }
+                }
+                "local_path_override" => {
+                    if let Some(ov) = parse_local_path_override(args)? {
+                        info.overrides.push(ov);
+                    }
+                }
+                "archive_override" => {
+                    if let Some(ov) = parse_archive_override(args)? {
+                        info.overrides.push(ov);
+                    }
+                }
+                "multiple_version_override" => {
+                    if let Some(ov) = parse_multiple_version_override(args)? {
+                        info.overrides.push(ov);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Get the function name from a call expression.
+fn get_func_name(expr: &Spanned<ExprP<AstNoPayload>>) -> Option<String> {
+    match &expr.node {
+        ExprP::Identifier(ident) => Some(ident.node.ident.clone()),
+        _ => None,
+    }
+}
+
+/// Extract a named string argument from call arguments.
+fn get_string_arg(args: &CallArgsP<AstNoPayload>, name: &str) -> Option<String> {
+    for arg in &args.args {
+        if let ArgumentP::Named(arg_name, value) = &arg.node {
+            if arg_name.node == name {
+                return extract_string(value);
+            }
+        }
+    }
+    None
+}
+
+/// Extract a named integer argument from call arguments.
+fn get_int_arg(args: &CallArgsP<AstNoPayload>, name: &str) -> Option<i64> {
+    for arg in &args.args {
+        if let ArgumentP::Named(arg_name, value) = &arg.node {
+            if arg_name.node == name {
+                return extract_int(value);
+            }
+        }
+    }
+    None
+}
+
+/// Extract a named boolean argument from call arguments.
+fn get_bool_arg(args: &CallArgsP<AstNoPayload>, name: &str) -> Option<bool> {
+    for arg in &args.args {
+        if let ArgumentP::Named(arg_name, value) = &arg.node {
+            if arg_name.node == name {
+                return extract_bool(value);
+            }
+        }
+    }
+    None
+}
+
+/// Extract a named string list argument from call arguments.
+fn get_string_list_arg(args: &CallArgsP<AstNoPayload>, name: &str) -> Option<Vec<String>> {
+    for arg in &args.args {
+        if let ArgumentP::Named(arg_name, value) = &arg.node {
+            if arg_name.node == name {
+                return extract_string_list(value);
+            }
+        }
+    }
+    None
+}
+
+/// Extract a string value from an expression.
+fn extract_string(expr: &Spanned<ExprP<AstNoPayload>>) -> Option<String> {
+    if let ExprP::Literal(AstLiteral::String(s)) = &expr.node {
+        return Some(s.node.clone());
+    }
+    None
+}
+
+/// Extract an integer value from an expression.
+fn extract_int(expr: &Spanned<ExprP<AstNoPayload>>) -> Option<i64> {
+    if let ExprP::Literal(AstLiteral::Int(i)) = &expr.node {
+        // TokenInt has different variants, we need to extract the value
+        // by converting to string and parsing
+        let s = format!("{}", i.node);
+        return s.parse().ok();
+    }
+    // Also handle unary minus for negative numbers
+    if let ExprP::Minus(inner) = &expr.node {
+        if let Some(val) = extract_int(inner) {
+            return Some(-val);
+        }
+    }
+    None
+}
+
+/// Extract a boolean value from an expression.
+fn extract_bool(expr: &Spanned<ExprP<AstNoPayload>>) -> Option<bool> {
+    if let ExprP::Identifier(ident) = &expr.node {
+        match ident.node.ident.as_str() {
+            "True" => return Some(true),
+            "False" => return Some(false),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extract a string list from an expression.
+fn extract_string_list(expr: &Spanned<ExprP<AstNoPayload>>) -> Option<Vec<String>> {
+    if let ExprP::List(items) = &expr.node {
+        let mut result = Vec::new();
+        for item in items {
+            if let Some(s) = extract_string(item) {
+                result.push(s);
+            }
+        }
+        return Some(result);
+    }
+    None
+}
+
+/// Parse `module()` declaration.
+fn parse_module(args: &CallArgsP<AstNoPayload>, info: &mut ModuleInfo) -> Result<()> {
+    if let Some(name) = get_string_arg(args, "name") {
+        info.name = crate::label::ModuleName::new(name)?;
+    }
+
+    if let Some(version) = get_string_arg(args, "version") {
+        info.version = crate::label::Version::new(version)?;
+    }
+
+    if let Some(level) = get_int_arg(args, "compatibility_level") {
+        info.compatibility_level = u32::try_from(level).unwrap_or(0);
+    }
+
+    if let Some(compat) = get_string_list_arg(args, "bazel_compatibility") {
+        info.bazel_compatibility = compat;
+    }
+
+    Ok(())
+}
+
+/// Parse `bazel_dep()` declaration.
+fn parse_bazel_dep(args: &CallArgsP<AstNoPayload>) -> Result<Option<Dependency>> {
+    let name = match get_string_arg(args, "name") {
+        Some(n) => crate::label::ModuleName::new(n)?,
+        None => {
             return Err(crate::Error::Parse(
-                "no module() declaration found".to_string(),
+                "bazel_dep requires 'name' attribute".to_string(),
             ));
         }
+    };
 
-        Ok(ModuleFile {
-            info,
-            content: self.content.to_string(),
-        })
-    }
+    // Version is optional when using overrides
+    let version = match get_string_arg(args, "version") {
+        Some(v) => crate::label::Version::new(v)?,
+        None => crate::label::Version::new("0.0.0")?,
+    };
 
-    /// Extract content between balanced parentheses starting at the given position.
-    fn extract_balanced_parens(&self, start: usize) -> Option<String> {
-        let bytes = self.stripped.as_bytes();
-        let mut depth = 1;
-        let mut pos = start;
-        let mut in_string = false;
-        let mut string_char = b'"';
-        let mut prev_char = b' ';
+    let max_version = get_string_arg(args, "max_version")
+        .map(crate::label::Version::new)
+        .transpose()?;
 
-        while pos < bytes.len() && depth > 0 {
-            let ch = bytes[pos];
+    let repo_name = get_string_arg(args, "repo_name");
+    let dev_dependency = get_bool_arg(args, "dev_dependency").unwrap_or(false);
 
-            if in_string {
-                if ch == string_char && prev_char != b'\\' {
-                    in_string = false;
-                }
-            } else {
-                match ch {
-                    b'"' | b'\'' => {
-                        in_string = true;
-                        string_char = ch;
-                    }
-                    b'(' => depth += 1,
-                    b')' => depth -= 1,
-                    _ => {}
-                }
-            }
-
-            prev_char = ch;
-            pos += 1;
-        }
-
-        if depth == 0 {
-            // Return content inside parens (excluding the closing paren)
-            Some(self.stripped[start..pos - 1].to_string())
-        } else {
-            None
-        }
-    }
-
-    /// Extract string arguments from a function call body.
-    // Uses &self for API consistency with other Parser methods
-    #[allow(clippy::unused_self, clippy::unwrap_used)]
-    fn extract_string_args(&self, args_str: &str) -> HashMap<String, String> {
-        let mut result = HashMap::new();
-        for cap in STRING_ARG_PATTERN.captures_iter(args_str) {
-            let name = cap.get(1).unwrap().as_str();
-            // Either double-quoted or single-quoted string
-            let value = cap
-                .get(2)
-                .or_else(|| cap.get(3))
-                .map(|m| unescape_string(m.as_str()))
-                .unwrap_or_default();
-            result.insert(name.to_string(), value);
-        }
-        result
-    }
-
-    /// Extract integer arguments from a function call body.
-    // Uses &self for API consistency with other Parser methods
-    #[allow(clippy::unused_self, clippy::unwrap_used)]
-    fn extract_int_args(&self, args_str: &str) -> HashMap<String, i64> {
-        let mut result = HashMap::new();
-        for cap in INT_ARG_PATTERN.captures_iter(args_str) {
-            let name = cap.get(1).unwrap().as_str();
-            if let Ok(value) = cap.get(2).unwrap().as_str().parse() {
-                result.insert(name.to_string(), value);
-            }
-        }
-        result
-    }
-
-    /// Extract boolean arguments from a function call body.
-    // Uses &self for API consistency with other Parser methods
-    #[allow(clippy::unused_self, clippy::unwrap_used)]
-    fn extract_bool_args(&self, args_str: &str) -> HashMap<String, bool> {
-        let mut result = HashMap::new();
-        for cap in BOOL_ARG_PATTERN.captures_iter(args_str) {
-            let name = cap.get(1).unwrap().as_str();
-            let value = cap.get(2).unwrap().as_str() == "True";
-            result.insert(name.to_string(), value);
-        }
-        result
-    }
-
-    /// Extract string list arguments from a function call body.
-    // Uses &self for API consistency with other Parser methods
-    #[allow(clippy::unused_self, clippy::unwrap_used)]
-    fn extract_string_list_args(&self, args_str: &str) -> HashMap<String, Vec<String>> {
-        let mut result = HashMap::new();
-        for cap in STRING_LIST_PATTERN.captures_iter(args_str) {
-            let name = cap.get(1).unwrap().as_str();
-            let list_content = cap.get(2).unwrap().as_str();
-
-            let mut values = Vec::new();
-            for string_cap in STRING_IN_LIST_PATTERN.captures_iter(list_content) {
-                let value = string_cap
-                    .get(1)
-                    .or_else(|| string_cap.get(2))
-                    .map(|m| unescape_string(m.as_str()))
-                    .unwrap_or_default();
-                values.push(value);
-            }
-            result.insert(name.to_string(), values);
-        }
-        result
-    }
-
-    /// Parse `module()` declaration.
-    fn parse_module(&self, args_str: &str, info: &mut ModuleInfo) -> Result<()> {
-        let strings = self.extract_string_args(args_str);
-        let ints = self.extract_int_args(args_str);
-        let lists = self.extract_string_list_args(args_str);
-
-        if let Some(name) = strings.get("name") {
-            info.name = crate::label::ModuleName::new(name.clone())?;
-        }
-
-        if let Some(version) = strings.get("version") {
-            info.version = crate::label::Version::new(version.clone())?;
-        }
-
-        if let Some(&level) = ints.get("compatibility_level") {
-            info.compatibility_level = u32::try_from(level).unwrap_or(0);
-        }
-
-        if let Some(compat) = lists.get("bazel_compatibility") {
-            info.bazel_compatibility.clone_from(compat);
-        }
-
-        Ok(())
-    }
-
-    /// Parse `bazel_dep()` declaration.
-    fn parse_bazel_dep(&self, args_str: &str) -> Result<Option<Dependency>> {
-        let strings = self.extract_string_args(args_str);
-        let bools = self.extract_bool_args(args_str);
-        let ints = self.extract_int_args(args_str);
-
-        let name = match strings.get("name") {
-            Some(n) => crate::label::ModuleName::new(n.clone())?,
-            None => {
-                return Err(crate::Error::Parse(
-                    "bazel_dep requires 'name' attribute".to_string(),
-                ));
-            }
-        };
-
-        // Version is optional when using overrides
-        let version = match strings.get("version") {
-            Some(v) => crate::label::Version::new(v.clone())?,
-            None => crate::label::Version::new("0.0.0")?,
-        };
-
-        let max_version = strings
-            .get("max_version")
-            .map(|v| crate::label::Version::new(v.clone()))
-            .transpose()?;
-
-        let repo_name = strings.get("repo_name").cloned();
-        let dev_dependency = bools.get("dev_dependency").copied().unwrap_or(false);
-
-        // Note: max_compatibility_level is parsed but not used in Dependency struct
-        // It's available in ints if needed
-        let _ = ints.get("max_compatibility_level");
-
-        Ok(Some(Dependency {
-            name,
-            version,
-            max_version,
-            repo_name,
-            dev_dependency,
-        }))
-    }
-
-    /// Parse `single_version_override()` declaration.
-    fn parse_single_version_override(&self, args_str: &str) -> Result<Option<Override>> {
-        let strings = self.extract_string_args(args_str);
-
-        let module_name = match strings.get("module_name") {
-            Some(n) => crate::label::ModuleName::new(n.clone())?,
-            None => return Ok(None),
-        };
-
-        let version = match strings.get("version") {
-            Some(v) => crate::label::Version::new(v.clone())?,
-            None => crate::label::Version::new("0.0.0")?,
-        };
-
-        let registry = strings.get("registry").cloned();
-
-        Ok(Some(Override::SingleVersion {
-            module: module_name,
-            version,
-            registry,
-        }))
-    }
-
-    /// Parse `git_override()` declaration.
-    fn parse_git_override(&self, args_str: &str) -> Result<Option<Override>> {
-        let strings = self.extract_string_args(args_str);
-
-        let module_name = match strings.get("module_name") {
-            Some(n) => crate::label::ModuleName::new(n.clone())?,
-            None => return Ok(None),
-        };
-
-        let remote = strings.get("remote").cloned().unwrap_or_default();
-        let commit = strings.get("commit").cloned();
-        let tag = strings.get("tag").cloned();
-        let branch = strings.get("branch").cloned();
-
-        Ok(Some(Override::Git {
-            module: module_name,
-            remote,
-            commit,
-            tag,
-            branch,
-        }))
-    }
-
-    /// Parse `local_path_override()` declaration.
-    fn parse_local_path_override(&self, args_str: &str) -> Result<Option<Override>> {
-        let strings = self.extract_string_args(args_str);
-
-        let module_name = match strings.get("module_name") {
-            Some(n) => crate::label::ModuleName::new(n.clone())?,
-            None => return Ok(None),
-        };
-
-        let path = strings.get("path").cloned().unwrap_or_default();
-
-        Ok(Some(Override::LocalPath {
-            module: module_name,
-            path,
-        }))
-    }
-
-    /// Parse `archive_override()` declaration.
-    fn parse_archive_override(&self, args_str: &str) -> Result<Option<Override>> {
-        let strings = self.extract_string_args(args_str);
-        let lists = self.extract_string_list_args(args_str);
-
-        let module_name = match strings.get("module_name") {
-            Some(n) => crate::label::ModuleName::new(n.clone())?,
-            None => return Ok(None),
-        };
-
-        let urls = lists.get("urls").cloned().unwrap_or_default();
-        let integrity = strings.get("integrity").cloned();
-        let strip_prefix = strings.get("strip_prefix").cloned();
-
-        Ok(Some(Override::Archive {
-            module: module_name,
-            urls,
-            integrity,
-            strip_prefix,
-        }))
-    }
-
-    /// Parse `multiple_version_override()` declaration.
-    fn parse_multiple_version_override(&self, args_str: &str) -> Result<Option<Override>> {
-        let strings = self.extract_string_args(args_str);
-        let lists = self.extract_string_list_args(args_str);
-
-        let module_name = match strings.get("module_name") {
-            Some(n) => crate::label::ModuleName::new(n.clone())?,
-            None => return Ok(None),
-        };
-
-        let version_strings = lists.get("versions").cloned().unwrap_or_default();
-        let mut versions = Vec::new();
-        for v in version_strings {
-            versions.push(crate::label::Version::new(v)?);
-        }
-
-        let registry = strings.get("registry").cloned();
-
-        Ok(Some(Override::MultipleVersion {
-            module: module_name,
-            versions,
-            registry,
-        }))
-    }
+    Ok(Some(Dependency {
+        name,
+        version,
+        max_version,
+        repo_name,
+        dev_dependency,
+    }))
 }
 
-/// Unescape a string literal (handle `\n`, `\t`, `\\`, `\"`, `\'`)
-fn unescape_string(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars();
+/// Parse `single_version_override()` declaration.
+fn parse_single_version_override(args: &CallArgsP<AstNoPayload>) -> Result<Option<Override>> {
+    let module_name = match get_string_arg(args, "module_name") {
+        Some(n) => crate::label::ModuleName::new(n)?,
+        None => return Ok(None),
+    };
 
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some('r') => result.push('\r'),
-                Some('\\') | None => result.push('\\'),
-                Some('"') => result.push('"'),
-                Some('\'') => result.push('\''),
-                Some('0') => result.push('\0'),
-                Some(c) => {
-                    // Unknown escape, keep as-is
-                    result.push('\\');
-                    result.push(c);
-                }
-            }
-        } else {
-            result.push(ch);
-        }
+    let version = match get_string_arg(args, "version") {
+        Some(v) => crate::label::Version::new(v)?,
+        None => crate::label::Version::new("0.0.0")?,
+    };
+
+    let registry = get_string_arg(args, "registry");
+
+    Ok(Some(Override::SingleVersion {
+        module: module_name,
+        version,
+        registry,
+    }))
+}
+
+/// Parse `git_override()` declaration.
+fn parse_git_override(args: &CallArgsP<AstNoPayload>) -> Result<Option<Override>> {
+    let module_name = match get_string_arg(args, "module_name") {
+        Some(n) => crate::label::ModuleName::new(n)?,
+        None => return Ok(None),
+    };
+
+    let remote = get_string_arg(args, "remote").unwrap_or_default();
+    let commit = get_string_arg(args, "commit");
+    let tag = get_string_arg(args, "tag");
+    let branch = get_string_arg(args, "branch");
+
+    Ok(Some(Override::Git {
+        module: module_name,
+        remote,
+        commit,
+        tag,
+        branch,
+    }))
+}
+
+/// Parse `local_path_override()` declaration.
+fn parse_local_path_override(args: &CallArgsP<AstNoPayload>) -> Result<Option<Override>> {
+    let module_name = match get_string_arg(args, "module_name") {
+        Some(n) => crate::label::ModuleName::new(n)?,
+        None => return Ok(None),
+    };
+
+    let path = get_string_arg(args, "path").unwrap_or_default();
+
+    Ok(Some(Override::LocalPath {
+        module: module_name,
+        path,
+    }))
+}
+
+/// Parse `archive_override()` declaration.
+fn parse_archive_override(args: &CallArgsP<AstNoPayload>) -> Result<Option<Override>> {
+    let module_name = match get_string_arg(args, "module_name") {
+        Some(n) => crate::label::ModuleName::new(n)?,
+        None => return Ok(None),
+    };
+
+    let urls = get_string_list_arg(args, "urls").unwrap_or_default();
+    let integrity = get_string_arg(args, "integrity");
+    let strip_prefix = get_string_arg(args, "strip_prefix");
+
+    Ok(Some(Override::Archive {
+        module: module_name,
+        urls,
+        integrity,
+        strip_prefix,
+    }))
+}
+
+/// Parse `multiple_version_override()` declaration.
+fn parse_multiple_version_override(args: &CallArgsP<AstNoPayload>) -> Result<Option<Override>> {
+    let module_name = match get_string_arg(args, "module_name") {
+        Some(n) => crate::label::ModuleName::new(n)?,
+        None => return Ok(None),
+    };
+
+    let version_strings = get_string_list_arg(args, "versions").unwrap_or_default();
+    let mut versions = Vec::new();
+    for v in version_strings {
+        versions.push(crate::label::Version::new(v)?);
     }
 
-    result
+    let registry = get_string_arg(args, "registry");
+
+    Ok(Some(Override::MultipleVersion {
+        module: module_name,
+        versions,
+        registry,
+    }))
 }
 
 #[cfg(test)]
@@ -746,31 +665,12 @@ bazel_dep(name = "rules_rust", version = "0.40.0")
     }
 
     #[test]
-    fn test_parse_escaped_strings() {
-        let content = r#"
-module(name = "test", version = "1.0.0")
-
-local_path_override(
-    module_name = "lib",
-    path = "path\\with\\backslashes",
-)
-"#;
-        let result = ModuleFile::parse(content).unwrap();
-        match &result.info.overrides[0] {
-            Override::LocalPath { path, .. } => {
-                assert_eq!(path, "path\\with\\backslashes");
-            }
-            _ => panic!("Expected LocalPath override"),
-        }
-    }
-
-    #[test]
     fn test_parse_single_quoted_strings() {
-        let content = r#"
+        let content = r"
 module(name = 'test', version = '1.0.0')
 
 bazel_dep(name = 'rules_rust', version = '0.40.0')
-"#;
+";
         let result = ModuleFile::parse(content).unwrap();
         assert_eq!(result.info.name.as_str(), "test");
         assert_eq!(result.info.deps[0].name.as_str(), "rules_rust");
@@ -835,15 +735,6 @@ local_path_override(
         assert_eq!(result.info.deps.len(), 2);
         assert_eq!(result.info.dev_deps.len(), 1);
         assert_eq!(result.info.overrides.len(), 2);
-    }
-
-    #[test]
-    fn test_unescape_string() {
-        assert_eq!(unescape_string(r"hello\nworld"), "hello\nworld");
-        assert_eq!(unescape_string(r"tab\there"), "tab\there");
-        assert_eq!(unescape_string(r"back\\slash"), "back\\slash");
-        assert_eq!(unescape_string(r#"quote\"here"#), "quote\"here");
-        assert_eq!(unescape_string(r"normal string"), "normal string");
     }
 
     #[test]

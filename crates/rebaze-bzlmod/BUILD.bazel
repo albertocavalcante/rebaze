@@ -9,11 +9,12 @@ rust_library(
         "@crates//:anyhow",
         "@crates//:async-channel",
         "@crates//:indexmap",
-        "@crates//:once_cell",
         "@crates//:regex",
         "@crates//:reqwest",
         "@crates//:serde",
         "@crates//:serde_json",
+        "@crates//:starlark",
+        "@crates//:starlark_syntax",
         "@crates//:thiserror",
         "@crates//:tokio",
         "@crates//:tracing",
@@ -27,4 +28,9 @@ rust_library(
 rust_test(
     name = "rebaze-bzlmod_test",
     crate = ":rebaze-bzlmod",
+    deps = [
+        "@crates//:tempfile",
+        "@crates//:tokio-test",
+        "@crates//:wiremock",
+    ],
 )

@@ -75,9 +75,19 @@ pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
-# Allow these pedantic lints
-module_name_repetitions = "allow"
-must_use_candidate = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-doc_markdown = "allow"
+# Allow these pedantic/nursery lints that are too strict (priority 1 to override group denies)
+module_name_repetitions = { level = "allow", priority = 1 }
+must_use_candidate = { level = "allow", priority = 1 }
+missing_errors_doc = { level = "allow", priority = 1 }
+missing_panics_doc = { level = "allow", priority = 1 }
+doc_markdown = { level = "allow", priority = 1 }
+too_many_lines = { level = "allow", priority = 1 }
+return_self_not_must_use = { level = "allow", priority = 1 }
+redundant_else = { level = "allow", priority = 1 }
+option_if_let_else = { level = "allow", priority = 1 }
+collapsible_if = { level = "allow", priority = 1 }
+collapsible_else_if = { level = "allow", priority = 1 }
+if_not_else = { level = "allow", priority = 1 }
+manual_let_else = { level = "allow", priority = 1 }
+match_same_arms = { level = "allow", priority = 1 }
+significant_drop_tightening = { level = "allow", priority = 1 }

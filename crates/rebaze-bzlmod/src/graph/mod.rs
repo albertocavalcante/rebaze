@@ -389,12 +389,12 @@ impl DependencyGraph {
         };
 
         // Check if this was an override
-        if let Some(override_version) = self.overrides.get(module_name) {
-            if override_version == selected_version {
-                info.strategy = SelectionStrategy::Override;
-                info.deciding_factor = "single_version_override".to_string();
-                return info;
-            }
+        if let Some(override_version) = self.overrides.get(module_name)
+            && override_version == selected_version
+        {
+            info.strategy = SelectionStrategy::Override;
+            info.deciding_factor = "single_version_override".to_string();
+            return info;
         }
 
         // Get all version candidates
@@ -427,12 +427,12 @@ impl DependencyGraph {
 
     /// Build a human-readable reason string for version selection.
     fn build_reason_string(&self, module_name: &str, selected_version: &str) -> String {
-        if let Some(override_version) = self.overrides.get(module_name) {
-            if override_version == selected_version {
-                return format!(
-                    "{module_name}@{selected_version} was selected due to single_version_override"
-                );
-            }
+        if let Some(override_version) = self.overrides.get(module_name)
+            && override_version == selected_version
+        {
+            return format!(
+                "{module_name}@{selected_version} was selected due to single_version_override"
+            );
         }
 
         if let Some(versions) = self.requested_versions.get(module_name) {
@@ -746,10 +746,10 @@ impl DependencyGraph {
         depths: &mut HashMap<ModuleKey, usize>,
         max_depth: &mut usize,
     ) {
-        if let Some(&existing) = depths.get(key) {
-            if existing >= depth {
-                return;
-            }
+        if let Some(&existing) = depths.get(key)
+            && existing >= depth
+        {
+            return;
         }
 
         depths.insert(key.clone(), depth);

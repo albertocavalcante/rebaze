@@ -50,7 +50,8 @@ pub struct LockedModule {
 
 impl Lockfile {
     /// Create a new empty lockfile.
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self {
             version: LOCKFILE_VERSION,
             registry_file_hashes: BTreeMap::new(),

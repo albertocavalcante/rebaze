@@ -318,20 +318,18 @@ impl<R: Registry + 'static> Resolver<R> {
                     let msg = mismatches
                         .iter()
                         .map(|(name, declared, resolved)| {
-                            format!("{}: declared {} but resolved {}", name, declared, resolved)
+                            format!("{name}: declared {declared} but resolved {resolved}")
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
                     return Err(Error::Resolution(format!(
-                        "direct dependency version mismatch: {}",
-                        msg
+                        "direct dependency version mismatch: {msg}"
                     )));
                 }
                 // DirectDepsMode::Warn
                 for (name, declared, resolved) in mismatches {
                     warnings.push(format!(
-                        "direct dependency {} declared as {} but resolved to {}",
-                        name, declared, resolved
+                        "direct dependency {name} declared as {declared} but resolved to {resolved}"
                     ));
                 }
             }
@@ -650,7 +648,7 @@ impl<R: Registry + 'static> Resolver<R> {
                 let mut pending = Vec::new();
                 for (name, versions) in &ctx.dep_graph {
                     for version in versions.keys() {
-                        let cache_key = format!("{}@{}", name, version);
+                        let cache_key = format!("{name}@{version}");
                         if !ctx.cache.contains_key(&cache_key) && !ctx.visiting.contains(&cache_key)
                         {
                             // Check if this is an overridden module that shouldn't be fetched
@@ -700,7 +698,7 @@ impl<R: Registry + 'static> Resolver<R> {
 
                 let handle = tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
-                    let cache_key = format!("{}@{}", name, version);
+                    let cache_key = format!("{name}@{version}");
 
                     // Mark as visiting
                     {
@@ -730,14 +728,12 @@ impl<R: Registry + 'static> Resolver<R> {
                                 let mut effective_version = dep.version.clone();
 
                                 // Check for overrides
-                                if let Some(ovr) = ctx.overrides.get(dep_name) {
-                                    if let Override::SingleVersion {
-                                        version: ovr_version,
-                                        ..
-                                    } = ovr
-                                    {
-                                        effective_version = ovr_version.clone();
-                                    }
+                                if let Some(Override::SingleVersion {
+                                    version: ovr_version,
+                                    ..
+                                }) = ctx.overrides.get(dep_name)
+                                {
+                                    effective_version = ovr_version.clone();
                                 }
 
                                 let versions = ctx
@@ -859,10 +855,10 @@ impl<R: Registry + 'static> Resolver<R> {
             let versions = ctx
                 .dep_graph
                 .entry(dep_name.to_string())
-                .or_insert_with(HashMap::new);
+                .or_default();
 
             let version_str = effective_version.as_str();
-            let parent = path.last().map(String::as_str).unwrap_or("<root>");
+            let parent = path.last().map_or("<root>", String::as_str);
 
             if let Some(existing) = versions.get_mut(version_str) {
                 existing.required_by.push(parent.to_string());
@@ -1036,14 +1032,14 @@ impl<R: Registry + 'static> Resolver<R> {
 
         for dep in all_deps {
             let dep_name = dep.name.as_str();
-            if let Some(resolved) = selected.get(dep_name) {
-                if resolved.version.as_str() != dep.version.as_str() {
-                    mismatches.push((
-                        dep_name.to_string(),
-                        dep.version.as_str().to_string(),
-                        resolved.version.as_str().to_string(),
-                    ));
-                }
+            if let Some(resolved) = selected.get(dep_name)
+                && resolved.version.as_str() != dep.version.as_str()
+            {
+                mismatches.push((
+                    dep_name.to_string(),
+                    dep.version.as_str().to_string(),
+                    resolved.version.as_str().to_string(),
+                ));
             }
         }
 
@@ -1201,10 +1197,9 @@ impl<R: Registry + 'static> Resolver<R> {
             for version in versions {
                 if let Some(replacement) =
                     self.find_non_yanked_version(&module_name, &version).await
+                    && replacement != version
                 {
-                    if replacement != version {
-                        replacements.push((version, replacement));
-                    }
+                    replacements.push((version, replacement));
                 }
             }
 
@@ -1273,7 +1268,7 @@ impl Resolver<crate::RegistryClient> {
     }
 }
 
-/// Parse MODULE.bazel content into ModuleInfo.
+/// Parse MODULE.bazel content into `ModuleInfo`.
 ///
 /// This is a simplified parser. A full implementation would use the parser module.
 fn parse_module_content(content: &str) -> Result<ModuleInfo> {
@@ -1293,11 +1288,9 @@ fn parse_module_content(content: &str) -> Result<ModuleInfo> {
     let (name, version) = if let Some(caps) = module_re.captures(content) {
         (
             caps.get(1)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default(),
+                .map_or_else(String::new, |m| m.as_str().to_string()),
             caps.get(2)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default(),
+                .map_or_else(String::new, |m| m.as_str().to_string()),
         )
     } else {
         (String::new(), String::new())
@@ -1307,9 +1300,9 @@ fn parse_module_content(content: &str) -> Result<ModuleInfo> {
     let mut dev_deps = Vec::new();
 
     for caps in bazel_dep_re.captures_iter(content) {
-        let dep_name = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-        let dep_version = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-        let is_dev = caps.get(3).map(|m| m.as_str() == "True").unwrap_or(false);
+        let dep_name = caps.get(1).map_or("", |m| m.as_str());
+        let dep_version = caps.get(2).map_or("", |m| m.as_str());
+        let is_dev = caps.get(3).is_some_and(|m| m.as_str() == "True");
 
         let dep = Dependency {
             name: ModuleName::new(dep_name)?,

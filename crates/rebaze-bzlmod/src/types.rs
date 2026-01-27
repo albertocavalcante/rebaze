@@ -29,7 +29,7 @@ pub struct ModuleInfo {
     pub overrides: Vec<Override>,
 }
 
-/// A bazel_dep dependency declaration.
+/// A `bazel_dep` dependency declaration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dependency {
     /// Module name.
@@ -103,6 +103,8 @@ pub enum Override {
 }
 
 /// A resolved module in the dependency graph.
+// Multiple boolean flags are needed to represent various module states from different sources
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedModule {
     /// Module name.
@@ -142,7 +144,8 @@ pub struct ModuleKey {
 
 impl ModuleKey {
     /// Create a new module key.
-    pub fn new(name: ModuleName, version: Version) -> Self {
+    #[must_use]
+    pub const fn new(name: ModuleName, version: Version) -> Self {
         Self { name, version }
     }
 }

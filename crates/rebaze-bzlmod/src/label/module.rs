@@ -21,6 +21,7 @@ impl ModuleName {
     }
 
     /// Get the name as a string slice.
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }

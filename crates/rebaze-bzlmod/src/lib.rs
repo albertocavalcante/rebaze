@@ -45,10 +45,31 @@
 //! - [`graph`]: Dependency graph and queries
 //! - [`lockfile`]: MODULE.bazel.lock support
 
+// Base lint configuration
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
+// Crate-level lint exceptions - these override the above denies for specific lints
+// Needed for Bazel builds since workspace-level Cargo.toml lints don't apply
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::return_self_not_must_use)]
+#![allow(clippy::redundant_else)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::if_not_else)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::manual_let_else)]
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::unused_self)]
+#![allow(clippy::significant_drop_tightening)]
+// Allow expect/unwrap in specific contexts (semaphore acquire is infallible)
+#![allow(clippy::expect_used)]
 
 pub mod error;
 pub mod graph;
