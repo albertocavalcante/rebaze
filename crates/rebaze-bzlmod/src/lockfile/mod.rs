@@ -50,7 +50,7 @@ pub struct LockedModule {
 
 impl Lockfile {
     /// Create a new empty lockfile.
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             version: LOCKFILE_VERSION,

@@ -852,10 +852,7 @@ impl<R: Registry + 'static> Resolver<R> {
             }
 
             // Add to dep graph
-            let versions = ctx
-                .dep_graph
-                .entry(dep_name.to_string())
-                .or_default();
+            let versions = ctx.dep_graph.entry(dep_name.to_string()).or_default();
 
             let version_str = effective_version.as_str();
             let parent = path.last().map_or("<root>", String::as_str);

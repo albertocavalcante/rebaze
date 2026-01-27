@@ -221,19 +221,19 @@ impl RegistryClient {
     }
 
     /// Create a client for the default BCR.
-    #[must_use] 
+    #[must_use]
     pub fn bcr() -> Self {
         Self::new(crate::DEFAULT_REGISTRY)
     }
 
     /// Create a client for the BCR GitHub mirror.
-    #[must_use] 
+    #[must_use]
     pub fn bcr_mirror() -> Self {
         Self::new(crate::DEFAULT_REGISTRY_MIRROR)
     }
 
     /// Get the base URL of this registry.
-    #[must_use] 
+    #[must_use]
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
@@ -566,13 +566,13 @@ pub struct RegistryChain {
 
 impl RegistryChain {
     /// Create a new registry chain.
-    #[must_use] 
+    #[must_use]
     pub fn new(registries: Vec<Arc<dyn Registry>>) -> Self {
         Self { registries }
     }
 
     /// Create default chain (BCR + mirror).
-    #[must_use] 
+    #[must_use]
     pub fn default_chain() -> Self {
         Self::new(vec![
             Arc::new(RegistryClient::bcr()),
