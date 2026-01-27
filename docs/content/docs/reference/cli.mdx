@@ -1,0 +1,160 @@
+---
+title: CLI Reference
+description: Complete reference for rebaze commands and options
+---
+
+## Global Options
+
+These options apply to all commands:
+
+| Option | Description |
+|--------|-------------|
+| `-v, --verbose` | Enable verbose output |
+| `--version` | Print version information |
+| `-h, --help` | Print help information |
+
+## Commands
+
+### rebaze analyze
+
+Detect the build system of a project.
+
+```bash
+rebaze analyze [PATH]
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `PATH` | `.` | Path to the project root |
+
+**Example:**
+
+```bash
+rebaze analyze /path/to/project
+# Output: Detected build systems: cmake
+```
+
+**Detected build systems:**
+- `cmake` - CMakeLists.txt
+- `gradle` - build.gradle, build.gradle.kts
+- `maven` - pom.xml
+- `make` - Makefile
+- `cargo` - Cargo.toml
+
+---
+
+### rebaze migrate
+
+Migrate a project to Bazel.
+
+```bash
+rebaze migrate [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `PATH` | `.` | Path to the project root |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-f, --from <BUILD_SYSTEM>` | Source build system (auto-detected if not specified) |
+| `-c, --config <FILE>` | Path to configuration file (default: rebaze.toml in project root) |
+| `--dry-run` | Show what would be generated without writing files |
+| `--unsafe-mode` | Skip pre/post build validation checks |
+
+**CMake-specific options:**
+
+| Option | Description |
+|--------|-------------|
+| `--cmake-build-dir <DIR>` | CMake build directory containing cmake-file-api replies |
+| `--cmake-config <NAME>` | CMake configuration name (e.g., Debug, Release) |
+| `--cmake-file-api-only` | Fail if cmake-file-api is unavailable |
+
+**Generator options:**
+
+| Option | Description |
+|--------|-------------|
+| `--build-generator <TYPE>` | Build file generator: `auto`, `native`, or `bazelle` (default: auto) |
+| `--bazelle-root <DIR>` | Path to bazelle workspace to build bazelle binary |
+| `--bazelle-bin <PATH>` | Path to prebuilt bazelle binary |
+
+**Examples:**
+
+```bash
+# Basic migration
+rebaze migrate /path/to/project
+
+# Preview changes without writing
+rebaze migrate /path/to/project --dry-run
+
+# Use custom config file
+rebaze migrate /path/to/project --config custom.toml
+
+# CMake with File API
+rebaze migrate /path/to/project --cmake-build-dir build
+
+# CMake with specific configuration
+rebaze migrate /path/to/project --cmake-build-dir build --cmake-config Release
+
+# Force native generator
+rebaze migrate /path/to/project --build-generator native
+
+# Use bazelle generator
+rebaze migrate /path/to/project --build-generator bazelle --bazelle-bin /path/to/bazelle
+
+# Skip validation (not recommended)
+rebaze migrate /path/to/project --unsafe-mode
+```
+
+---
+
+### rebaze validate
+
+Validate generated Bazel files by running `bazel build //...`.
+
+```bash
+rebaze validate [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `PATH` | `.` | Path to the project root |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--unsafe-mode` | Skip Bazel build validation (only checks workspace presence) |
+
+**Example:**
+
+```bash
+rebaze validate /path/to/project
+```
+
+---
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error (parsing, generation, or validation failed) |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `RUST_LOG` | Set log level (e.g., `debug`, `info`, `warn`) |
+
+```bash
+RUST_LOG=debug rebaze migrate /path/to/project
+```

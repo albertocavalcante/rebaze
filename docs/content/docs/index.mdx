@@ -17,15 +17,20 @@ The binary will be at `bazel-bin/crates/rebaze-cli/rebaze`.
 
 ## Quick Start
 
-### Analyze a project
+### 1. Analyze your project
 
-Detect the build system used by a project:
+First, detect which build system your project uses:
 
 ```bash
 rebaze analyze /path/to/project
 ```
 
-### Migrate to Bazel
+Output:
+```
+Detected build systems: cmake
+```
+
+### 2. Migrate to Bazel
 
 Generate Bazel build files:
 
@@ -33,14 +38,15 @@ Generate Bazel build files:
 rebaze migrate /path/to/project
 ```
 
-This will:
-1. Detect the source build system (CMake or Gradle)
-2. Parse the project structure
-3. Generate `MODULE.bazel` and `BUILD.bazel` files
+This generates:
+- `MODULE.bazel` - Module definition with dependencies
+- `BUILD.bazel` - Build targets
+- `.bazelversion` - Pins Bazel 9.x
+- `.bazelrc` - Build configuration
 
-### Validate the migration
+### 3. Validate the migration
 
-Verify the generated Bazel files build successfully:
+Verify the generated files build successfully:
 
 ```bash
 rebaze validate /path/to/project
@@ -48,32 +54,40 @@ rebaze validate /path/to/project
 
 ## Supported Build Systems
 
-| Source | Status |
-|--------|--------|
-| CMake | Supported |
-| Gradle | Supported |
-
-## CLI Options
-
-```bash
-rebaze migrate /path/to/project \
-  --config rebaze.toml \    # Custom configuration file
-  --dry-run \               # Preview without writing files
-  --from cmake              # Specify source build system
-```
-
-For CMake projects, additional options are available:
-
-```bash
-rebaze migrate /path/to/project \
-  --cmake-build-dir build \     # Use cmake-file-api data
-  --cmake-config Release        # CMake configuration name
-```
+| Source | Status | Notes |
+|--------|--------|-------|
+| CMake | Supported | Full parser + cmake-file-api integration |
+| Gradle | Supported | Groovy and Kotlin DSL |
+| Maven | Detection only | Migration planned |
 
 ## Configuration
 
-Create a `rebaze.toml` file in your project root to customize the migration. See the [Configuration Reference](/docs/reference/config) for details.
+Create a `rebaze.toml` in your project root to customize the migration:
+
+```toml
+[versions]
+rules_cc = "0.1.1"
+googletest = "1.15.2"
+
+[mappings.system_libraries]
+z = "@zlib"
+ssl = "@openssl"
+
+[strategy]
+default = "system"
+```
+
+See the [Configuration Reference](/docs/reference/config) for all options.
 
 ## Requirements
 
 - Bazel 9.x
+- For CMake projects: CMake 3.14+ (optional, for cmake-file-api)
+
+## Next Steps
+
+<Cards>
+  <Card title="Tutorial: CMake Migration" href="/docs/tutorials/cmake" />
+  <Card title="Configuration Reference" href="/docs/reference/config" />
+  <Card title="How Rebaze Works" href="/docs/concepts/how-it-works" />
+</Cards>
