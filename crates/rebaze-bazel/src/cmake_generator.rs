@@ -8,6 +8,15 @@ use crate::config::MigrationConfig;
 use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources};
 use crate::starlark::{BazelDep, CcBinary, CcLibrary, Glob, Load, Module, Package, SrcsWithHdrs};
 
+/// BCR resolution result for a project.
+#[derive(Debug, Default)]
+struct BcrResolution {
+    /// BCR dependencies to add to MODULE.bazel
+    deps: Vec<BazelDep>,
+    /// Packages that couldn't be resolved (need fallback)
+    unresolved: Vec<String>,
+}
+
 /// Detected external dependencies that need bazel_dep entries.
 #[derive(Debug, Default)]
 struct DetectedDeps {
@@ -121,6 +130,127 @@ fn push_platforms(parts: &mut Vec<String>, project: &CMakeProject, config: &Migr
     parts.push(serialize_starlark(&platforms));
 }
 
+/// Collect all package names from the CMake project that need resolution.
+fn collect_all_packages(project: &CMakeProject) -> Vec<String> {
+    let mut packages = BTreeSet::new();
+
+    // Add CMake find_package names
+    for pkg in &project.packages {
+        packages.insert(pkg.name.clone());
+        // Also add components for packages like Boost
+        for comp in &pkg.components {
+            packages.insert(format!("{}::{}", pkg.name, comp));
+        }
+    }
+
+    // Add link libraries that look like package references
+    for lib in &project.libraries {
+        for link_lib in &lib.link_libraries {
+            if link_lib.contains("::") {
+                // CMake imported target like Boost::filesystem
+                packages.insert(link_lib.clone());
+            }
+        }
+    }
+
+    for exe in &project.executables {
+        for link_lib in &exe.link_libraries {
+            if link_lib.contains("::") {
+                packages.insert(link_lib.clone());
+            }
+        }
+    }
+
+    // Add pkg-config module names
+    for pkg in &project.pkg_config_modules {
+        packages.insert(pkg.prefix.clone());
+    }
+
+    packages.into_iter().collect()
+}
+
+/// Resolve CMake packages to BCR modules.
+fn resolve_bcr_deps(project: &CMakeProject, config: &MigrationConfig) -> BcrResolution {
+    let package_names = collect_all_packages(project);
+    let bcr_result = rebaze_bcr::resolve_cmake_deps(&package_names);
+
+    let mut resolution = BcrResolution::default();
+
+    for dep in bcr_result.resolved {
+        // Check if this package should be skipped
+        if config
+            .strategy
+            .bcr
+            .skip_packages
+            .contains(&dep.original_name)
+        {
+            resolution.unresolved.push(dep.original_name);
+            continue;
+        }
+
+        // Apply module overrides
+        let module_name = config
+            .strategy
+            .bcr
+            .module_overrides
+            .get(&dep.module)
+            .cloned()
+            .unwrap_or(dep.module);
+
+        // Apply version pins
+        let version = config
+            .strategy
+            .bcr
+            .version_pins
+            .get(&module_name)
+            .cloned()
+            .unwrap_or(dep.version);
+
+        resolution.deps.push(BazelDep {
+            name: module_name,
+            version,
+        });
+    }
+
+    for unresolved in bcr_result.unresolved {
+        resolution.unresolved.push(unresolved.name);
+    }
+
+    // Deduplicate deps by module name (keep first occurrence)
+    let mut seen = BTreeSet::new();
+    resolution.deps.retain(|dep| seen.insert(dep.name.clone()));
+
+    resolution
+}
+
+/// Push BCR dependencies to MODULE.bazel.
+fn push_bcr_dependencies(
+    parts: &mut Vec<String>,
+    project: &CMakeProject,
+    config: &MigrationConfig,
+) {
+    let resolution = resolve_bcr_deps(project, config);
+
+    if resolution.deps.is_empty() && resolution.unresolved.is_empty() {
+        return;
+    }
+
+    parts.push("# Dependencies from Bazel Central Registry".to_string());
+
+    for dep in &resolution.deps {
+        parts.push(serialize_starlark(dep));
+    }
+
+    if !resolution.unresolved.is_empty() {
+        parts.push(String::new());
+        parts.push("# The following packages are not available in BCR:".to_string());
+        for name in &resolution.unresolved {
+            let fallback = config.strategy.bcr_fallback.as_deref().unwrap_or("system");
+            parts.push(format!("# - {name} (using {fallback} fallback)"));
+        }
+    }
+}
+
 fn push_pkg_config_extensions(
     parts: &mut Vec<String>,
     project: &CMakeProject,
@@ -197,7 +327,18 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
     push_rules_cc(&mut parts, config);
     push_detected_frameworks(&mut parts, project, config);
     push_platforms(&mut parts, project, config);
-    push_pkg_config_extensions(&mut parts, project, config);
+
+    // Use BCR dependencies when strategy is "bcr"
+    if config.strategy.default == "bcr" {
+        push_bcr_dependencies(&mut parts, project, config);
+        // Only add pkg-config extensions for unresolved deps (fallback)
+        let resolution = resolve_bcr_deps(project, config);
+        if !resolution.unresolved.is_empty() {
+            push_pkg_config_extensions(&mut parts, project, config);
+        }
+    } else {
+        push_pkg_config_extensions(&mut parts, project, config);
+    }
 
     parts.join("\n\n") + "\n"
 }

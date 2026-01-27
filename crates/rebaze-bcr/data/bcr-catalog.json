@@ -1,0 +1,558 @@
+{
+  "modules": {
+    "protobuf": {
+      "name": "protobuf",
+      "versions": ["21.7", "23.1", "25.3", "27.0", "27.5", "29.3"],
+      "latest_version": "29.3",
+      "targets": [
+        {"name": "protobuf", "label": "@protobuf//:protobuf", "target_type": "cc_library"},
+        {"name": "protobuf_lite", "label": "@protobuf//:protobuf_lite", "target_type": "cc_library"},
+        {"name": "protoc", "label": "@protobuf//:protoc", "target_type": "cc_binary"}
+      ]
+    },
+    "fmt": {
+      "name": "fmt",
+      "versions": ["9.1.0", "10.0.0", "10.1.0", "10.2.1", "11.0.2", "11.1.4"],
+      "latest_version": "11.1.4",
+      "targets": [
+        {"name": "fmt", "label": "@fmt", "target_type": "cc_library"}
+      ]
+    },
+    "flatbuffers": {
+      "name": "flatbuffers",
+      "versions": ["23.5.26", "24.3.25", "25.2.10"],
+      "latest_version": "25.2.10",
+      "targets": [
+        {"name": "flatbuffers", "label": "@flatbuffers", "target_type": "cc_library"},
+        {"name": "flatc", "label": "@flatbuffers//:flatc", "target_type": "cc_binary"}
+      ]
+    },
+    "onetbb": {
+      "name": "onetbb",
+      "versions": ["2021.10.0", "2021.11.0", "2021.12.0", "2021.13.0", "2022.0.0"],
+      "latest_version": "2022.0.0",
+      "targets": [
+        {"name": "tbb", "label": "@onetbb//:tbb", "target_type": "cc_library"}
+      ]
+    },
+    "boringssl": {
+      "name": "boringssl",
+      "versions": ["0.0.0-20230215-5c22014", "0.20250415.0", "0.20241024.0"],
+      "latest_version": "0.20250415.0",
+      "targets": [
+        {"name": "ssl", "label": "@boringssl//:ssl", "target_type": "cc_library"},
+        {"name": "crypto", "label": "@boringssl//:crypto", "target_type": "cc_library"}
+      ]
+    },
+    "curl": {
+      "name": "curl",
+      "versions": ["8.4.0", "8.7.1", "8.8.0.bcr.1", "8.11.1"],
+      "latest_version": "8.11.1",
+      "targets": [
+        {"name": "curl", "label": "@curl", "target_type": "cc_library"}
+      ]
+    },
+    "zlib": {
+      "name": "zlib",
+      "versions": ["1.2.13", "1.3", "1.3.1", "1.3.1.bcr.4"],
+      "latest_version": "1.3.1.bcr.4",
+      "targets": [
+        {"name": "zlib", "label": "@zlib", "target_type": "cc_library"}
+      ]
+    },
+    "libssh2": {
+      "name": "libssh2",
+      "versions": ["1.11.0", "1.11.1"],
+      "latest_version": "1.11.1",
+      "targets": [
+        {"name": "libssh2", "label": "@libssh2", "target_type": "cc_library"}
+      ]
+    },
+    "abseil-cpp": {
+      "name": "abseil-cpp",
+      "versions": ["20230125.1", "20230802.0", "20240116.2", "20240722.0"],
+      "latest_version": "20240722.0",
+      "targets": [
+        {"name": "absl", "label": "@abseil-cpp//absl", "target_type": "cc_library"}
+      ]
+    },
+    "googletest": {
+      "name": "googletest",
+      "versions": ["1.14.0", "1.15.2"],
+      "latest_version": "1.15.2",
+      "targets": [
+        {"name": "gtest", "label": "@googletest//:gtest", "target_type": "cc_library"},
+        {"name": "gtest_main", "label": "@googletest//:gtest_main", "target_type": "cc_library"},
+        {"name": "gmock", "label": "@googletest//:gmock", "target_type": "cc_library"},
+        {"name": "gmock_main", "label": "@googletest//:gmock_main", "target_type": "cc_library"}
+      ]
+    },
+    "google_benchmark": {
+      "name": "google_benchmark",
+      "versions": ["1.8.3", "1.8.4", "1.8.5", "1.9.1"],
+      "latest_version": "1.9.1",
+      "targets": [
+        {"name": "benchmark", "label": "@google_benchmark//:benchmark", "target_type": "cc_library"},
+        {"name": "benchmark_main", "label": "@google_benchmark//:benchmark_main", "target_type": "cc_library"}
+      ]
+    },
+    "nlohmann_json": {
+      "name": "nlohmann_json",
+      "versions": ["3.11.2", "3.11.3"],
+      "latest_version": "3.11.3",
+      "targets": [
+        {"name": "json", "label": "@nlohmann_json//:json", "target_type": "cc_library"}
+      ]
+    },
+    "spdlog": {
+      "name": "spdlog",
+      "versions": ["1.12.0", "1.13.0", "1.14.1", "1.15.1"],
+      "latest_version": "1.15.1",
+      "dependencies": {"fmt": ""},
+      "targets": [
+        {"name": "spdlog", "label": "@spdlog", "target_type": "cc_library"}
+      ]
+    },
+    "grpc": {
+      "name": "grpc",
+      "versions": ["1.56.3", "1.62.1", "1.63.0", "1.65.0", "1.68.2", "1.70.0"],
+      "latest_version": "1.70.0",
+      "dependencies": {"protobuf": "", "abseil-cpp": ""},
+      "targets": [
+        {"name": "grpc", "label": "@grpc//:grpc", "target_type": "cc_library"},
+        {"name": "grpc++", "label": "@grpc//:grpc++", "target_type": "cc_library"}
+      ]
+    },
+    "re2": {
+      "name": "re2",
+      "versions": ["2023-09-01", "2024-02-01", "2024-07-02"],
+      "latest_version": "2024-07-02",
+      "targets": [
+        {"name": "re2", "label": "@re2//:re2", "target_type": "cc_library"}
+      ]
+    },
+    "yaml-cpp": {
+      "name": "yaml-cpp",
+      "versions": ["0.8.0"],
+      "latest_version": "0.8.0",
+      "targets": [
+        {"name": "yaml-cpp", "label": "@yaml-cpp", "target_type": "cc_library"}
+      ]
+    },
+    "boost.system": {
+      "name": "boost.system",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.system", "label": "@boost.system", "target_type": "cc_library"}
+      ]
+    },
+    "boost.filesystem": {
+      "name": "boost.filesystem",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "dependencies": {"boost.system": ""},
+      "targets": [
+        {"name": "boost.filesystem", "label": "@boost.filesystem", "target_type": "cc_library"}
+      ]
+    },
+    "boost.asio": {
+      "name": "boost.asio",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.asio", "label": "@boost.asio", "target_type": "cc_library"}
+      ]
+    },
+    "boost.log": {
+      "name": "boost.log",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.log", "label": "@boost.log", "target_type": "cc_library"}
+      ]
+    },
+    "boost.thread": {
+      "name": "boost.thread",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.thread", "label": "@boost.thread", "target_type": "cc_library"}
+      ]
+    },
+    "boost.regex": {
+      "name": "boost.regex",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.regex", "label": "@boost.regex", "target_type": "cc_library"}
+      ]
+    },
+    "boost.program_options": {
+      "name": "boost.program_options",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.program_options", "label": "@boost.program_options", "target_type": "cc_library"}
+      ]
+    },
+    "boost.date_time": {
+      "name": "boost.date_time",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.date_time", "label": "@boost.date_time", "target_type": "cc_library"}
+      ]
+    },
+    "boost.iostreams": {
+      "name": "boost.iostreams",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.iostreams", "label": "@boost.iostreams", "target_type": "cc_library"}
+      ]
+    },
+    "boost.serialization": {
+      "name": "boost.serialization",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.serialization", "label": "@boost.serialization", "target_type": "cc_library"}
+      ]
+    },
+    "boost.uuid": {
+      "name": "boost.uuid",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.uuid", "label": "@boost.uuid", "target_type": "cc_library"}
+      ]
+    },
+    "boost.container": {
+      "name": "boost.container",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.container", "label": "@boost.container", "target_type": "cc_library"}
+      ]
+    },
+    "boost.context": {
+      "name": "boost.context",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.context", "label": "@boost.context", "target_type": "cc_library"}
+      ]
+    },
+    "boost.coroutine": {
+      "name": "boost.coroutine",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.coroutine", "label": "@boost.coroutine", "target_type": "cc_library"}
+      ]
+    },
+    "boost.json": {
+      "name": "boost.json",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.json", "label": "@boost.json", "target_type": "cc_library"}
+      ]
+    },
+    "boost.url": {
+      "name": "boost.url",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.url", "label": "@boost.url", "target_type": "cc_library"}
+      ]
+    },
+    "boost.beast": {
+      "name": "boost.beast",
+      "versions": ["1.83.0", "1.87.0"],
+      "latest_version": "1.87.0",
+      "targets": [
+        {"name": "boost.beast", "label": "@boost.beast", "target_type": "cc_library"}
+      ]
+    },
+    "lz4": {
+      "name": "lz4",
+      "versions": ["1.9.4", "1.10.0"],
+      "latest_version": "1.10.0",
+      "targets": [
+        {"name": "lz4", "label": "@lz4", "target_type": "cc_library"}
+      ]
+    },
+    "zstd": {
+      "name": "zstd",
+      "versions": ["1.5.5", "1.5.6"],
+      "latest_version": "1.5.6",
+      "targets": [
+        {"name": "zstd", "label": "@zstd", "target_type": "cc_library"}
+      ]
+    },
+    "bzip2": {
+      "name": "bzip2",
+      "versions": ["1.0.8"],
+      "latest_version": "1.0.8",
+      "targets": [
+        {"name": "bzip2", "label": "@bzip2", "target_type": "cc_library"}
+      ]
+    },
+    "xz": {
+      "name": "xz",
+      "versions": ["5.4.4", "5.6.3"],
+      "latest_version": "5.6.3",
+      "targets": [
+        {"name": "xz", "label": "@xz//:lzma", "target_type": "cc_library"}
+      ]
+    },
+    "snappy": {
+      "name": "snappy",
+      "versions": ["1.1.10", "1.2.1"],
+      "latest_version": "1.2.1",
+      "targets": [
+        {"name": "snappy", "label": "@snappy", "target_type": "cc_library"}
+      ]
+    },
+    "pcre2": {
+      "name": "pcre2",
+      "versions": ["10.42", "10.44"],
+      "latest_version": "10.44",
+      "targets": [
+        {"name": "pcre2", "label": "@pcre2", "target_type": "cc_library"}
+      ]
+    },
+    "libpng": {
+      "name": "libpng",
+      "versions": ["1.6.40", "1.6.43", "1.6.48"],
+      "latest_version": "1.6.48",
+      "dependencies": {"zlib": ""},
+      "targets": [
+        {"name": "png", "label": "@libpng", "target_type": "cc_library"}
+      ]
+    },
+    "libjpeg_turbo": {
+      "name": "libjpeg_turbo",
+      "versions": ["3.0.3", "3.1.0"],
+      "latest_version": "3.1.0",
+      "targets": [
+        {"name": "jpeg", "label": "@libjpeg_turbo//:jpeg", "target_type": "cc_library"}
+      ]
+    },
+    "expat": {
+      "name": "expat",
+      "versions": ["2.5.0", "2.6.4"],
+      "latest_version": "2.6.4",
+      "targets": [
+        {"name": "expat", "label": "@expat", "target_type": "cc_library"}
+      ]
+    },
+    "sqlite3": {
+      "name": "sqlite3",
+      "versions": ["3.45.3", "3.48.0"],
+      "latest_version": "3.48.0",
+      "targets": [
+        {"name": "sqlite3", "label": "@sqlite3", "target_type": "cc_library"}
+      ]
+    },
+    "eigen": {
+      "name": "eigen",
+      "versions": ["3.4.0"],
+      "latest_version": "3.4.0",
+      "targets": [
+        {"name": "eigen", "label": "@eigen", "target_type": "cc_library"}
+      ]
+    },
+    "opentelemetry-cpp": {
+      "name": "opentelemetry-cpp",
+      "versions": ["1.13.0", "1.14.2", "1.18.0"],
+      "latest_version": "1.18.0",
+      "targets": [
+        {"name": "api", "label": "@opentelemetry-cpp//api", "target_type": "cc_library"},
+        {"name": "sdk", "label": "@opentelemetry-cpp//sdk", "target_type": "cc_library"}
+      ]
+    },
+    "libevent": {
+      "name": "libevent",
+      "versions": ["2.1.12"],
+      "latest_version": "2.1.12",
+      "targets": [
+        {"name": "event", "label": "@libevent//:event", "target_type": "cc_library"},
+        {"name": "event_core", "label": "@libevent//:event_core", "target_type": "cc_library"},
+        {"name": "event_extra", "label": "@libevent//:event_extra", "target_type": "cc_library"},
+        {"name": "event_pthreads", "label": "@libevent//:event_pthreads", "target_type": "cc_library"}
+      ]
+    },
+    "c-ares": {
+      "name": "c-ares",
+      "versions": ["1.19.1", "1.34.4"],
+      "latest_version": "1.34.4",
+      "targets": [
+        {"name": "cares", "label": "@c-ares", "target_type": "cc_library"}
+      ]
+    }
+  },
+  "cmake_mappings": {
+    "protobuf": {"module": "protobuf", "target": "@protobuf//:protobuf", "confidence": "exact"},
+    "Protobuf": {"module": "protobuf", "target": "@protobuf//:protobuf", "confidence": "exact"},
+    "google-protobuf": {"module": "protobuf", "target": "@protobuf//:protobuf", "confidence": "exact"},
+    "google_protobuf": {"module": "protobuf", "target": "@protobuf//:protobuf", "confidence": "exact"},
+
+    "fmt": {"module": "fmt", "confidence": "exact"},
+    "FMT": {"module": "fmt", "confidence": "exact"},
+
+    "flatbuffers": {"module": "flatbuffers", "confidence": "exact"},
+    "Flatbuffers": {"module": "flatbuffers", "confidence": "exact"},
+    "FlatBuffers": {"module": "flatbuffers", "confidence": "exact"},
+    "google-flatbuffers": {"module": "flatbuffers", "confidence": "exact"},
+
+    "TBB": {"module": "onetbb", "target": "@onetbb//:tbb", "confidence": "exact"},
+    "tbb": {"module": "onetbb", "target": "@onetbb//:tbb", "confidence": "exact"},
+    "intel-tbb": {"module": "onetbb", "target": "@onetbb//:tbb", "confidence": "exact"},
+    "onetbb": {"module": "onetbb", "target": "@onetbb//:tbb", "confidence": "exact"},
+
+    "OpenSSL": {"module": "boringssl", "target": "@boringssl//:ssl", "confidence": "likely",
+      "components": {"SSL": "@boringssl//:ssl", "Crypto": "@boringssl//:crypto"}},
+    "openssl": {"module": "boringssl", "target": "@boringssl//:ssl", "confidence": "likely",
+      "components": {"ssl": "@boringssl//:ssl", "crypto": "@boringssl//:crypto"}},
+
+    "CURL": {"module": "curl", "confidence": "exact"},
+    "curl": {"module": "curl", "confidence": "exact"},
+    "libcurl": {"module": "curl", "confidence": "exact"},
+
+    "ZLIB": {"module": "zlib", "confidence": "exact"},
+    "zlib": {"module": "zlib", "confidence": "exact"},
+
+    "libssh": {"module": "libssh2", "confidence": "likely"},
+    "libssh2": {"module": "libssh2", "confidence": "exact"},
+    "LibSSH2": {"module": "libssh2", "confidence": "exact"},
+
+    "absl": {"module": "abseil-cpp", "confidence": "exact"},
+    "abseil": {"module": "abseil-cpp", "confidence": "exact"},
+    "abseil-cpp": {"module": "abseil-cpp", "confidence": "exact"},
+
+    "GTest": {"module": "googletest", "target": "@googletest//:gtest", "confidence": "exact",
+      "components": {"gtest": "@googletest//:gtest", "gtest_main": "@googletest//:gtest_main", "gmock": "@googletest//:gmock", "gmock_main": "@googletest//:gmock_main"}},
+    "googletest": {"module": "googletest", "target": "@googletest//:gtest", "confidence": "exact"},
+    "gtest": {"module": "googletest", "target": "@googletest//:gtest", "confidence": "exact"},
+    "gmock": {"module": "googletest", "target": "@googletest//:gmock", "confidence": "exact"},
+
+    "benchmark": {"module": "google_benchmark", "target": "@google_benchmark//:benchmark", "confidence": "exact"},
+    "google-benchmark": {"module": "google_benchmark", "target": "@google_benchmark//:benchmark", "confidence": "exact"},
+
+    "nlohmann_json": {"module": "nlohmann_json", "target": "@nlohmann_json//:json", "confidence": "exact"},
+    "nlohmann-json": {"module": "nlohmann_json", "target": "@nlohmann_json//:json", "confidence": "exact"},
+    "JSON": {"module": "nlohmann_json", "target": "@nlohmann_json//:json", "confidence": "likely"},
+
+    "spdlog": {"module": "spdlog", "confidence": "exact"},
+
+    "gRPC": {"module": "grpc", "target": "@grpc//:grpc++", "confidence": "exact",
+      "components": {"grpc": "@grpc//:grpc", "grpc++": "@grpc//:grpc++"}},
+    "grpc": {"module": "grpc", "target": "@grpc//:grpc++", "confidence": "exact"},
+
+    "re2": {"module": "re2", "target": "@re2//:re2", "confidence": "exact"},
+    "RE2": {"module": "re2", "target": "@re2//:re2", "confidence": "exact"},
+
+    "yaml-cpp": {"module": "yaml-cpp", "confidence": "exact"},
+    "YamlCpp": {"module": "yaml-cpp", "confidence": "exact"},
+
+    "Boost": {"module": "boost", "confidence": "exact",
+      "components": {
+        "system": "@boost.system",
+        "filesystem": "@boost.filesystem",
+        "asio": "@boost.asio",
+        "log": "@boost.log",
+        "thread": "@boost.thread",
+        "regex": "@boost.regex",
+        "program_options": "@boost.program_options",
+        "date_time": "@boost.date_time",
+        "iostreams": "@boost.iostreams",
+        "serialization": "@boost.serialization",
+        "uuid": "@boost.uuid",
+        "container": "@boost.container",
+        "context": "@boost.context",
+        "coroutine": "@boost.coroutine",
+        "json": "@boost.json",
+        "url": "@boost.url",
+        "beast": "@boost.beast"
+      }},
+    "boost": {"module": "boost", "confidence": "exact",
+      "components": {
+        "system": "@boost.system",
+        "filesystem": "@boost.filesystem",
+        "asio": "@boost.asio",
+        "log": "@boost.log",
+        "thread": "@boost.thread",
+        "regex": "@boost.regex",
+        "program_options": "@boost.program_options",
+        "date_time": "@boost.date_time",
+        "iostreams": "@boost.iostreams",
+        "serialization": "@boost.serialization",
+        "uuid": "@boost.uuid",
+        "container": "@boost.container",
+        "context": "@boost.context",
+        "coroutine": "@boost.coroutine",
+        "json": "@boost.json",
+        "url": "@boost.url",
+        "beast": "@boost.beast"
+      }},
+
+    "lz4": {"module": "lz4", "confidence": "exact"},
+    "LZ4": {"module": "lz4", "confidence": "exact"},
+
+    "zstd": {"module": "zstd", "confidence": "exact"},
+    "Zstd": {"module": "zstd", "confidence": "exact"},
+    "ZSTD": {"module": "zstd", "confidence": "exact"},
+
+    "BZip2": {"module": "bzip2", "confidence": "exact"},
+    "bzip2": {"module": "bzip2", "confidence": "exact"},
+
+    "LibLZMA": {"module": "xz", "target": "@xz//:lzma", "confidence": "exact"},
+    "liblzma": {"module": "xz", "target": "@xz//:lzma", "confidence": "exact"},
+    "xz": {"module": "xz", "target": "@xz//:lzma", "confidence": "exact"},
+
+    "Snappy": {"module": "snappy", "confidence": "exact"},
+    "snappy": {"module": "snappy", "confidence": "exact"},
+
+    "PCRE2": {"module": "pcre2", "confidence": "exact"},
+    "pcre2": {"module": "pcre2", "confidence": "exact"},
+
+    "PNG": {"module": "libpng", "confidence": "exact"},
+    "libpng": {"module": "libpng", "confidence": "exact"},
+
+    "JPEG": {"module": "libjpeg_turbo", "target": "@libjpeg_turbo//:jpeg", "confidence": "likely"},
+    "libjpeg": {"module": "libjpeg_turbo", "target": "@libjpeg_turbo//:jpeg", "confidence": "likely"},
+    "libjpeg-turbo": {"module": "libjpeg_turbo", "target": "@libjpeg_turbo//:jpeg", "confidence": "exact"},
+
+    "EXPAT": {"module": "expat", "confidence": "exact"},
+    "expat": {"module": "expat", "confidence": "exact"},
+
+    "SQLite3": {"module": "sqlite3", "confidence": "exact"},
+    "sqlite3": {"module": "sqlite3", "confidence": "exact"},
+
+    "Eigen3": {"module": "eigen", "confidence": "exact"},
+    "eigen3": {"module": "eigen", "confidence": "exact"},
+    "Eigen": {"module": "eigen", "confidence": "exact"},
+
+    "opentelemetry-cpp": {"module": "opentelemetry-cpp", "confidence": "exact"},
+    "OpenTelemetry": {"module": "opentelemetry-cpp", "confidence": "likely"},
+
+    "Libevent": {"module": "libevent", "target": "@libevent//:event", "confidence": "exact"},
+    "libevent": {"module": "libevent", "target": "@libevent//:event", "confidence": "exact"},
+
+    "c-ares": {"module": "c-ares", "confidence": "exact"},
+    "CARES": {"module": "c-ares", "confidence": "exact"}
+  },
+  "gradle_mappings": {
+    "com.google.protobuf:protobuf-java": {"module": "protobuf", "confidence": "exact"},
+    "com.google.protobuf:protobuf-kotlin": {"module": "protobuf", "confidence": "exact"},
+    "io.grpc:grpc-core": {"module": "grpc", "confidence": "exact"},
+    "io.grpc:grpc-stub": {"module": "grpc", "confidence": "exact"},
+    "io.grpc:grpc-protobuf": {"module": "grpc", "confidence": "exact"},
+    "com.google.guava:guava": {"module": "abseil-cpp", "confidence": "guess"},
+    "junit:junit": {"module": "googletest", "confidence": "guess"},
+    "org.junit.jupiter:junit-jupiter": {"module": "googletest", "confidence": "guess"}
+  }
+}

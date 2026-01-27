@@ -26,6 +26,7 @@ crate.from_cargo(
     cargo_lockfile = "//:Cargo.lock",
     manifests = [
         "//:Cargo.toml",
+        "//crates/rebaze-bcr:Cargo.toml",
         "//crates/rebaze-cli:Cargo.toml",
         "//crates/rebaze-core:Cargo.toml",
         "//crates/rebaze-cmake-file-api:Cargo.toml",

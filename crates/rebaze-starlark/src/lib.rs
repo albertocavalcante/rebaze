@@ -55,7 +55,7 @@ pub struct Module {
 }
 
 /// bazel_dep declaration
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename = "bazel_dep")]
 pub struct BazelDep {
     pub name: String,

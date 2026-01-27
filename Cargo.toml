@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/rebaze-bcr",
     "crates/rebaze-cli",
     "crates/rebaze-core",
     "crates/rebaze-cmake",
@@ -49,6 +50,7 @@ ariadne = "0.4"
 cmake-file-api = "0.1.2"
 
 # Internal crates
+rebaze-bcr = { path = "crates/rebaze-bcr" }
 rebaze-cmake = { path = "crates/rebaze-cmake" }
 rebaze-cmake-file-api = { path = "crates/rebaze-cmake-file-api" }
 rebaze-core = { path = "crates/rebaze-core" }

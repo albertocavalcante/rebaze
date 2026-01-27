@@ -1,0 +1,22 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "rebaze-bcr",
+    srcs = glob(["src/**/*.rs"]),
+    compile_data = ["data/bcr-catalog.json"],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@crates//:anyhow",
+        "@crates//:serde",
+        "@crates//:serde_json",
+        "@crates//:thiserror",
+        "@crates//:tracing",
+    ],
+)
+
+rust_test(
+    name = "rebaze-bcr_test",
+    crate = ":rebaze-bcr",
+    data = ["data/bcr-catalog.json"],
+)

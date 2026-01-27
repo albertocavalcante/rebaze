@@ -902,20 +902,51 @@ pub struct LoadStatement {
 #[serde(default)]
 pub struct StrategyConfig {
     /// Default strategy for resolving dependencies.
+    /// Options: "bcr", "system", "source", "conan", "vcpkg", "prebuilt", "custom"
     pub default: String,
+
+    /// Fallback strategy when BCR resolution fails.
+    /// Only used when default is "bcr".
+    #[serde(default)]
+    pub bcr_fallback: Option<String>,
 
     /// Per-package strategy overrides.
     #[serde(default)]
     pub overrides: BTreeMap<String, String>,
+
+    /// BCR-specific configuration.
+    #[serde(default)]
+    pub bcr: BcrConfig,
 }
 
 impl Default for StrategyConfig {
     fn default() -> Self {
         Self {
             default: "system".to_string(),
+            bcr_fallback: None,
             overrides: BTreeMap::new(),
+            bcr: BcrConfig::default(),
         }
     }
+}
+
+/// Configuration specific to BCR (Bazel Central Registry) strategy.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BcrConfig {
+    /// Override BCR module names for specific packages.
+    /// E.g., `{"openssl": "boringssl"}` to use boringssl instead of openssl.
+    #[serde(default)]
+    pub module_overrides: BTreeMap<String, String>,
+
+    /// Pin specific BCR module versions.
+    /// E.g., `{"protobuf": "27.5"}` to use a specific version.
+    #[serde(default)]
+    pub version_pins: BTreeMap<String, String>,
+
+    /// Packages to skip BCR resolution for (force fallback).
+    #[serde(default)]
+    pub skip_packages: Vec<String>,
 }
 
 #[cfg(test)]

@@ -34,6 +34,9 @@ pub fn deduplicate_modules(modules: &[PkgConfigModule]) -> Vec<PkgConfigModule> 
 /// Dependency resolution strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DepsStrategy {
+    /// Use BCR modules via bazel_dep (hermetic, recommended)
+    /// Dependencies are fetched from Bazel Central Registry.
+    Bcr,
     /// Use system libraries via new_local_repository (non-hermetic, but works)
     /// This is the default since it works out of the box when deps are installed.
     #[default]
@@ -185,6 +188,7 @@ pub fn generate_config_bzl(
     config: &ThirdPartyConfig,
 ) -> String {
     let default_strategy = match config.default_strategy {
+        DepsStrategy::Bcr => "bcr",
         DepsStrategy::System => "system",
         DepsStrategy::Source => "source",
         DepsStrategy::Conan => "conan",
@@ -244,7 +248,14 @@ DEPS_CONFIG = {{"#
     config = DEPS_CONFIG.get(name, {})
     strategy = config.get("strategy", DEFAULT_STRATEGY)
 
-    if strategy == "system":
+    if strategy == "bcr":
+        # Use BCR module via bazel_dep (requires entry in MODULE.bazel)
+        bcr_module = config.get("bcr_module", name)
+        bcr_target = config.get("bcr_target", "")
+        if bcr_target:
+            return bcr_target
+        return "@{}".format(bcr_module)
+    elif strategy == "system":
         # Use new_local_repository wrapper from system_deps module extension
         return "@system_{}//:{}".format(name, name)
     elif strategy == "source":

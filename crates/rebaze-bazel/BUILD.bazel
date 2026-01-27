@@ -6,6 +6,7 @@ rust_library(
     edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
+        "//crates/rebaze-bcr",
         "//crates/rebaze-cmake",
         "//crates/rebaze-gradle",
         "//crates/rebaze-starlark",

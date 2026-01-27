@@ -1,22 +1,18 @@
 [package]
-name = "rebaze-bazel"
+name = "rebaze-bcr"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Bazel file generator for rebaze"
+description = "Bazel Central Registry integration for rebaze"
 
 [lints]
 workspace = true
 
 [dependencies]
-rebaze-bcr.workspace = true
-rebaze-cmake.workspace = true
-rebaze-gradle.workspace = true
-rebaze-starlark.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
-toml.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
