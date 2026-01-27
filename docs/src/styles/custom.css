@@ -1,94 +1,285 @@
-/* Mintlify-inspired custom styles for Starlight */
+/* rebaze docs - Technical Design System */
+/* Clean, precise, developer-focused */
 
-/* Color scheme - Modern blue/purple gradient inspired by Mintlify */
+/* ===========================================
+   DESIGN TOKENS
+   =========================================== */
 :root {
-	--sl-color-accent-low: #1e1b4b;
-	--sl-color-accent: #6366f1;
-	--sl-color-accent-high: #a5b4fc;
+	/*
+	 * A technical palette:
+	 * - Teal: precision, technical excellence
+	 * - Rose: action, transformation (not rust-amber)
+	 * - Slate: professional neutrals
+	 */
+
+	/* Teal - Primary accent */
+	--teal-50: #f0fdfa;
+	--teal-100: #ccfbf1;
+	--teal-200: #99f6e4;
+	--teal-400: #2dd4bf;
+	--teal-500: #14b8a6;
+	--teal-600: #0d9488;
+	--teal-700: #0f766e;
+	--teal-800: #115e59;
+	--teal-900: #134e4a;
+
+	/* Rose - CTA / Action color */
+	--rose-400: #fb7185;
+	--rose-500: #f43f5e;
+	--rose-600: #e11d48;
+
+	/* Starlight mappings */
+	--sl-color-accent-low: var(--teal-50);
+	--sl-color-accent: var(--teal-600);
+	--sl-color-accent-high: var(--teal-800);
+
 	--sl-color-white: #ffffff;
 	--sl-color-gray-1: #f8fafc;
 	--sl-color-gray-2: #f1f5f9;
 	--sl-color-gray-3: #e2e8f0;
 	--sl-color-gray-4: #94a3b8;
-	--sl-color-gray-5: #64748b;
-	--sl-color-gray-6: #334155;
+	--sl-color-gray-5: #475569;
+	--sl-color-gray-6: #1e293b;
 	--sl-color-black: #0f172a;
 
-	/* Typography */
-	--sl-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-	--sl-font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+	--sl-color-text: var(--sl-color-gray-6);
+	--sl-color-bg: #ffffff;
+	--sl-color-bg-nav: #ffffff;
+	--sl-color-bg-sidebar: var(--sl-color-gray-1);
 
-	/* Borders and shadows */
-	--sl-border-radius: 0.75rem;
+	/* Typography */
+	--sl-font: 'Inter', system-ui, -apple-system, sans-serif;
+	--sl-font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+	--sl-border-radius: 8px;
+
+	/* Shadows */
+	--shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+	--shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.07), 0 2px 4px -1px rgba(15, 23, 42, 0.04);
+	--shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -2px rgba(15, 23, 42, 0.04);
+}
+
+:root[data-theme='light'] {
+	--sl-color-bg: #ffffff;
+	--sl-color-bg-nav: #ffffff;
+	--sl-color-bg-sidebar: var(--sl-color-gray-1);
 }
 
 :root[data-theme='dark'] {
-	--sl-color-accent-low: #312e81;
-	--sl-color-accent: #818cf8;
-	--sl-color-accent-high: #c7d2fe;
-	--sl-color-white: #0f172a;
-	--sl-color-gray-1: #1e293b;
-	--sl-color-gray-2: #334155;
-	--sl-color-gray-3: #475569;
-	--sl-color-gray-4: #64748b;
-	--sl-color-gray-5: #94a3b8;
-	--sl-color-gray-6: #e2e8f0;
-	--sl-color-black: #f8fafc;
+	--sl-color-accent-low: var(--teal-900);
+	--sl-color-accent: var(--teal-400);
+	--sl-color-accent-high: var(--teal-200);
+
+	--sl-color-white: #0a0f1a;
+	--sl-color-gray-1: #111827;
+	--sl-color-gray-2: #1f2937;
+	--sl-color-gray-3: #374151;
+	--sl-color-gray-4: #6b7280;
+	--sl-color-gray-5: #9ca3af;
+	--sl-color-gray-6: #e5e7eb;
+	--sl-color-black: #f3f4f6;
+
+	--sl-color-text: var(--sl-color-gray-6);
+	--sl-color-bg: #0a0f1a;
+	--sl-color-bg-nav: rgba(10, 15, 26, 0.9);
+	--sl-color-bg-sidebar: #111827;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+	--shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
 }
 
-/* Smooth scrolling */
+/* ===========================================
+   BASE
+   =========================================== */
 html {
 	scroll-behavior: smooth;
 }
 
-/* Better link styling */
-.sl-markdown-content a:not([class]) {
-	color: var(--sl-color-accent);
-	text-decoration: none;
-	border-bottom: 1px solid transparent;
-	transition: border-color 0.2s ease;
+body {
+	color: var(--sl-color-text);
+	-webkit-font-smoothing: antialiased;
 }
 
-.sl-markdown-content a:not([class]):hover {
-	border-bottom-color: var(--sl-color-accent);
+/* ===========================================
+   TYPOGRAPHY
+   =========================================== */
+h1, h2, h3, h4, h5, h6 {
+	color: var(--sl-color-gray-6) !important;
+	font-weight: 600;
+	letter-spacing: -0.025em;
 }
 
-/* Code blocks - Mintlify style */
-.sl-markdown-content pre {
-	border-radius: var(--sl-border-radius);
-	border: 1px solid var(--sl-color-gray-3);
+.sl-markdown-content h2 {
+	font-size: 1.375rem;
+	margin-top: 2.5rem;
+	margin-bottom: 1rem;
+	padding-bottom: 0.5rem;
+	border-bottom: 1px solid var(--sl-color-gray-3);
 }
 
-:root[data-theme='dark'] .sl-markdown-content pre {
-	border-color: var(--sl-color-gray-2);
+.sl-markdown-content h3 {
+	font-size: 1.125rem;
+	margin-top: 1.75rem;
+}
+
+p, li {
+	line-height: 1.7;
+	color: var(--sl-color-gray-5);
+}
+
+/* ===========================================
+   HEADER
+   =========================================== */
+header.header {
+	background: var(--sl-color-bg-nav) !important;
+	border-bottom: 1px solid var(--sl-color-gray-3);
+	backdrop-filter: blur(12px);
+}
+
+/* ===========================================
+   HERO
+   =========================================== */
+[class*="hero"] h1,
+.hero h1 {
+	font-size: 3rem !important;
+	font-weight: 700 !important;
+	letter-spacing: -0.035em;
+	color: var(--sl-color-gray-6) !important;
+	-webkit-text-fill-color: unset;
+	background: none;
+}
+
+/* Teal accent mark */
+[class*="hero"] h1::before,
+.hero h1::before {
+	content: '';
+	display: block;
+	width: 40px;
+	height: 3px;
+	background: var(--teal-500);
+	margin-bottom: 0.75rem;
+	border-radius: 2px;
+}
+
+[class*="tagline"],
+.tagline {
+	color: var(--sl-color-gray-5) !important;
+	font-size: 1.125rem !important;
+	line-height: 1.6;
+}
+
+/* ===========================================
+   BUTTONS
+   =========================================== */
+.sl-link-button {
+	font-weight: 500 !important;
+	padding: 0.5rem 1rem !important;
+	border-radius: 6px !important;
+	transition: all 0.15s ease !important;
+	font-size: 0.875rem !important;
+}
+
+/* Primary CTA - Rose for action */
+.sl-link-button.primary,
+a[class*="primary"] {
+	background: var(--rose-500) !important;
+	color: #ffffff !important;
+	border: none !important;
+	font-weight: 600 !important;
+}
+
+.sl-link-button.primary:hover,
+a[class*="primary"]:hover {
+	background: var(--rose-600) !important;
+	transform: translateY(-1px);
+	box-shadow: var(--shadow-md);
+}
+
+/* Secondary button */
+.sl-link-button:not(.primary) {
 	background: var(--sl-color-gray-1) !important;
+	color: var(--sl-color-gray-6) !important;
+	border: 1px solid var(--sl-color-gray-3) !important;
+}
+
+.sl-link-button:not(.primary):hover {
+	background: var(--sl-color-gray-2) !important;
+	border-color: var(--sl-color-gray-4) !important;
+}
+
+/* ===========================================
+   CARDS - Minimal enhancement to Starlight
+   =========================================== */
+.sl-markdown-content article {
+	border-radius: 10px;
+	border: 1px solid var(--sl-color-gray-3);
+	background: var(--sl-color-gray-1);
+	padding: 1.25rem;
+	transition: border-color 0.15s ease;
+}
+
+.sl-markdown-content article:hover {
+	border-color: var(--sl-color-accent);
+}
+
+.sl-markdown-content article p:first-child {
+	color: var(--sl-color-gray-6) !important;
+	font-weight: 600 !important;
+	font-size: 0.9rem !important;
+}
+
+.sl-markdown-content article p:last-child {
+	color: var(--sl-color-gray-5) !important;
+	font-size: 0.85rem;
+	line-height: 1.5;
+	margin: 0 !important;
+}
+
+/* ===========================================
+   CODE BLOCKS
+   =========================================== */
+.expressive-code,
+.sl-markdown-content pre {
+	border-radius: 10px !important;
+	border: 1px solid var(--sl-color-gray-3) !important;
 }
 
 /* Inline code */
 .sl-markdown-content :not(pre) > code {
-	background: var(--sl-color-gray-2);
-	padding: 0.15em 0.4em;
-	border-radius: 0.375rem;
-	font-size: 0.875em;
+	background: var(--sl-color-accent-low) !important;
+	color: var(--sl-color-accent-high) !important;
+	padding: 0.125em 0.375em !important;
+	border-radius: 4px !important;
+	font-size: 0.85em !important;
+	font-weight: 500;
 }
 
-/* Tables - cleaner style */
+/* ===========================================
+   TABLES
+   =========================================== */
 .sl-markdown-content table {
 	border-collapse: separate;
 	border-spacing: 0;
-	border-radius: var(--sl-border-radius);
+	border-radius: 10px;
 	overflow: hidden;
 	border: 1px solid var(--sl-color-gray-3);
+	font-size: 0.875rem;
 }
 
 .sl-markdown-content th {
-	background: var(--sl-color-gray-2);
+	background: var(--sl-color-gray-2) !important;
+	color: var(--sl-color-gray-6) !important;
 	font-weight: 600;
+	padding: 0.625rem 1rem;
+	text-align: left;
+	font-size: 0.75rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
 }
 
-.sl-markdown-content td,
-.sl-markdown-content th {
-	border: none;
+.sl-markdown-content td {
+	color: var(--sl-color-text) !important;
+	padding: 0.75rem 1rem;
 	border-bottom: 1px solid var(--sl-color-gray-3);
 }
 
@@ -96,181 +287,198 @@ html {
 	border-bottom: none;
 }
 
-/* Sidebar styling */
+/* ===========================================
+   CALLOUTS
+   =========================================== */
+.sl-markdown-content .starlight-aside {
+	border-radius: 10px !important;
+	border: 1px solid var(--sl-color-gray-3) !important;
+	background: var(--sl-color-gray-1) !important;
+	padding: 1rem 1.25rem !important;
+}
+
+.sl-markdown-content .starlight-aside p {
+	color: var(--sl-color-text) !important;
+}
+
+.sl-markdown-content .starlight-aside--tip {
+	border-left: 3px solid var(--teal-500) !important;
+}
+
+.sl-markdown-content .starlight-aside--note {
+	border-left: 3px solid #3b82f6 !important;
+}
+
+.sl-markdown-content .starlight-aside--caution {
+	border-left: 3px solid #eab308 !important;
+}
+
+.sl-markdown-content .starlight-aside--danger {
+	border-left: 3px solid #ef4444 !important;
+}
+
+/* ===========================================
+   SIDEBAR
+   =========================================== */
 nav.sidebar {
 	border-right: 1px solid var(--sl-color-gray-3);
 }
 
-.sidebar-content a[aria-current='page'] {
-	background: linear-gradient(135deg, var(--sl-color-accent-low), transparent);
-	border-left: 2px solid var(--sl-color-accent);
+nav.sidebar a {
+	border-radius: 4px;
+	transition: all 0.1s ease;
 }
 
-/* Card-like callouts */
-.sl-markdown-content .starlight-aside {
-	border-radius: var(--sl-border-radius);
-	border: 1px solid var(--sl-color-gray-3);
-	background: var(--sl-color-gray-1);
-}
-
-.sl-markdown-content .starlight-aside--note {
-	border-left: 4px solid var(--sl-color-accent);
-}
-
-.sl-markdown-content .starlight-aside--tip {
-	border-left: 4px solid #10b981;
-}
-
-.sl-markdown-content .starlight-aside--caution {
-	border-left: 4px solid #f59e0b;
-}
-
-.sl-markdown-content .starlight-aside--danger {
-	border-left: 4px solid #ef4444;
-}
-
-/* Header styling */
-header.header {
-	backdrop-filter: blur(12px);
-	background: rgba(255, 255, 255, 0.8);
-	border-bottom: 1px solid var(--sl-color-gray-3);
-}
-
-:root[data-theme='dark'] header.header {
-	background: rgba(15, 23, 42, 0.8);
-}
-
-/* Search button */
-site-search button {
-	border-radius: 0.5rem;
-	border: 1px solid var(--sl-color-gray-3);
-}
-
-/* Hero section enhancements */
-.hero {
-	text-align: center;
-	padding: 4rem 1rem;
-}
-
-.hero h1 {
-	font-size: 3.5rem;
-	font-weight: 800;
-	background: linear-gradient(135deg, var(--sl-color-accent), #8b5cf6);
-	-webkit-background-clip: text;
-	-webkit-text-fill-color: transparent;
-	background-clip: text;
-	margin-bottom: 1rem;
-}
-
-.hero .tagline {
-	font-size: 1.25rem;
-	color: var(--sl-color-gray-5);
-	max-width: 600px;
-	margin: 0 auto 2rem;
-}
-
-/* Button styling - Mintlify inspired */
-.hero .action-buttons {
-	display: flex;
-	gap: 1rem;
-	justify-content: center;
-	flex-wrap: wrap;
-}
-
-.hero .primary-button {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
-	padding: 0.75rem 1.5rem;
-	background: linear-gradient(135deg, var(--sl-color-accent), #8b5cf6);
-	color: white;
-	border-radius: 0.5rem;
-	font-weight: 600;
-	text-decoration: none;
-	transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.hero .primary-button:hover {
-	transform: translateY(-2px);
-	box-shadow: 0 10px 20px rgba(99, 102, 241, 0.3);
-}
-
-.hero .secondary-button {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
-	padding: 0.75rem 1.5rem;
+nav.sidebar a:hover {
 	background: var(--sl-color-gray-2);
-	color: var(--sl-color-gray-6);
-	border-radius: 0.5rem;
-	font-weight: 600;
-	text-decoration: none;
-	border: 1px solid var(--sl-color-gray-3);
-	transition: background 0.2s;
 }
 
-.hero .secondary-button:hover {
-	background: var(--sl-color-gray-3);
+nav.sidebar a[aria-current='page'] {
+	background: var(--sl-color-accent-low) !important;
+	color: var(--sl-color-accent-high) !important;
+	font-weight: 500;
 }
 
-/* Feature cards */
-.features {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-	gap: 1.5rem;
-	margin-top: 3rem;
-	padding: 0 1rem;
-}
-
-.feature-card {
-	padding: 1.5rem;
-	background: var(--sl-color-gray-1);
-	border: 1px solid var(--sl-color-gray-3);
-	border-radius: var(--sl-border-radius);
-	transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.feature-card:hover {
-	transform: translateY(-4px);
-	box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
-}
-
-.feature-card h3 {
-	font-size: 1.125rem;
-	font-weight: 600;
-	margin-bottom: 0.5rem;
-}
-
-.feature-card p {
-	color: var(--sl-color-gray-5);
-	font-size: 0.9375rem;
-}
-
-/* Page content max width */
-.main-frame {
-	max-width: 1400px;
-}
-
-/* Headings */
-.sl-markdown-content h1,
-.sl-markdown-content h2,
-.sl-markdown-content h3 {
-	font-weight: 700;
-}
-
-.sl-markdown-content h2 {
-	margin-top: 2.5rem;
-	padding-bottom: 0.5rem;
+/* ===========================================
+   TABS
+   =========================================== */
+[role="tablist"] {
 	border-bottom: 1px solid var(--sl-color-gray-3);
 }
 
-/* Mobile improvements */
+[role="tab"] {
+	color: var(--sl-color-gray-4) !important;
+	font-weight: 500 !important;
+	font-size: 0.875rem !important;
+	padding: 0.5rem 0.875rem !important;
+	border-bottom: 2px solid transparent !important;
+	margin-bottom: -1px;
+	transition: all 0.1s ease !important;
+}
+
+[role="tab"]:hover {
+	color: var(--sl-color-gray-6) !important;
+}
+
+[role="tab"][aria-selected="true"] {
+	color: var(--sl-color-accent) !important;
+	border-bottom-color: var(--sl-color-accent) !important;
+}
+
+/* ===========================================
+   LINKS
+   =========================================== */
+.sl-markdown-content a:not([class]) {
+	color: var(--sl-color-accent);
+	text-decoration: none;
+	font-weight: 500;
+}
+
+.sl-markdown-content a:not([class]):hover {
+	text-decoration: underline;
+}
+
+/* ===========================================
+   BUILD SYSTEMS COMPONENT
+   =========================================== */
+.build-systems {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 1rem;
+	margin: 1.5rem 0;
+}
+
+@media (max-width: 640px) {
+	.build-systems {
+		grid-template-columns: 1fr;
+	}
+}
+
+.build-system {
+	background: var(--sl-color-gray-1);
+	border: 1px solid var(--sl-color-gray-3);
+	border-radius: 10px;
+	padding: 1rem 1.25rem;
+	transition: border-color 0.15s ease;
+}
+
+.build-system:hover {
+	border-color: var(--sl-color-accent);
+}
+
+.build-system-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	margin-bottom: 0.375rem;
+}
+
+.build-system-name {
+	font-weight: 600;
+	font-size: 0.9rem;
+	color: var(--sl-color-gray-6);
+}
+
+.build-system-notes {
+	color: var(--sl-color-gray-5) !important;
+	font-size: 0.8rem;
+	line-height: 1.4;
+	margin: 0 !important;
+}
+
+/* Status badges */
+.status-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 0.1875rem 0.5rem;
+	font-size: 0.6875rem;
+	font-weight: 500;
+	border-radius: 9999px;
+	letter-spacing: 0.01em;
+}
+
+.status-supported {
+	background: var(--teal-50);
+	color: var(--teal-700);
+}
+
+:root[data-theme='dark'] .status-supported {
+	background: rgba(20, 184, 166, 0.15);
+	color: var(--teal-400);
+}
+
+.status-planned {
+	background: var(--sl-color-gray-2);
+	color: var(--sl-color-gray-5);
+}
+
+:root[data-theme='dark'] .status-planned {
+	background: var(--sl-color-gray-2);
+	color: var(--sl-color-gray-5);
+}
+
+/* ===========================================
+   FOCUS
+   =========================================== */
+a:focus-visible,
+button:focus-visible {
+	outline: 2px solid var(--sl-color-accent);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* ===========================================
+   MOBILE
+   =========================================== */
 @media (max-width: 768px) {
+	[class*="hero"] h1,
 	.hero h1 {
-		font-size: 2.5rem;
+		font-size: 2rem !important;
 	}
 
-	.features {
-		grid-template-columns: 1fr;
+	[class*="tagline"],
+	.tagline {
+		font-size: 1rem !important;
 	}
 }

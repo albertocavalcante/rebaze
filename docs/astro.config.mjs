@@ -10,6 +10,15 @@ export default defineConfig({
 		starlight({
 			title: 'rebaze',
 			description: 'CLI tool for migrating build systems to Bazel',
+			expressiveCode: {
+				themes: ['catppuccin-mocha', 'catppuccin-latte'],
+				styleOverrides: {
+					borderRadius: '0.75rem',
+					codeFontFamily: "'JetBrains Mono', 'SF Mono', 'Consolas', monospace",
+					codeFontSize: '0.875rem',
+					codeLineHeight: '1.6',
+				},
+			},
 			logo: {
 				light: './src/assets/logo-light.svg',
 				dark: './src/assets/logo-dark.svg',
