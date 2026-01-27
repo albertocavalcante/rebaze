@@ -1,0 +1,313 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: rebaze
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux GNU
+          - os: ubuntu-24.04
+            name: linux-amd64
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - os: ubuntu-24.04
+            name: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            cross: true
+
+          # Linux MUSL (static, portable)
+          - os: ubuntu-24.04
+            name: linux-amd64-musl
+            target: x86_64-unknown-linux-musl
+            cross: false
+            musl: true
+
+          # macOS
+          - os: macos-15
+            name: darwin-arm64
+            target: aarch64-apple-darwin
+            cross: false
+          - os: macos-15
+            name: darwin-amd64
+            target: x86_64-apple-darwin
+            cross: true
+
+          # Windows
+          - os: windows-2022
+            name: windows-amd64
+            target: x86_64-pc-windows-msvc
+            cross: false
+            ext: .exe
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.cross && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install musl tools
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Cache Cargo
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} -p rebaze-cli
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Prepare artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} dist/
+          cd dist
+          tar -czvf ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz ${{ env.BINARY_NAME }}
+          shasum -a 256 ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz > ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz.sha256
+          rm ${{ env.BINARY_NAME }}
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe" -Destination "dist/"
+          Set-Location dist
+          Compress-Archive -Path "${{ env.BINARY_NAME }}.exe" -DestinationPath "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip").Hash.ToLower()
+          "$hash  ${{ env.BINARY_NAME }}-${{ matrix.name }}.zip" | Out-File -Encoding ASCII "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip.sha256"
+          Remove-Item "${{ env.BINARY_NAME }}.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: binary-${{ matrix.name }}
+          path: |
+            dist/${{ env.BINARY_NAME }}-${{ matrix.name }}.*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    name: Create Release
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    if: always() && needs.build.result != 'cancelled'
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release-assets/ \;
+          echo "=== Release assets ==="
+          ls -la release-assets/
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          IS_PRERELEASE=${{ contains(steps.tag.outputs.tag, '-') }}
+
+          cat > release-notes.md << 'EOF'
+          ## rebaze ${{ steps.tag.outputs.tag }}
+
+          CLI tool to migrate projects from other build systems (Gradle, Maven, CMake) to Bazel.
+
+          ### Installation
+
+          **Homebrew (macOS/Linux):**
+          ```bash
+          brew install albertocavalcante/tap/rebaze
+          ```
+
+          **Manual download:**
+          Download the appropriate archive for your platform from the assets below.
+
+          ### Checksums
+
+          EOF
+
+          echo '```' >> release-notes.md
+          cat release-assets/*.sha256 >> release-notes.md
+          echo '```' >> release-notes.md
+
+          echo "notes-file=release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          body_path: release-notes.md
+          generate_release_notes: true
+          append_body: true
+          files: |
+            release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Eukia App Token
+        id: eukia
+        uses: actions/create-github-app-token@df432ceedc7162793a195dd1713ff69aefc7379e # v2.0.6
+        continue-on-error: true
+        with:
+          app-id: ${{ vars.EUKIA_APP_ID }}
+          private-key: ${{ secrets.EUKIA_APP_PRIVATE_KEY }}
+          owner: albertocavalcante
+          repositories: homebrew-tap
+
+      - name: Update Homebrew tap
+        if: steps.eukia.outcome == 'success' && !contains(steps.tag.outputs.tag, '-')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.eukia.outputs.token }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+
+          # Extract SHA256 hashes
+          SHA256_DARWIN_ARM64=$(awk '{print $1}' release-assets/rebaze-darwin-arm64.tar.gz.sha256)
+          SHA256_DARWIN_AMD64=$(awk '{print $1}' release-assets/rebaze-darwin-amd64.tar.gz.sha256)
+          SHA256_LINUX_ARM64=$(awk '{print $1}' release-assets/rebaze-linux-aarch64.tar.gz.sha256)
+          SHA256_LINUX_AMD64=$(awk '{print $1}' release-assets/rebaze-linux-amd64.tar.gz.sha256)
+
+          # Generate formula
+          cat > rebaze.rb << EOF
+          class Rebaze < Formula
+            desc "CLI tool to migrate projects to Bazel"
+            homepage "https://github.com/albertocavalcante/rebaze"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/albertocavalcante/rebaze/releases/download/${TAG}/rebaze-darwin-arm64.tar.gz"
+                sha256 "${SHA256_DARWIN_ARM64}"
+              else
+                url "https://github.com/albertocavalcante/rebaze/releases/download/${TAG}/rebaze-darwin-amd64.tar.gz"
+                sha256 "${SHA256_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/albertocavalcante/rebaze/releases/download/${TAG}/rebaze-linux-aarch64.tar.gz"
+                sha256 "${SHA256_LINUX_ARM64}"
+              else
+                url "https://github.com/albertocavalcante/rebaze/releases/download/${TAG}/rebaze-linux-amd64.tar.gz"
+                sha256 "${SHA256_LINUX_AMD64}"
+              end
+            end
+
+            conflicts_with "rebaze-nightly", because: "both install rebaze binary"
+
+            def install
+              bin.install "rebaze"
+            end
+
+            test do
+              assert_match "rebaze", shell_output("#{bin}/rebaze --version")
+            end
+          end
+          EOF
+
+          # Get current file SHA
+          CURRENT_SHA=$(gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze.rb --jq '.sha' 2>/dev/null || echo "")
+
+          # Update formula
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze.rb \
+              --method PUT \
+              -f message="Update rebaze to ${VERSION}" \
+              -f content="$(base64 -w0 rebaze.rb)" \
+              -f sha="$CURRENT_SHA" \
+              -f "committer[name]=Eukia[bot]" \
+              -f "committer[email]=eukia[bot]@users.noreply.github.com"
+          else
+            gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze.rb \
+              --method PUT \
+              -f message="Add rebaze formula ${VERSION}" \
+              -f content="$(base64 -w0 rebaze.rb)" \
+              -f "committer[name]=Eukia[bot]" \
+              -f "committer[email]=eukia[bot]@users.noreply.github.com"
+          fi
+          echo "Updated homebrew-tap formula"

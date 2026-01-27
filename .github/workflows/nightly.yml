@@ -1,0 +1,333 @@
+name: Nightly
+
+on:
+  schedule:
+    # Run at 00:00 UTC every day
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force build even if no changes"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: rebaze
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-24.04
+    name: Check for Changes
+    timeout-minutes: 5
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      short_sha: ${{ steps.check.outputs.short_sha }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for changes
+        id: check
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ inputs.force }}" == "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Force build requested"
+            exit 0
+          fi
+
+          # Check if there's a nightly tag
+          if git rev-parse nightly >/dev/null 2>&1; then
+            NIGHTLY_SHA=$(git rev-parse nightly)
+            HEAD_SHA=$(git rev-parse HEAD)
+
+            if [ "$NIGHTLY_SHA" == "$HEAD_SHA" ]; then
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              echo "No changes since last nightly"
+            else
+              echo "should_build=true" >> "$GITHUB_OUTPUT"
+              echo "Changes detected since last nightly"
+            fi
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "No previous nightly tag found"
+          fi
+
+  build:
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux GNU
+          - os: ubuntu-24.04
+            name: linux-amd64
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - os: ubuntu-24.04
+            name: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            cross: true
+
+          # Linux MUSL (static, portable)
+          - os: ubuntu-24.04
+            name: linux-amd64-musl
+            target: x86_64-unknown-linux-musl
+            cross: false
+            musl: true
+
+          # macOS
+          - os: macos-15
+            name: darwin-arm64
+            target: aarch64-apple-darwin
+            cross: false
+          - os: macos-15
+            name: darwin-amd64
+            target: x86_64-apple-darwin
+            cross: true
+
+          # Windows
+          - os: windows-2022
+            name: windows-amd64
+            target: x86_64-pc-windows-msvc
+            cross: false
+            ext: .exe
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.cross && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install musl tools
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Cache Cargo
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-nightly-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-nightly-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-release-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} -p rebaze-cli
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Prepare artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} dist/
+          cd dist
+          tar -czvf ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz ${{ env.BINARY_NAME }}
+          shasum -a 256 ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz > ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz.sha256
+          rm ${{ env.BINARY_NAME }}
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe" -Destination "dist/"
+          Set-Location dist
+          Compress-Archive -Path "${{ env.BINARY_NAME }}.exe" -DestinationPath "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip").Hash.ToLower()
+          "$hash  ${{ env.BINARY_NAME }}-${{ matrix.name }}.zip" | Out-File -Encoding ASCII "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip.sha256"
+          Remove-Item "${{ env.BINARY_NAME }}.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: binary-${{ matrix.name }}
+          path: |
+            dist/${{ env.BINARY_NAME }}-${{ matrix.name }}.*
+          if-no-files-found: error
+          retention-days: 3
+
+  release:
+    needs: [check-changes, build]
+    runs-on: ubuntu-24.04
+    name: Create Nightly Release
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    if: always() && needs.check-changes.outputs.should_build == 'true' && needs.build.result != 'cancelled'
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release-assets/ \; || true
+          echo "=== Release assets ==="
+          ls -la release-assets/ || echo "No assets found"
+
+      - name: Check if we have any assets
+        id: assets
+        run: |
+          if [ -n "$(ls -A release-assets 2>/dev/null)" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No assets to release"
+          fi
+
+      - name: Generate release notes
+        if: steps.assets.outputs.exists == 'true'
+        run: |
+          SHORT_SHA="${{ needs.check-changes.outputs.short_sha }}"
+          DATE=$(date +%Y-%m-%d)
+
+          cat > release-notes.md << EOF
+          ## Nightly Build
+
+          **Commit:** \`${SHORT_SHA}\`
+          **Date:** ${DATE}
+
+          This is an automated nightly build from the \`main\` branch.
+          These builds may be unstable and are intended for testing purposes.
+
+          ### Installation
+
+          **Homebrew (macOS/Linux):**
+          \`\`\`bash
+          brew install albertocavalcante/tap/rebaze-nightly
+          \`\`\`
+
+          ### Checksums
+
+          \`\`\`
+          EOF
+
+          cat release-assets/*.sha256 >> release-notes.md
+          echo '```' >> release-notes.md
+
+      - name: Delete existing nightly release
+        if: steps.assets.outputs.exists == 'true'
+        run: |
+          gh release delete nightly --yes || true
+          git push origin :refs/tags/nightly || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Nightly Release
+        if: steps.assets.outputs.exists == 'true'
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          draft: false
+          prerelease: true
+          body_path: release-notes.md
+          files: |
+            release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Eukia App Token
+        if: steps.assets.outputs.exists == 'true'
+        id: eukia
+        uses: actions/create-github-app-token@df432ceedc7162793a195dd1713ff69aefc7379e # v2.0.6
+        continue-on-error: true
+        with:
+          app-id: ${{ vars.EUKIA_APP_ID }}
+          private-key: ${{ secrets.EUKIA_APP_PRIVATE_KEY }}
+          owner: albertocavalcante
+          repositories: homebrew-tap
+
+      - name: Update Homebrew tap
+        if: steps.assets.outputs.exists == 'true' && steps.eukia.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.eukia.outputs.token }}
+        run: |
+          SHORT_SHA="${{ needs.check-changes.outputs.short_sha }}"
+
+          # Extract SHA256 hashes
+          SHA256_DARWIN_ARM64=$(awk '{print $1}' release-assets/rebaze-darwin-arm64.tar.gz.sha256)
+          SHA256_DARWIN_AMD64=$(awk '{print $1}' release-assets/rebaze-darwin-amd64.tar.gz.sha256)
+          SHA256_LINUX_ARM64=$(awk '{print $1}' release-assets/rebaze-linux-aarch64.tar.gz.sha256)
+          SHA256_LINUX_AMD64=$(awk '{print $1}' release-assets/rebaze-linux-amd64.tar.gz.sha256)
+          export SHORT_SHA SHA256_DARWIN_ARM64 SHA256_DARWIN_AMD64 SHA256_LINUX_ARM64 SHA256_LINUX_AMD64
+
+          # Generate formula from template
+          envsubst < packaging/homebrew/rebaze-nightly.rb.in > rebaze-nightly.rb
+
+          # Get current file SHA
+          CURRENT_SHA=$(gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze-nightly.rb --jq '.sha' 2>/dev/null || echo "")
+
+          # Update formula
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze-nightly.rb \
+              --method PUT \
+              -f message="Update rebaze-nightly to ${SHORT_SHA}" \
+              -f content="$(base64 -w0 rebaze-nightly.rb)" \
+              -f sha="$CURRENT_SHA" \
+              -f "committer[name]=Eukia[bot]" \
+              -f "committer[email]=eukia[bot]@users.noreply.github.com"
+            echo "Updated homebrew-tap formula"
+          else
+            gh api repos/albertocavalcante/homebrew-tap/contents/Formula/rebaze-nightly.rb \
+              --method PUT \
+              -f message="Add rebaze-nightly formula" \
+              -f content="$(base64 -w0 rebaze-nightly.rb)" \
+              -f "committer[name]=Eukia[bot]" \
+              -f "committer[email]=eukia[bot]@users.noreply.github.com"
+            echo "Created homebrew-tap formula"
+          fi

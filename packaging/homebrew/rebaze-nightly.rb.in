@@ -1,0 +1,37 @@
+class RebazeNightly < Formula
+  desc "CLI tool to migrate projects to Bazel (nightly build)"
+  homepage "https://github.com/albertocavalcante/rebaze"
+  version "nightly-${SHORT_SHA}"
+  license "Apache-2.0"
+
+  # Auto-updated by CI - do not edit manually
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/albertocavalcante/rebaze/releases/download/nightly/rebaze-darwin-arm64.tar.gz"
+      sha256 "${SHA256_DARWIN_ARM64}"
+    else
+      url "https://github.com/albertocavalcante/rebaze/releases/download/nightly/rebaze-darwin-amd64.tar.gz"
+      sha256 "${SHA256_DARWIN_AMD64}"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/albertocavalcante/rebaze/releases/download/nightly/rebaze-linux-aarch64.tar.gz"
+      sha256 "${SHA256_LINUX_ARM64}"
+    else
+      url "https://github.com/albertocavalcante/rebaze/releases/download/nightly/rebaze-linux-amd64.tar.gz"
+      sha256 "${SHA256_LINUX_AMD64}"
+    end
+  end
+
+  conflicts_with "rebaze", because: "both install rebaze binary"
+
+  def install
+    bin.install "rebaze"
+  end
+
+  test do
+    assert_match "rebaze", shell_output("#{bin}/rebaze --version")
+  end
+end
