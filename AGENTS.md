@@ -45,6 +45,18 @@ cargo clippy
 - Use `thiserror` for library error types
 - Prefer `tracing` over `println!` for logging
 
+## Clippy Lints
+
+- All `#[allow(clippy::...)]` directives MUST have a rationale comment explaining why
+- Place the comment on the line immediately before the `#[allow(...)]` attribute
+- Example:
+  ```rust
+  // BUILD file generation needs sequential sections (loads, package, targets) that can't be easily split
+  #[allow(clippy::too_many_lines)]
+  pub fn generate_root_build(...) { ... }
+  ```
+- For test modules, `#[allow(clippy::unwrap_used)]` is acceptable without comment since tests intentionally panic on failure
+
 ## Adding a New Parser
 
 1. Create `crates/rebaze-{name}/` with `Cargo.toml`, `BUILD.bazel`, `src/lib.rs`

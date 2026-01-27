@@ -4,7 +4,9 @@ use std::collections::BTreeSet;
 
 use rebaze_cmake::{CMakeProject, Executable, Library, LibraryKind};
 
-use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources, map_dependency};
+use crate::filters::{
+    filter_copts, filter_defines, filter_includes, filter_sources, map_dependency,
+};
 use crate::starlark::{BazelDep, CcBinary, CcLibrary, Glob, Load, Module, Package, SrcsWithHdrs};
 
 /// Get known transitive dependencies for a package.
@@ -32,11 +34,19 @@ fn detect_external_deps(project: &CMakeProject) -> DetectedDeps {
         .executables
         .iter()
         .flat_map(|e| e.link_libraries.iter())
-        .chain(project.libraries.iter().flat_map(|l| l.link_libraries.iter()));
+        .chain(
+            project
+                .libraries
+                .iter()
+                .flat_map(|l| l.link_libraries.iter()),
+        );
 
     for lib in all_link_libs {
         let lib_lower = lib.to_lowercase();
-        if lib_lower.contains("gtest") || lib_lower.contains("gmock") || lib_lower.contains("googletest") {
+        if lib_lower.contains("gtest")
+            || lib_lower.contains("gmock")
+            || lib_lower.contains("googletest")
+        {
             deps.googletest = true;
         }
         if lib_lower.contains("benchmark") && !lib_lower.contains("google") {
@@ -205,6 +215,8 @@ pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -
 
 /// Generate the root BUILD.bazel file.
 #[must_use]
+// BUILD file generation needs sequential sections (loads, package, targets) that can't be easily split
+#[allow(clippy::too_many_lines)]
 pub fn generate_root_build(project: &CMakeProject) -> String {
     let mut parts = Vec::new();
 
@@ -231,17 +243,21 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         bzl: "@rules_cc//cc:defs.bzl".to_string(),
         items,
     };
-    parts.push(crate::starlark::serde_starlark::to_string(&load).unwrap_or_else(|e| format!("# Error: {e}")));
+    parts.push(
+        crate::starlark::serde_starlark::to_string(&load)
+            .unwrap_or_else(|e| format!("# Error: {e}")),
+    );
 
     // Add pkg-config dependency note
     if !project.pkg_config_modules.is_empty() {
-        let mut pkg_comments = vec![
-            "# pkg-config dependencies (wrappers in //third_party):".to_string(),
-        ];
+        let mut pkg_comments =
+            vec!["# pkg-config dependencies (wrappers in //third_party):".to_string()];
         for pkg in &project.pkg_config_modules {
-            pkg_comments.push(format!("#   //third_party:{} -> {}",
+            pkg_comments.push(format!(
+                "#   //third_party:{} -> {}",
                 pkg.prefix.to_lowercase().replace('-', "_"),
-                pkg.packages.join(", ")));
+                pkg.packages.join(", ")
+            ));
         }
         parts.push(pkg_comments.join("\n"));
     }
@@ -251,7 +267,8 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         default_visibility: vec!["//visibility:public".to_string()],
     };
     parts.push(
-        crate::starlark::serde_starlark::to_string(&package).unwrap_or_else(|e| format!("# Error: {e}")),
+        crate::starlark::serde_starlark::to_string(&package)
+            .unwrap_or_else(|e| format!("# Error: {e}")),
     );
 
     // Generate libraries first (they may be dependencies of executables)
@@ -262,7 +279,8 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
         if seen_libs.insert(target_name) {
             let cc_lib = build_cc_library(lib);
             parts.push(
-                crate::starlark::serde_starlark::to_string(&cc_lib).unwrap_or_else(|e| format!("# Error: {e}")),
+                crate::starlark::serde_starlark::to_string(&cc_lib)
+                    .unwrap_or_else(|e| format!("# Error: {e}")),
             );
         }
     }
@@ -271,7 +289,8 @@ pub fn generate_root_build(project: &CMakeProject) -> String {
     for exe in &project.executables {
         let cc_bin = build_cc_binary(exe, &project.libraries, &project.pkg_config_modules);
         parts.push(
-            crate::starlark::serde_starlark::to_string(&cc_bin).unwrap_or_else(|e| format!("# Error: {e}")),
+            crate::starlark::serde_starlark::to_string(&cc_bin)
+                .unwrap_or_else(|e| format!("# Error: {e}")),
         );
     }
 
@@ -362,7 +381,9 @@ fn build_cc_binary(
 
     // Start with explicit include directories (filtered)
     let mut includes_set: std::collections::BTreeSet<String> =
-        filter_includes(&exe.include_directories).into_iter().collect();
+        filter_includes(&exe.include_directories)
+            .into_iter()
+            .collect();
 
     // Add unique directories containing source files as include paths
     // This mimics CMake's behavior where files can include headers from their own directory
@@ -428,7 +449,11 @@ fn build_cc_binary(
         name: target_name,
         srcs: SrcsWithHdrs {
             files: filtered_sources,
-            hdrs_glob: if hdrs_glob.is_empty() { None } else { Some(hdrs_glob) },
+            hdrs_glob: if hdrs_glob.is_empty() {
+                None
+            } else {
+                Some(hdrs_glob)
+            },
         },
         includes,
         deps,
@@ -535,8 +560,14 @@ mod tests {
         assert!(content.contains("LIB_DEF"));
         assert!(content.contains("APP_DEF"));
         // Optimization and debug flags are filtered out (Bazel handles these)
-        assert!(!content.contains("-O2"), "optimization flags should be filtered");
-        assert!(!content.contains("\"-g\""), "debug info flags should be filtered");
+        assert!(
+            !content.contains("-O2"),
+            "optimization flags should be filtered"
+        );
+        assert!(
+            !content.contains("\"-g\""),
+            "debug info flags should be filtered"
+        );
     }
 
     #[test]

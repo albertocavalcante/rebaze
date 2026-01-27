@@ -3,8 +3,8 @@
 //! This crate provides Rust types that serialize to valid Starlark code via serde_starlark.
 //! Use these types instead of manual string formatting for type-safe BUILD file generation.
 
-use serde::ser::{SerializeStruct, SerializeTupleStruct, Serializer};
 use serde::Serialize;
+use serde::ser::{SerializeStruct, SerializeTupleStruct, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
 // Re-export serde_starlark for users of this crate
@@ -380,6 +380,7 @@ impl ConfigureMake {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

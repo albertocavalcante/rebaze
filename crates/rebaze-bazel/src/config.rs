@@ -76,7 +76,11 @@ impl MigrationConfig {
         }
 
         // Check if it's an implicit system library (pthread, m, c, etc.)
-        if self.mappings.implicit_system_libs.contains(&lib.to_string()) {
+        if self
+            .mappings
+            .implicit_system_libs
+            .contains(&lib.to_string())
+        {
             return None;
         }
 
@@ -205,16 +209,16 @@ impl MappingConfig {
     fn default_packages() -> BTreeMap<String, PackageMapping> {
         let mut packages = BTreeMap::new();
 
-        packages.insert("Boost".to_string(), package_mapping("@boost//:{component}", &[]));
+        packages.insert(
+            "Boost".to_string(),
+            package_mapping("@boost//:{component}", &[]),
+        );
 
         packages.insert(
             "OpenSSL".to_string(),
             package_mapping(
                 "@openssl//:{component}",
-                &[
-                    ("SSL", "@openssl//:ssl"),
-                    ("Crypto", "@openssl//:crypto"),
-                ],
+                &[("SSL", "@openssl//:ssl"), ("Crypto", "@openssl//:crypto")],
             ),
         );
 
@@ -236,7 +240,10 @@ impl MappingConfig {
             "gRPC".to_string(),
             package_mapping(
                 "@com_github_grpc_grpc//:{component}",
-                &[("grpc", "@com_github_grpc_grpc//:grpc"), ("grpc++", "@com_github_grpc_grpc//:grpc++")],
+                &[
+                    ("grpc", "@com_github_grpc_grpc//:grpc"),
+                    ("grpc++", "@com_github_grpc_grpc//:grpc++"),
+                ],
             ),
         );
 
@@ -443,6 +450,7 @@ impl Default for StrategyConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -458,10 +466,7 @@ mod tests {
         let config = MigrationConfig::default();
 
         // Known library
-        assert_eq!(
-            config.map_system_library("zlib"),
-            Some("@zlib".to_string())
-        );
+        assert_eq!(config.map_system_library("zlib"), Some("@zlib".to_string()));
 
         // Implicit system library
         assert_eq!(config.map_system_library("pthread"), None);

@@ -49,7 +49,6 @@ pub struct Config {
     /// Controls Bazel dependency versions, mappings, filters, and build options.
     #[serde(default)]
     pub bazel: Option<BazelConfig>,
-
     // Future targets:
     // pub gradle: Option<GradleConfig>,
     // pub buck2: Option<Buck2Config>,
@@ -78,19 +77,19 @@ impl Config {
             // Check if there's an explicit [bazel] section
             if table.contains_key("bazel") {
                 // Nested format: parse directly
-                let config: Config = toml::from_str(content)?;
+                let config: Self = toml::from_str(content)?;
                 return Ok(config);
             }
 
             // Flat format: treat entire file as Bazel config
             let bazel_config: BazelConfig = toml::from_str(content)?;
-            return Ok(Config {
+            return Ok(Self {
                 bazel: Some(bazel_config),
             });
         }
 
         // Empty or invalid - return defaults
-        Ok(Config::default())
+        Ok(Self::default())
     }
 
     /// Load configuration from a project directory.
@@ -140,11 +139,7 @@ impl Config {
                 config
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to load {}: {}. Using defaults.",
-                    path.display(),
-                    e
-                );
+                tracing::warn!("Failed to load {}: {}. Using defaults.", path.display(), e);
                 Self::default()
             }
         }
@@ -158,6 +153,7 @@ impl Config {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

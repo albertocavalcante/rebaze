@@ -148,7 +148,9 @@ pub fn extract_project_with_context(
     {
         project.cxx_standard = Some(std.clone());
     }
-    if let Some(values) = ctx.get("CMAKE_C_STANDARD") && let Some(std) = values.first() {
+    if let Some(values) = ctx.get("CMAKE_C_STANDARD")
+        && let Some(std) = values.first()
+    {
         project.c_standard = Some(std.clone());
     }
 
@@ -310,7 +312,9 @@ fn extract_recursive(
                     project.libraries.push(lib);
                 }
                 project.packages.extend(subproject.packages);
-                project.pkg_config_modules.extend(subproject.pkg_config_modules);
+                project
+                    .pkg_config_modules
+                    .extend(subproject.pkg_config_modules);
                 // Note: We don't merge project name/version from subdirectories
             }
             Err(ExtractError::NotFound(_)) => {
@@ -340,10 +344,7 @@ fn extract_cmake_version(cmd: &Command, project: &mut CMakeProject) {
             continue;
         };
         if arg.eq_ignore_ascii_case("VERSION")
-            && let Some(version) = cmd
-                .arguments
-                .get(i + 1)
-                .and_then(Argument::as_literal)
+            && let Some(version) = cmd.arguments.get(i + 1).and_then(Argument::as_literal)
         {
             project.cmake_minimum_version = Some(version.to_string());
             return;
@@ -388,11 +389,7 @@ fn extract_project_info(cmd: &Command, project: &mut CMakeProject) {
         };
         match arg.to_uppercase().as_str() {
             "VERSION" => {
-                if let Some(ver) = cmd
-                    .arguments
-                    .get(i + 1)
-                    .and_then(Argument::as_literal)
-                {
+                if let Some(ver) = cmd.arguments.get(i + 1).and_then(Argument::as_literal) {
                     project.version = Some(ver.to_string());
                 }
                 i += 2;
@@ -582,7 +579,9 @@ fn extract_library(cmd: &Command, project: &mut CMakeProject, ctx: &EvalContext)
 
 fn extract_package(cmd: &Command, project: &mut CMakeProject) {
     // find_package(PackageName [version] [REQUIRED] [COMPONENTS comp1...])
-    let name = if let Some(name) = cmd.arguments.first().and_then(Argument::as_literal) { name.to_string() } else {
+    let name = if let Some(name) = cmd.arguments.first().and_then(Argument::as_literal) {
+        name.to_string()
+    } else {
         tracing::debug!("Skipping find_package with non-literal package name");
         return;
     };
@@ -632,10 +631,7 @@ fn extract_global_includes(cmd: &Command, project: &mut CMakeProject, ctx: &Eval
         // Try to get as literal first
         if let Some(lit) = arg.as_literal() {
             // Skip keywords
-            if matches!(
-                lit.to_uppercase().as_str(),
-                "AFTER" | "BEFORE" | "SYSTEM"
-            ) {
+            if matches!(lit.to_uppercase().as_str(), "AFTER" | "BEFORE" | "SYSTEM") {
                 continue;
             }
             let dir = normalize_include_path(lit);
@@ -646,10 +642,7 @@ fn extract_global_includes(cmd: &Command, project: &mut CMakeProject, ctx: &Eval
             // First try to normalize the raw argument with variable references preserved
             // This handles ${CMAKE_CURRENT_SOURCE_DIR} and similar patterns
             let raw = arg.to_string_with_vars();
-            if !matches!(
-                raw.to_uppercase().as_str(),
-                "AFTER" | "BEFORE" | "SYSTEM"
-            ) {
+            if !matches!(raw.to_uppercase().as_str(), "AFTER" | "BEFORE" | "SYSTEM") {
                 let dir = normalize_include_path(&raw);
                 if !dir.is_empty()
                     && !dir.starts_with("${")
@@ -663,10 +656,7 @@ fn extract_global_includes(cmd: &Command, project: &mut CMakeProject, ctx: &Eval
             // Fall back to expanding variable references
             let expanded = ctx.expand_argument(arg);
             for val in expanded {
-                if matches!(
-                    val.to_uppercase().as_str(),
-                    "AFTER" | "BEFORE" | "SYSTEM"
-                ) {
+                if matches!(val.to_uppercase().as_str(), "AFTER" | "BEFORE" | "SYSTEM") {
                     continue;
                 }
                 let dir = normalize_include_path(&val);
@@ -1062,7 +1052,11 @@ fn apply_target_sources(cmd: &Command, project: &mut CMakeProject, ctx: &EvalCon
                     skip_until_next_visibility = false;
                     continue;
                 }
-                if upper == "FILE_SET" || upper == "TYPE" || upper == "BASE_DIRS" || upper == "FILES" {
+                if upper == "FILE_SET"
+                    || upper == "TYPE"
+                    || upper == "BASE_DIRS"
+                    || upper == "FILES"
+                {
                     skip_until_next_visibility = true;
                     continue;
                 }
@@ -1350,12 +1344,12 @@ mod tests {
         let mut root_cmake = std::fs::File::create(temp_dir.join("CMakeLists.txt")).unwrap();
         writeln!(
             root_cmake,
-            r#"
+            r"
 cmake_minimum_required(VERSION 3.10)
 project(testproject)
 add_library(rootlib STATIC root.cpp)
 add_subdirectory(subdir)
-"#
+"
         )
         .unwrap();
 
@@ -1363,10 +1357,10 @@ add_subdirectory(subdir)
         let mut sub_cmake = std::fs::File::create(sub_dir.join("CMakeLists.txt")).unwrap();
         writeln!(
             sub_cmake,
-            r#"
+            r"
 add_executable(subapp main.cpp)
 add_library(sublib SHARED sub.cpp)
-"#
+"
         )
         .unwrap();
 
@@ -1409,11 +1403,11 @@ add_library(sublib SHARED sub.cpp)
         let mut root_cmake = std::fs::File::create(temp_dir.join("CMakeLists.txt")).unwrap();
         writeln!(
             root_cmake,
-            r#"
+            r"
 cmake_minimum_required(VERSION 3.10)
 project(testproject)
 add_subdirectory(nonexistent)
-"#
+"
         )
         .unwrap();
 
@@ -1443,11 +1437,11 @@ add_subdirectory(nonexistent)
         let mut root_cmake = std::fs::File::create(temp_dir.join("CMakeLists.txt")).unwrap();
         writeln!(
             root_cmake,
-            r#"
+            r"
 project(root)
 add_executable(root_exe main.cpp)
 add_subdirectory(level1)
-"#
+"
         )
         .unwrap();
 
@@ -1455,10 +1449,10 @@ add_subdirectory(level1)
         let mut level1_cmake = std::fs::File::create(level1.join("CMakeLists.txt")).unwrap();
         writeln!(
             level1_cmake,
-            r#"
+            r"
 add_executable(level1_exe main.cpp)
 add_subdirectory(level2)
-"#
+"
         )
         .unwrap();
 
@@ -1466,9 +1460,9 @@ add_subdirectory(level2)
         let mut level2_cmake = std::fs::File::create(level2.join("CMakeLists.txt")).unwrap();
         writeln!(
             level2_cmake,
-            r#"
+            r"
 add_executable(level2_exe main.cpp)
-"#
+"
         )
         .unwrap();
 
@@ -1477,7 +1471,11 @@ add_executable(level2_exe main.cpp)
 
         // All 3 executables should be found
         assert_eq!(project.executables.len(), 3);
-        let exe_names: Vec<&str> = project.executables.iter().map(|e| e.name.as_str()).collect();
+        let exe_names: Vec<&str> = project
+            .executables
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
         assert!(exe_names.contains(&"root_exe"));
         assert!(exe_names.contains(&"level1_exe"));
         assert!(exe_names.contains(&"level2_exe"));
@@ -1501,9 +1499,21 @@ add_executable(level2_exe main.cpp)
 
         // Check global include directories were extracted
         assert_eq!(project.global_include_directories.len(), 3);
-        assert!(project.global_include_directories.contains(&"include".to_string()));
-        assert!(project.global_include_directories.contains(&".".to_string()));
-        assert!(project.global_include_directories.contains(&"src".to_string()));
+        assert!(
+            project
+                .global_include_directories
+                .contains(&"include".to_string())
+        );
+        assert!(
+            project
+                .global_include_directories
+                .contains(&".".to_string())
+        );
+        assert!(
+            project
+                .global_include_directories
+                .contains(&"src".to_string())
+        );
 
         // Check they were applied to the executable
         let exe = &project.executables[0];
@@ -1531,8 +1541,14 @@ add_executable(level2_exe main.cpp)
 
         // Executable should have both global and target-specific includes
         let exe = &project.executables[0];
-        assert!(exe.include_directories.contains(&"target_include".to_string()));
-        assert!(exe.include_directories.contains(&"global_include".to_string()));
+        assert!(
+            exe.include_directories
+                .contains(&"target_include".to_string())
+        );
+        assert!(
+            exe.include_directories
+                .contains(&"global_include".to_string())
+        );
     }
 
     #[test]
@@ -1548,7 +1564,11 @@ add_executable(level2_exe main.cpp)
 
         // Should only have valid_dir, not the unexpanded variable
         assert_eq!(project.global_include_directories.len(), 1);
-        assert!(project.global_include_directories.contains(&"valid_dir".to_string()));
+        assert!(
+            project
+                .global_include_directories
+                .contains(&"valid_dir".to_string())
+        );
     }
 
     #[test]

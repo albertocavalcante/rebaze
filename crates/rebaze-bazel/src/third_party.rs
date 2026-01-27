@@ -194,9 +194,8 @@ pub fn generate_config_bzl(
         DepsStrategy::Custom => "custom",
     };
 
-    let mut lines = vec![
-        format!(
-            r#""""Configuration for third-party dependencies.
+    let mut lines = vec![format!(
+        r#""""Configuration for third-party dependencies.
 
 Edit this file to customize how dependencies are resolved.
 """
@@ -208,17 +207,12 @@ DEFAULT_STRATEGY = "{default_strategy}"
 # Per-dependency configuration.
 # Override the strategy or provide additional config for specific deps.
 DEPS_CONFIG = {{"#
-        ),
-    ];
+    )];
 
     // Generate config entries for each dependency
     for pkg in pkg_config_modules {
         let target_name = pkg.prefix.to_lowercase().replace('-', "_");
-        let packages: Vec<_> = pkg
-            .packages
-            .iter()
-            .map(|p| format!("\"{p}\""))
-            .collect();
+        let packages: Vec<_> = pkg.packages.iter().map(|p| format!("\"{p}\"")).collect();
 
         lines.push(format!(
             r#"    "{target_name}": {{
@@ -420,7 +414,11 @@ SOURCES = {"#
             } else {
                 format!(
                     "\n        \"deps\": [{}],",
-                    info.deps.iter().map(|d| format!("\"{d}\"")).collect::<Vec<_>>().join(", ")
+                    info.deps
+                        .iter()
+                        .map(|d| format!("\"{d}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )
             };
 
@@ -429,11 +427,17 @@ SOURCES = {"#
             } else {
                 format!(
                     "\n        \"meson_options\": [{}],",
-                    info.meson_options.iter().map(|o| format!("\"{o}\"")).collect::<Vec<_>>().join(", ")
+                    info.meson_options
+                        .iter()
+                        .map(|o| format!("\"{o}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )
             };
 
-            let out_libs_str = info.out_libs.iter()
+            let out_libs_str = info
+                .out_libs
+                .iter()
                 .map(|l| format!("\"{l}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -474,7 +478,8 @@ SOURCES = {"#
     lines.push(String::new());
 
     // Add the module extension for downloading sources
-    lines.push(r#"def _source_repo_impl(repository_ctx):
+    lines.push(
+        r#"def _source_repo_impl(repository_ctx):
     """Download and prepare source repository."""
     repository_ctx.download_and_extract(
         url = repository_ctx.attr.url,
@@ -514,7 +519,9 @@ def _source_deps_impl(module_ctx):
 
 source_deps = module_extension(
     implementation = _source_deps_impl,
-)"#.to_string());
+)"#
+        .to_string(),
+    );
 
     lines.join("\n")
 }
@@ -527,7 +534,8 @@ pub fn generate_source_build_targets(pkg_config_modules: &[PkgConfigModule]) -> 
 
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake", "configure_make", "meson")
 load("//third_party:source.bzl", "SOURCES")
-"#.to_string(),
+"#
+        .to_string(),
     ];
 
     // Collect all packages including transitive deps
@@ -546,11 +554,7 @@ load("//third_party:source.bzl", "SOURCES")
         if let Some(info) = get_known_package_info(pkg_name) {
             let name = format!("{}_source", info.name);
             let lib_source = format!("@{}_src//:all", info.name);
-            let deps: Vec<String> = info
-                .deps
-                .iter()
-                .map(|d| format!(":{d}_source"))
-                .collect();
+            let deps: Vec<String> = info.deps.iter().map(|d| format!(":{d}_source")).collect();
 
             let rule_str = match info.build_system {
                 "meson" => {
@@ -674,7 +678,10 @@ pub fn probe_system_lib(packages: &[String]) -> Option<SystemLibInfo> {
         .filter_map(|f| f.strip_prefix("-I"))
         .map(|p| {
             // Try to make path relative to prefix
-            p.strip_prefix(&prefix).map_or_else(|| p.to_string(), |rel| rel.trim_start_matches('/').to_string())
+            p.strip_prefix(&prefix).map_or_else(
+                || p.to_string(),
+                |rel| rel.trim_start_matches('/').to_string(),
+            )
         })
         .collect();
 
@@ -693,7 +700,10 @@ pub fn probe_system_lib(packages: &[String]) -> Option<SystemLibInfo> {
         if let Some(lib) = flag.strip_prefix("-l") {
             libs.push(lib.to_string());
         } else if let Some(dir) = flag.strip_prefix("-L") {
-            let rel_dir = dir.strip_prefix(&prefix).map_or_else(|| dir.to_string(), |rel| rel.trim_start_matches('/').to_string());
+            let rel_dir = dir.strip_prefix(&prefix).map_or_else(
+                || dir.to_string(),
+                |rel| rel.trim_start_matches('/').to_string(),
+            );
             lib_dirs.push(rel_dir);
         }
     }
@@ -723,7 +733,8 @@ NOTE: These paths are detected from pkg-config during migration.
 
 # System library configurations.
 # Each entry maps a library name to its system path and structure.
-SYSTEM_LIBS = {"#.to_string(),
+SYSTEM_LIBS = {"#
+            .to_string(),
     ];
 
     // Probe each package and generate config
@@ -732,15 +743,13 @@ SYSTEM_LIBS = {"#.to_string(),
 
         if let Some(info) = probe_system_lib(&pkg.packages) {
             let prefix = info.prefix.as_deref().unwrap_or("/usr/local");
-            let include_dirs: Vec<_> = info.include_dirs.iter()
+            let include_dirs: Vec<_> = info
+                .include_dirs
+                .iter()
                 .map(|d| format!("\"{d}\""))
                 .collect();
-            let lib_dirs: Vec<_> = info.lib_dirs.iter()
-                .map(|d| format!("\"{d}\""))
-                .collect();
-            let libs: Vec<_> = info.libs.iter()
-                .map(|l| format!("\"{l}\""))
-                .collect();
+            let lib_dirs: Vec<_> = info.lib_dirs.iter().map(|d| format!("\"{d}\"")).collect();
+            let libs: Vec<_> = info.libs.iter().map(|l| format!("\"{l}\"")).collect();
 
             lines.push(format!(
                 r#"    "{target_name}": {{
@@ -918,10 +927,7 @@ pub fn probe_pkg_config(packages: &[String]) -> Option<PkgConfigFlags> {
     }
 
     let cflags_str = String::from_utf8_lossy(&cflags_output.stdout);
-    let cflags: Vec<String> = cflags_str
-        .split_whitespace()
-        .map(String::from)
-        .collect();
+    let cflags: Vec<String> = cflags_str.split_whitespace().map(String::from).collect();
 
     // Try to get libs
     let libs_output = Command::new("pkg-config")
@@ -935,10 +941,7 @@ pub fn probe_pkg_config(packages: &[String]) -> Option<PkgConfigFlags> {
     }
 
     let libs_str = String::from_utf8_lossy(&libs_output.stdout);
-    let libs: Vec<String> = libs_str
-        .split_whitespace()
-        .map(String::from)
-        .collect();
+    let libs: Vec<String> = libs_str.split_whitespace().map(String::from).collect();
 
     Some(PkgConfigFlags { cflags, libs })
 }

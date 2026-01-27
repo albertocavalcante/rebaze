@@ -50,8 +50,8 @@ pub fn parse_build_dir_with_options(
     build_dir: &Path,
     options: &FileApiOptions,
 ) -> Result<CMakeProject, FileApiError> {
-    let reader = reply::Reader::from_build_dir(build_dir)
-        .map_err(|err| map_reader_error(err, build_dir))?;
+    let reader =
+        reply::Reader::from_build_dir(build_dir).map_err(|err| map_reader_error(err, build_dir))?;
     let codemodel: objects::CodeModelV2 = reader.read_object()?;
     project_from_codemodel(&codemodel, options)
 }
@@ -69,7 +69,11 @@ pub fn project_from_codemodel(
         .projects
         .first()
         .map(|project| project.name.clone())
-        .or_else(|| source_root.file_name().map(|name| name.to_string_lossy().to_string()))
+        .or_else(|| {
+            source_root
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
         .unwrap_or_else(|| "cmake_project".to_string());
 
     let mut project = CMakeProject {
@@ -256,7 +260,9 @@ fn collect_dependencies(
 ) -> Vec<String> {
     let mut set = HashSet::new();
     for dep in &target.dependencies {
-        if let Some((name, _)) = id_to_name.get(&dep.id) && name != &target.name {
+        if let Some((name, _)) = id_to_name.get(&dep.id)
+            && name != &target.name
+        {
             set.insert(name.clone());
         }
     }
@@ -339,6 +345,7 @@ fn target_kind(target: &objects::codemodel_v2::Target) -> Option<TargetKind> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use cmake_file_api::objects::codemodel_v2::{
@@ -348,6 +355,8 @@ mod tests {
     use cmake_file_api::objects::{MajorMinor, ObjectKind};
 
     #[test]
+    // Test setup requires many mock objects to simulate realistic CMake codemodel
+    #[allow(clippy::too_many_lines)]
     fn test_project_from_codemodel() {
         let source_root = PathBuf::from("/repo");
         let build_root = PathBuf::from("/repo/build");
@@ -453,14 +462,26 @@ mod tests {
         assert_eq!(project.libraries.len(), 1);
         assert_eq!(project.executables.len(), 1);
         assert_eq!(project.libraries[0].name, "mylib");
-        assert_eq!(project.libraries[0].sources, vec!["src/lib.cpp".to_string()]);
-        assert_eq!(project.libraries[0].include_directories, vec!["include".to_string()]);
+        assert_eq!(
+            project.libraries[0].sources,
+            vec!["src/lib.cpp".to_string()]
+        );
+        assert_eq!(
+            project.libraries[0].include_directories,
+            vec!["include".to_string()]
+        );
         assert_eq!(
             project.libraries[0].compile_definitions,
             vec!["DEBUG".to_string()]
         );
-        assert_eq!(project.libraries[0].compile_options, vec!["-O2".to_string()]);
-        assert_eq!(project.executables[0].link_libraries, vec!["mylib".to_string()]);
+        assert_eq!(
+            project.libraries[0].compile_options,
+            vec!["-O2".to_string()]
+        );
+        assert_eq!(
+            project.executables[0].link_libraries,
+            vec!["mylib".to_string()]
+        );
     }
 
     #[test]

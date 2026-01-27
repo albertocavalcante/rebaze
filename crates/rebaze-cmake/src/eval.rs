@@ -91,12 +91,10 @@ impl EvalContext {
     /// Expand an ArgumentValue, returning expanded string(s).
     fn expand_argument_value(&self, value: &ArgumentValue) -> Vec<String> {
         // Special case: single variable reference expands to list
-        if value.parts.len() == 1 && let ArgumentPart::Variable(var_name) = &value.parts[0] {
-            return self
-                .variables
-                .get(var_name)
-                .cloned()
-                .unwrap_or_default();
+        if value.parts.len() == 1
+            && let ArgumentPart::Variable(var_name) = &value.parts[0]
+        {
+            return self.variables.get(var_name).cloned().unwrap_or_default();
         }
 
         // General case: concatenate all parts into a single string
@@ -178,7 +176,13 @@ fn eval_set(cmd: &Command, ctx: &mut EvalContext) {
         if let Some(lit) = arg.as_literal()
             && matches!(
                 lit.to_uppercase().as_str(),
-                "PARENT_SCOPE" | "CACHE" | "FORCE" | "STRING" | "BOOL" | "PATH" | "FILEPATH"
+                "PARENT_SCOPE"
+                    | "CACHE"
+                    | "FORCE"
+                    | "STRING"
+                    | "BOOL"
+                    | "PATH"
+                    | "FILEPATH"
                     | "INTERNAL"
             )
         {
@@ -239,6 +243,7 @@ fn eval_list(cmd: &Command, ctx: &mut EvalContext) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -323,9 +328,9 @@ mod tests {
     fn test_eval_set_command() {
         use crate::parser;
 
-        let src = r#"
+        let src = r"
             set(MY_VAR value1 value2 value3)
-        "#;
+        ";
 
         let (file, errors) = parser::parse(src);
         assert!(errors.is_empty());
@@ -344,10 +349,10 @@ mod tests {
     fn test_eval_list_append() {
         use crate::parser;
 
-        let src = r#"
+        let src = r"
             set(SRCS a.c)
             list(APPEND SRCS b.c c.c)
-        "#;
+        ";
 
         let (file, errors) = parser::parse(src);
         assert!(errors.is_empty());
@@ -366,11 +371,11 @@ mod tests {
     fn test_eval_nested_variable() {
         use crate::parser;
 
-        let src = r#"
+        let src = r"
             set(PART1 a.c b.c)
             set(PART2 c.c)
             set(ALL ${PART1} ${PART2})
-        "#;
+        ";
 
         let (file, errors) = parser::parse(src);
         assert!(errors.is_empty());

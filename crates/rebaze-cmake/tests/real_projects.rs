@@ -152,9 +152,11 @@ fn test_project_extraction_static_library() {
     assert_eq!(project.executables.len(), 1);
     assert_eq!(project.executables[0].name, "hello_binary");
     // Check link libraries were extracted
-    assert!(project.executables[0]
-        .link_libraries
-        .contains(&"hello_library".to_string()));
+    assert!(
+        project.executables[0]
+            .link_libraries
+            .contains(&"hello_library".to_string())
+    );
 }
 
 #[test]
@@ -202,17 +204,23 @@ fn test_project_extraction_with_boost() {
     assert_eq!(project.packages.len(), 1);
     assert_eq!(project.packages[0].name, "Boost");
     assert!(project.packages[0].required);
-    assert!(project.packages[0]
-        .components
-        .contains(&"filesystem".to_string()));
-    assert!(project.packages[0]
-        .components
-        .contains(&"system".to_string()));
+    assert!(
+        project.packages[0]
+            .components
+            .contains(&"filesystem".to_string())
+    );
+    assert!(
+        project.packages[0]
+            .components
+            .contains(&"system".to_string())
+    );
 
     // Check link libraries include Boost::filesystem
-    assert!(project.executables[0]
-        .link_libraries
-        .contains(&"Boost::filesystem".to_string()));
+    assert!(
+        project.executables[0]
+            .link_libraries
+            .contains(&"Boost::filesystem".to_string())
+    );
 }
 
 #[test]

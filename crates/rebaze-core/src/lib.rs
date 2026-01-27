@@ -160,7 +160,9 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                     }
                 }
                 BuildGenerator::Bazelle => {
-                    anyhow::bail!("bazelle build generation is not supported for Gradle yet; use --build-generator native");
+                    anyhow::bail!(
+                        "bazelle build generation is not supported for Gradle yet; use --build-generator native"
+                    );
                 }
                 BuildGenerator::Auto => unreachable!("auto resolved"),
             }
@@ -233,8 +235,7 @@ fn parse_cmake_project(
         let options = rebaze_cmake_file_api::FileApiOptions {
             configuration: cmake_config.map(str::to_string),
         };
-        match rebaze_cmake_file_api::parse_build_dir_with_options(Path::new(build_dir), &options)
-        {
+        match rebaze_cmake_file_api::parse_build_dir_with_options(Path::new(build_dir), &options) {
             Ok(project) => Ok(project),
             Err(err) => {
                 if cmake_file_api_only {
@@ -328,10 +329,7 @@ fn run_bazelle_generation(
     Ok(())
 }
 
-fn ensure_bazelle_binary(
-    bazelle_root: Option<&str>,
-    bazelle_bin: Option<&str>,
-) -> Result<PathBuf> {
+fn ensure_bazelle_binary(bazelle_root: Option<&str>, bazelle_bin: Option<&str>) -> Result<PathBuf> {
     if let Some(bin) = bazelle_bin {
         let path = PathBuf::from(bin);
         if path.is_file() {
@@ -461,7 +459,11 @@ fn pre_validate_cmake(
     std::fs::create_dir_all(&build_dir)?;
 
     let mut configure = Command::new("cmake");
-    configure.arg("-S").arg(project_root).arg("-B").arg(&build_dir);
+    configure
+        .arg("-S")
+        .arg(project_root)
+        .arg("-B")
+        .arg(&build_dir);
     if let Some(config) = cmake_config {
         configure.arg(format!("-DCMAKE_BUILD_TYPE={config}"));
     }
@@ -515,7 +517,9 @@ fn parse_bazel_major(version: &str) -> Option<u32> {
 
 fn run_command(mut cmd: Command, label: &str) -> Result<()> {
     tracing::info!("Running {label}");
-    let status = cmd.status().with_context(|| format!("Failed to run {label}"))?;
+    let status = cmd
+        .status()
+        .with_context(|| format!("Failed to run {label}"))?;
     if status.success() {
         Ok(())
     } else {

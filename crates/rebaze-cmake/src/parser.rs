@@ -309,6 +309,7 @@ fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>
 
 /// Parser for variable references: ${VAR}, $ENV{VAR}, $CACHE{VAR}, $<GENEXPR>
 /// Supports nested variables like ${${VARNAME}}
+/// Supports escape sequences like $ENV{ProgramFiles\(x86\)}
 fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>> {
     recursive(|var_ref| {
         // Variable content can be: alphanumeric, underscore, hyphen, or nested ${...}
@@ -316,6 +317,12 @@ fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>>
             .repeated()
             .at_least(1)
             .collect::<String>();
+
+        // Escape sequences inside variable references (e.g., \( \) in $ENV{ProgramFiles\(x86\)})
+        // We preserve the escape sequence as-is since variable names may need them
+        let escape_in_var = just('\\')
+            .then(any())
+            .map(|(backslash, c): (char, char)| format!("{backslash}{c}"));
 
         // Nested variable reference - capture as string including ${}
         let nested_var = just("${")
@@ -329,6 +336,7 @@ fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>>
                         ArgumentPart::GeneratorExpr(s) => format!("$<{s}>"),
                         ArgumentPart::Text(s) => s,
                     })
+                    .or(escape_in_var)
                     .or(plain_chars)
                     .repeated()
                     .at_least(1)
@@ -337,8 +345,9 @@ fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>>
             .then_ignore(just('}'))
             .map(|(_, parts)| parts.join(""));
 
-        // Content inside ${} can be plain chars or nested refs
+        // Content inside ${} can be plain chars, escape sequences, or nested refs
         let var_content = plain_chars
+            .or(escape_in_var)
             .or(nested_var.clone())
             .repeated()
             .at_least(1)
@@ -401,7 +410,9 @@ mod tests {
     #[test]
     fn test_nested_parentheses() {
         // This is a common pattern in CMake if() conditions
-        let file = parse_ok("if(${MAIN_PROJECT} AND (${CMAKE_VERSION} VERSION_EQUAL 3.13 OR ${CMAKE_VERSION} VERSION_GREATER 3.13))");
+        let file = parse_ok(
+            "if(${MAIN_PROJECT} AND (${CMAKE_VERSION} VERSION_EQUAL 3.13 OR ${CMAKE_VERSION} VERSION_GREATER 3.13))",
+        );
         assert_eq!(file.commands.len(), 1);
         assert!(file.commands[0].is("if"));
         // Should have parsed the nested parens as part of the arguments
@@ -426,7 +437,7 @@ mod tests {
     #[test]
     fn test_nested_gen_expr() {
         // Nested generator expressions: $<$<CONFIG:Debug>:value>
-        let file = parse_ok(r#"target_compile_definitions(foo $<$<CONFIG:Debug>:DEBUG_MODE>)"#);
+        let file = parse_ok(r"target_compile_definitions(foo $<$<CONFIG:Debug>:DEBUG_MODE>)");
         assert_eq!(file.commands.len(), 1);
         assert!(file.commands[0].is("target_compile_definitions"));
     }
@@ -542,9 +553,9 @@ mod tests {
     fn test_comment_only_file() {
         // Example: https://github.com/ggerganov/ggwave/blob/master/examples/rp2040-rx/CMakeLists.txt
         let file = parse_ok(
-            r#"
+            r"
 # rp2040-rx
-"#,
+",
         );
         assert!(file.commands.is_empty());
     }
@@ -581,7 +592,9 @@ add_executable(myapp
 
     #[test]
     fn test_generator_expression() {
-        let file = parse_ok("target_include_directories(mylib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)");
+        let file = parse_ok(
+            "target_include_directories(mylib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)",
+        );
         assert_eq!(file.commands.len(), 1);
     }
 
@@ -649,7 +662,10 @@ add_executable(myapp
         assert_eq!(file2.commands[0].arguments.len(), 1);
         if let Argument::Unquoted(val) = &file2.commands[0].arguments[0] {
             // Should have: -DFOO=, ", ${VAR}, "
-            let has_var = val.parts.iter().any(|p| matches!(p, ArgumentPart::Variable(v) if v == "VAR"));
+            let has_var = val
+                .parts
+                .iter()
+                .any(|p| matches!(p, ArgumentPart::Variable(v) if v == "VAR"));
             assert!(has_var, "Should contain variable reference VAR");
             let full = val
                 .parts
@@ -670,7 +686,10 @@ add_executable(myapp
         assert_eq!(file3.commands.len(), 1);
         assert_eq!(file3.commands[0].arguments.len(), 1);
         if let Argument::Unquoted(val) = &file3.commands[0].arguments[0] {
-            let has_var = val.parts.iter().any(|p| matches!(p, ArgumentPart::Variable(v) if v == "PKG_LIBDIR"));
+            let has_var = val
+                .parts
+                .iter()
+                .any(|p| matches!(p, ArgumentPart::Variable(v) if v == "PKG_LIBDIR"));
             assert!(has_var, "Should contain variable reference PKG_LIBDIR");
         } else {
             panic!("Expected unquoted argument");
@@ -714,10 +733,14 @@ add_executable(myapp
         let file = parse_ok(r#"add_custom_command(COMMAND cmake -E echo "\#include <foo>")"#);
         assert_eq!(file.commands.len(), 1);
         if let Argument::Quoted(val) = &file.commands[0].arguments[4] {
-            let full: String = val.parts.iter().map(|p| match p {
-                ArgumentPart::Text(s) => s.clone(),
-                _ => String::new(),
-            }).collect();
+            let full: String = val
+                .parts
+                .iter()
+                .map(|p| match p {
+                    ArgumentPart::Text(s) => s.clone(),
+                    _ => String::new(),
+                })
+                .collect();
             assert_eq!(full, "#include <foo>");
         } else {
             panic!("Expected quoted argument");
@@ -727,10 +750,14 @@ add_executable(myapp
         let file2 = parse_ok(r#"message("line1\nline2\ttabbed\\path\"quoted\"")"#);
         assert_eq!(file2.commands.len(), 1);
         if let Argument::Quoted(val) = &file2.commands[0].arguments[0] {
-            let full: String = val.parts.iter().map(|p| match p {
-                ArgumentPart::Text(s) => s.clone(),
-                _ => String::new(),
-            }).collect();
+            let full: String = val
+                .parts
+                .iter()
+                .map(|p| match p {
+                    ArgumentPart::Text(s) => s.clone(),
+                    _ => String::new(),
+                })
+                .collect();
             assert_eq!(full, "line1\nline2\ttabbed\\path\"quoted\"");
         } else {
             panic!("Expected quoted argument");
@@ -740,13 +767,17 @@ add_executable(myapp
     #[test]
     fn test_escape_sequences_in_unquoted() {
         // Test escape sequences in unquoted arguments
-        let file = parse_ok(r#"set(PATH path\\to\\file)"#);
+        let file = parse_ok(r"set(PATH path\\to\\file)");
         assert_eq!(file.commands.len(), 1);
         if let Argument::Unquoted(val) = &file.commands[0].arguments[1] {
-            let full: String = val.parts.iter().map(|p| match p {
-                ArgumentPart::Text(s) => s.clone(),
-                _ => String::new(),
-            }).collect();
+            let full: String = val
+                .parts
+                .iter()
+                .map(|p| match p {
+                    ArgumentPart::Text(s) => s.clone(),
+                    _ => String::new(),
+                })
+                .collect();
             assert_eq!(full, "path\\to\\file");
         } else {
             panic!("Expected unquoted argument");
@@ -784,5 +815,48 @@ add_executable(myapp
         assert_eq!(file.commands.len(), 1);
         // Should parse as three quoted arguments
         assert_eq!(file.commands[0].arguments.len(), 3);
+    }
+
+    #[test]
+    fn test_escape_sequence_in_env_var() {
+        // Windows environment variable with escaped parentheses (from fmt's CMakeLists.txt)
+        // $ENV{ProgramFiles\(x86\)} is a valid CMake pattern
+        let file = parse_ok(
+            r#"find_program(DOXYGEN doxygen PATHS "$ENV{ProgramFiles\(x86\)}/doxygen/bin")"#,
+        );
+        assert_eq!(file.commands.len(), 1);
+        assert!(file.commands[0].is("find_program"));
+
+        // The env var argument should be parsed correctly
+        // Arguments: DOXYGEN, doxygen, PATHS, "$ENV{ProgramFiles\(x86\)}/doxygen/bin"
+        assert_eq!(file.commands[0].arguments.len(), 4);
+
+        // Check the env var is properly captured with escaped parens
+        if let Argument::Quoted(val) = &file.commands[0].arguments[3] {
+            let has_env_var = val
+                .parts
+                .iter()
+                .any(|p| matches!(p, ArgumentPart::EnvVariable(v) if v.contains("ProgramFiles")));
+            assert!(has_env_var, "Should contain EnvVariable for ProgramFiles");
+        } else {
+            panic!("Expected quoted argument");
+        }
+    }
+
+    #[test]
+    fn test_escape_sequence_in_normal_var() {
+        // Escape sequences in normal variable references
+        let file = parse_ok(r#"message("${PATH\\WITH\\ESCAPES}")"#);
+        assert_eq!(file.commands.len(), 1);
+
+        if let Argument::Quoted(val) = &file.commands[0].arguments[0] {
+            let has_var = val
+                .parts
+                .iter()
+                .any(|p| matches!(p, ArgumentPart::Variable(v) if v.contains("PATH")));
+            assert!(has_var, "Should contain Variable with PATH");
+        } else {
+            panic!("Expected quoted argument");
+        }
     }
 }

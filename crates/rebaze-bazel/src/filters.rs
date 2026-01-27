@@ -69,7 +69,10 @@ fn is_problematic_define(def: &str) -> bool {
     }
 
     // macOS-specific
-    if matches!(name, "__APPLE__" | "__MACH__" | "TARGET_OS_MAC" | "TARGET_OS_IPHONE") {
+    if matches!(
+        name,
+        "__APPLE__" | "__MACH__" | "TARGET_OS_MAC" | "TARGET_OS_IPHONE"
+    ) {
         return true;
     }
 
@@ -112,7 +115,8 @@ fn is_problematic_define(def: &str) -> bool {
     // Feature detection (may not be portable across platforms)
     // Be conservative - only filter clearly platform-specific ones
     if name.ends_with("_UNLOCKED") // e.g., HAVE_FWRITE_UNLOCKED - Linux-specific
-        || name.starts_with("HAVE_PTHREAD_")  // Platform-specific pthread features
+        || name.starts_with("HAVE_PTHREAD_")
+    // Platform-specific pthread features
     {
         return true;
     }
@@ -173,7 +177,13 @@ fn is_problematic_copt(opt: &str) -> bool {
     }
 
     // Debug info flags (let Bazel handle these)
-    if opt.starts_with("-g") && (opt == "-g" || opt.starts_with("-g1") || opt.starts_with("-g2") || opt.starts_with("-g3") || opt == "-ggdb") {
+    if opt.starts_with("-g")
+        && (opt == "-g"
+            || opt.starts_with("-g1")
+            || opt.starts_with("-g2")
+            || opt.starts_with("-g3")
+            || opt == "-ggdb")
+    {
         return true;
     }
 
@@ -257,8 +267,7 @@ pub fn filter_sources(sources: &[String]) -> Vec<String> {
 }
 
 fn normalize_source_path(src: &str) -> String {
-    src.trim_start_matches("./")
-        .replace("//", "/")
+    src.trim_start_matches("./").replace("//", "/")
 }
 
 fn is_problematic_source(src: &str) -> bool {
@@ -281,17 +290,26 @@ fn is_problematic_source(src: &str) -> bool {
         let ext_lower = ext.to_lowercase();
 
         // Windows resource/manifest files
-        if matches!(ext_lower.as_str(), "rc" | "res" | "ico" | "manifest" | "def") {
+        if matches!(
+            ext_lower.as_str(),
+            "rc" | "res" | "ico" | "manifest" | "def"
+        ) {
             return true;
         }
 
         // macOS-specific files
-        if matches!(ext_lower.as_str(), "plist" | "xib" | "storyboard" | "xcassets") {
+        if matches!(
+            ext_lower.as_str(),
+            "plist" | "xib" | "storyboard" | "xcassets"
+        ) {
             return true;
         }
 
         // Object files and archives (prebuilt)
-        if matches!(ext_lower.as_str(), "o" | "obj" | "a" | "lib" | "so" | "dylib" | "dll") {
+        if matches!(
+            ext_lower.as_str(),
+            "o" | "obj" | "a" | "lib" | "so" | "dylib" | "dll"
+        ) {
             return true;
         }
 
@@ -606,14 +624,14 @@ mod tests {
     fn test_filter_includes() {
         let includes = vec![
             "include".to_string(),
-            "src/".to_string(),                       // Trailing slash
-            "./test".to_string(),                     // Current dir reference
-            "test//integration".to_string(),          // Double slash
-            "/usr/include".to_string(),               // System path
-            "/opt/homebrew/include".to_string(),      // System path
+            "src/".to_string(),                                // Trailing slash
+            "./test".to_string(),                              // Current dir reference
+            "test//integration".to_string(),                   // Double slash
+            "/usr/include".to_string(),                        // System path
+            "/opt/homebrew/include".to_string(),               // System path
             "${CMAKE_CURRENT_SOURCE_DIR}/include".to_string(), // CMake var
             "${CMAKE_BINARY_DIR}/generated".to_string(),       // Should be filtered
-            "".to_string(),                           // Empty
+            String::new(), // Empty
         ];
 
         let filtered = filter_includes(&includes);
@@ -628,16 +646,16 @@ mod tests {
         assert!(!filtered.iter().any(|s| s.contains("/usr/")));
         assert!(!filtered.iter().any(|s| s.contains("/opt/")));
         assert!(!filtered.iter().any(|s| s.contains("CMAKE_BINARY_DIR")));
-        assert!(!filtered.iter().any(|s| s.is_empty()));
+        assert!(!filtered.iter().any(String::is_empty));
     }
 
     #[test]
     fn test_filter_defines_external_libs() {
         let defines = vec![
             "USE_BUNDLED_FMT".to_string(),
-            "SPDLOG_FMT_EXTERNAL".to_string(),   // Should be filtered
-            "LIB_USE_EXTERNAL".to_string(),       // Should be filtered
-            "FEATURE_EXTERNAL_API".to_string(),   // Should NOT be filtered (EXTERNAL not at end)
+            "SPDLOG_FMT_EXTERNAL".to_string(), // Should be filtered
+            "LIB_USE_EXTERNAL".to_string(),    // Should be filtered
+            "FEATURE_EXTERNAL_API".to_string(), // Should NOT be filtered (EXTERNAL not at end)
         ];
 
         let filtered = filter_defines(&defines);
@@ -651,9 +669,9 @@ mod tests {
     fn test_filter_copts_exception_handling() {
         let copts = vec![
             "-Wall".to_string(),
-            "-fno-exceptions".to_string(),  // Should be filtered
-            "-fexceptions".to_string(),     // Should be filtered
-            "-fno-rtti".to_string(),        // Should be filtered
+            "-fno-exceptions".to_string(),     // Should be filtered
+            "-fexceptions".to_string(),        // Should be filtered
+            "-fno-rtti".to_string(),           // Should be filtered
             "-fvisibility=hidden".to_string(), // Should NOT be filtered
         ];
 
@@ -683,15 +701,15 @@ mod tests {
     #[test]
     fn test_filter_sources_path_normalization() {
         let sources = vec![
-            "src//include/foo.h".to_string(),       // Double slash
-            "./main.cpp".to_string(),               // Leading ./
-            "src//util//helper.cpp".to_string(),    // Multiple double slashes
-            "test.cpp".to_string(),                 // Normal
+            "src//include/foo.h".to_string(),    // Double slash
+            "./main.cpp".to_string(),            // Leading ./
+            "src//util//helper.cpp".to_string(), // Multiple double slashes
+            "test.cpp".to_string(),              // Normal
         ];
 
         let filtered = filter_sources(&sources);
         assert!(filtered.contains(&"src/include/foo.h".to_string())); // // collapsed
-        assert!(filtered.contains(&"main.cpp".to_string()));          // ./ removed
+        assert!(filtered.contains(&"main.cpp".to_string())); // ./ removed
         assert!(filtered.contains(&"src/util/helper.cpp".to_string())); // // collapsed
         assert!(filtered.contains(&"test.cpp".to_string()));
     }
@@ -701,9 +719,9 @@ mod tests {
         let sources = vec![
             "src/main.cpp".to_string(),
             "src/util.cpp".to_string(),
-            "src/main.cpp".to_string(),     // Duplicate
-            "./src/util.cpp".to_string(),   // Duplicate (normalized)
-            "src//main.cpp".to_string(),    // Duplicate (normalized)
+            "src/main.cpp".to_string(),   // Duplicate
+            "./src/util.cpp".to_string(), // Duplicate (normalized)
+            "src//main.cpp".to_string(),  // Duplicate (normalized)
         ];
 
         let filtered = filter_sources(&sources);

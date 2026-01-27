@@ -75,7 +75,9 @@ impl Argument {
         match self {
             Self::Bracket(s) => Some(s),
             Self::Quoted(v) | Self::Unquoted(v) => {
-                if v.parts.len() == 1 && let ArgumentPart::Text(s) = &v.parts[0] {
+                if v.parts.len() == 1
+                    && let ArgumentPart::Text(s) = &v.parts[0]
+                {
                     return Some(s);
                 }
                 None

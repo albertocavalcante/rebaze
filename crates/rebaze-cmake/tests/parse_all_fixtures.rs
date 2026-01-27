@@ -66,7 +66,7 @@ fn test_parse_all_fixtures() {
     for base_dir in &dirs_to_scan {
         for entry in walkdir::WalkDir::new(base_dir)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.file_name() == "CMakeLists.txt")
         {
             let path = entry.path();
@@ -90,9 +90,10 @@ fn test_parse_all_fixtures() {
     println!("\n=== Summary ===");
     println!("Passed: {passed}");
     println!("Failed: {failed}");
+    let total = passed + failed;
     println!(
         "Success rate: {:.1}%",
-        (passed as f64 / (passed + failed) as f64) * 100.0
+        (f64::from(passed) / f64::from(total)) * 100.0
     );
 
     if !failures.is_empty() {

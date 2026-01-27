@@ -7,8 +7,7 @@ use std::path::PathBuf;
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     let list_path = arg_value(&args, "--list").map_or_else(default_list_path, PathBuf::from);
-    let limit = arg_value(&args, "--limit")
-        .and_then(|val| val.parse::<usize>().ok());
+    let limit = arg_value(&args, "--limit").and_then(|val| val.parse::<usize>().ok());
     let allow_fail = args.iter().any(|arg| arg == "--allow-fail");
     let max_errors = arg_value(&args, "--max-errors")
         .and_then(|val| val.parse::<usize>().ok())
@@ -141,10 +140,7 @@ fn default_artifacts_dir() -> PathBuf {
 fn find_repo_root(start: &std::path::Path) -> Option<PathBuf> {
     let markers = [".git", "AGENTS.md", "Cargo.toml", "MODULE.bazel"];
     for candidate in start.ancestors() {
-        if markers
-            .iter()
-            .any(|marker| candidate.join(marker).exists())
-        {
+        if markers.iter().any(|marker| candidate.join(marker).exists()) {
             return Some(candidate.to_path_buf());
         }
     }
