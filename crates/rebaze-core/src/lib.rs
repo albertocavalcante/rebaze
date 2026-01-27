@@ -4,7 +4,11 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub mod config;
 pub mod model;
+
+// Re-export config types for convenience
+pub use config::{BazelConfig, Config};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildGenerator {
@@ -24,6 +28,8 @@ pub struct MigrateOptions<'a> {
     pub bazelle_root: Option<&'a str>,
     pub bazelle_bin: Option<&'a str>,
     pub unsafe_mode: bool,
+    /// Migration configuration (versions, mappings, filters, etc.)
+    pub config: Option<Config>,
 }
 
 /// Analyze a project and detect its build system.
@@ -100,7 +106,13 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
 
             match generator {
                 BuildGenerator::Native => {
-                    let bazel_files = rebaze_bazel::generate_from_cmake(&project);
+                    // Get config, falling back to defaults if not provided
+                    let bazel_config = options
+                        .config
+                        .as_ref()
+                        .map_or_else(BazelConfig::default, Config::bazel_config);
+                    let bazel_files =
+                        rebaze_bazel::generate_from_cmake_with_config(&project, &bazel_config);
 
                     if options.dry_run {
                         print_files(&bazel_files);

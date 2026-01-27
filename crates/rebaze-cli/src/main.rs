@@ -51,6 +51,13 @@ enum Commands {
         #[arg(short, long)]
         from: Option<String>,
 
+        /// Path to configuration file (default: rebaze.toml in project root)
+        ///
+        /// The config file controls dependency versions, library mappings,
+        /// filter rules, and other migration options.
+        #[arg(short, long)]
+        config: Option<String>,
+
         /// Dry run - show what would be generated without writing files
         #[arg(long)]
         dry_run: bool,
@@ -120,6 +127,7 @@ fn main() -> Result<()> {
         Commands::Migrate {
             path,
             from,
+            config,
             dry_run,
             cmake_build_dir,
             cmake_config,
@@ -133,6 +141,14 @@ fn main() -> Result<()> {
             if dry_run {
                 tracing::info!("Dry run mode - no files will be written");
             }
+
+            // Load configuration
+            let project_path = std::path::Path::new(&path);
+            let migration_config = rebaze_core::Config::load_from_path_or_discover(
+                config.as_ref().map(std::path::Path::new),
+                project_path,
+            )?;
+
             let options = rebaze_core::MigrateOptions {
                 path: &path,
                 from: from.as_deref(),
@@ -144,6 +160,7 @@ fn main() -> Result<()> {
                 bazelle_root: bazelle_root.as_deref(),
                 bazelle_bin: bazelle_bin.as_deref(),
                 unsafe_mode,
+                config: Some(migration_config),
             };
             rebaze_core::migrate(&options)?;
         }
