@@ -5,6 +5,75 @@ description: How to install rebaze
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
+## Homebrew (macOS/Linux)
+
+The easiest way to install rebaze is via Homebrew using the `albertocavalcante/tap`:
+
+```bash
+# Add the tap
+brew tap albertocavalcante/tap
+```
+
+### Stable (Builds from Source)
+
+```bash
+brew install albertocavalcante/tap/rebaze
+```
+
+<Aside type="note">
+The stable version builds from source, which requires Rust. Homebrew will automatically install Rust as a build dependency. Build time is approximately 5-10 minutes.
+</Aside>
+
+### Nightly (Prebuilt Binaries)
+
+The nightly version uses prebuilt binaries and installs instantly. Since rebaze is currently a private repository, you need to authenticate with a GitHub token:
+
+<Tabs>
+  <TabItem label="Using GitHub CLI (recommended)">
+    ```bash
+    # If you have gh installed and authenticated
+    export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"
+    brew install albertocavalcante/tap/rebaze-nightly
+    ```
+  </TabItem>
+  <TabItem label="Using Personal Access Token">
+    ```bash
+    # Generate a PAT at https://github.com/settings/tokens
+    # Required scope: repo (for private repository access)
+    export HOMEBREW_GITHUB_API_TOKEN="ghp_your_token_here"
+    brew install albertocavalcante/tap/rebaze-nightly
+    ```
+  </TabItem>
+</Tabs>
+
+<Aside type="tip">
+Add the export to your shell profile (`~/.zshrc` or `~/.bashrc`) for persistence:
+```bash
+echo 'export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"' >> ~/.zshrc
+```
+</Aside>
+
+<Aside type="caution">
+The stable and nightly versions conflict—uninstall one before installing the other:
+```bash
+brew uninstall rebaze
+brew install albertocavalcante/tap/rebaze-nightly
+```
+</Aside>
+
+### Update & Uninstall
+
+```bash
+# Update to latest version
+brew upgrade rebaze   # or rebaze-nightly
+
+# Uninstall
+brew uninstall rebaze
+
+# Remove the tap entirely
+brew untap albertocavalcante/tap
+```
+
 ## Build from Source
 
 rebaze is built with Bazel. Clone the repository and build:

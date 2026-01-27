@@ -16,19 +16,43 @@ hero:
 
 import { Card, CardGrid, Aside, Tabs, TabItem, Code } from '@astrojs/starlight/components';
 
-## Try it now
+## Install
 
+<Tabs>
+<TabItem label="Homebrew">
 ```bash
-# Install and migrate in one go
+# Add the tap and install
+brew tap albertocavalcante/tap
+brew install albertocavalcante/tap/rebaze
+
+# Migrate your project
+rebaze migrate /path/to/your/project
+```
+</TabItem>
+<TabItem label="Homebrew (Nightly)">
+```bash
+# Requires GitHub token for private repo access
+export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"
+
+# Add the tap and install nightly (prebuilt binaries)
+brew tap albertocavalcante/tap
+brew install albertocavalcante/tap/rebaze-nightly
+
+# Migrate your project
+rebaze migrate /path/to/your/project
+```
+</TabItem>
+<TabItem label="From Source">
+```bash
+# Clone and build with Bazel
 git clone https://github.com/albertocavalcante/rebaze && cd rebaze
+bazel build //crates/rebaze-cli:rebaze
+
+# Run directly
 bazel run //crates/rebaze-cli:rebaze -- migrate /path/to/your/project
 ```
-
-Or if you have rebaze installed:
-
-```bash
-rebaze migrate .
-```
+</TabItem>
+</Tabs>
 
 That's it. Your CMake or Gradle project now has Bazel build files.
 
