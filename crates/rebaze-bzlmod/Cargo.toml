@@ -1,0 +1,47 @@
+[package]
+name = "rebaze-bzlmod"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/albertocavalcante/rebaze"
+rust-version = "1.85"
+description = "Bazel module dependency resolution using MVS algorithm - Rust port of go-bzlmod"
+keywords = ["bazel", "bzlmod", "dependency", "resolution", "mvs"]
+categories = ["development-tools::build-utils"]
+
+# This crate is designed to be standalone and publishable
+# It does not depend on other rebaze-* crates
+
+[lints]
+workspace = true
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+
+# Utilities
+url = "2"
+once_cell = "1"
+regex = "1"
+async-channel = "2"
+indexmap = { version = "2", features = ["serde"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+wiremock = "0.6"
+tempfile = "3"

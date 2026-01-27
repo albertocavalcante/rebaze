@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/rebaze-bcr",
+    "crates/rebaze-bzlmod",
     "crates/rebaze-cli",
     "crates/rebaze-core",
     "crates/rebaze-cmake",
