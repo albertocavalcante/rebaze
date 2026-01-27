@@ -49,3 +49,11 @@ docs-preview:
 # Serve built docs (after docs-build)
 docs-serve:
     cd docs && bunx serve dist
+
+# Run full accessibility audit (requires docs server running)
+docs-audit URL="http://localhost:4321/rebaze":
+    ./tools/docs-audit.sh {{URL}}
+
+# Quick accessibility check for CI
+docs-audit-ci URL="http://localhost:4321/rebaze":
+    ./tools/docs-audit-ci.sh {{URL}}

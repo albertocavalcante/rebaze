@@ -3,121 +3,149 @@ title: CLI Reference
 description: Complete reference for rebaze commands and options
 ---
 
-## Global Options
+import { Aside } from '@astrojs/starlight/components';
+
+## Quick reference
+
+```bash
+rebaze analyze [PATH]              # Detect build system
+rebaze migrate [PATH] [OPTIONS]    # Generate Bazel files
+rebaze validate [PATH]             # Verify migration
+```
+
+## Global options
 
 | Option | Description |
 |--------|-------------|
 | `-v, --verbose` | Enable verbose output |
-| `--version` | Print version information |
-| `-h, --help` | Print help information |
+| `--version` | Print version |
+| `-h, --help` | Print help |
 
-## rebaze analyze
+---
+
+## `rebaze analyze`
 
 Detect the build system of a project.
 
 ```bash
-rebaze analyze [PATH]
+rebaze analyze /path/to/project
+```
+
+**Output:**
+```
+Detected build systems: cmake, gradle
 ```
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `PATH` | `.` | Path to project root |
+| `PATH` | `.` | Project root |
 
-**Detected systems:** cmake, gradle, maven, make, cargo
+**Detectable systems:** cmake, gradle, maven, make, cargo
 
 ---
 
-## rebaze migrate
+## `rebaze migrate`
 
-Migrate a project to Bazel.
+Generate Bazel build files from your existing build system.
 
 ```bash
-rebaze migrate [OPTIONS] [PATH]
+rebaze migrate /path/to/project
 ```
 
-### Arguments
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `PATH` | `.` | Path to project root |
-
-### General Options
+### Basic options
 
 | Option | Description |
 |--------|-------------|
-| `-f, --from <SYSTEM>` | Source build system (auto-detected) |
-| `-c, --config <FILE>` | Path to rebaze.toml |
 | `--dry-run` | Preview without writing files |
+| `-f, --from <SYSTEM>` | Force build system (auto-detected) |
+| `-c, --config <FILE>` | Path to rebaze.toml |
 | `--unsafe-mode` | Skip validation checks |
 
-### CMake Options
+### CMake options
 
 | Option | Description |
 |--------|-------------|
-| `--cmake-build-dir <DIR>` | CMake build directory with file-api |
-| `--cmake-config <NAME>` | Configuration name (Debug/Release) |
-| `--cmake-file-api-only` | Fail if file-api unavailable |
+| `--cmake-build-dir <DIR>` | CMake build directory with file-api data |
+| `--cmake-config <NAME>` | Configuration (Debug/Release) |
+| `--cmake-file-api-only` | Require file-api (fail if unavailable) |
 
-### Generator Options
+### Generator options
 
 | Option | Description |
 |--------|-------------|
-| `--build-generator <TYPE>` | `auto`, `native`, or `bazelle` |
+| `--build-generator <TYPE>` | Generator: `auto`, `native`, or `bazelle` |
 | `--bazelle-root <DIR>` | Path to bazelle workspace |
 | `--bazelle-bin <PATH>` | Path to bazelle binary |
 
 ### Examples
 
+**Basic migration:**
 ```bash
-# Basic migration
-rebaze migrate /path/to/project
+rebaze migrate .
+```
 
-# Preview changes
-rebaze migrate /path/to/project --dry-run
+**Preview changes:**
+```bash
+rebaze migrate . --dry-run
+```
 
-# With custom config
+**With custom config:**
+```bash
 rebaze migrate . --config custom.toml
+```
 
-# CMake with File API
+**CMake with File API (most accurate):**
+```bash
+cmake -S . -B build
+rebaze migrate . --cmake-build-dir build
+```
+
+**Specific CMake configuration:**
+```bash
 rebaze migrate . --cmake-build-dir build --cmake-config Release
+```
 
-# Force native generator
+**Force native generator:**
+```bash
 rebaze migrate . --build-generator native
 ```
 
 ---
 
-## rebaze validate
+## `rebaze validate`
 
-Validate generated Bazel files.
+Verify generated Bazel files build successfully.
 
 ```bash
-rebaze validate [OPTIONS] [PATH]
+rebaze validate /path/to/project
 ```
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `PATH` | `.` | Path to project root |
 
 | Option | Description |
 |--------|-------------|
 | `--unsafe-mode` | Skip bazel build validation |
 
+Runs `bazel build //...` and verifies Bazel 9.x is being used.
+
 ---
 
-## Exit Codes
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 1 | Error |
+| `0` | Success |
+| `1` | Error |
 
-## Environment Variables
+## Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `RUST_LOG` | Log level (`debug`, `info`, `warn`) |
+| `RUST_LOG` | Log level: `debug`, `info`, `warn`, `error` |
 
+**Debug logging:**
 ```bash
 RUST_LOG=debug rebaze migrate .
 ```
+
+<Aside type="tip">
+Use `RUST_LOG=debug` to see exactly what rebaze is parsing and how it maps dependencies.
+</Aside>

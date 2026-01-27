@@ -1,129 +1,110 @@
 ---
 title: Quick Start
-description: Migrate your first project in 5 minutes
+description: Migrate your first project in 60 seconds
 ---
 
-import { Steps, Aside, Code } from '@astrojs/starlight/components';
+import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-This guide walks you through migrating a project to Bazel in just a few steps.
+Migrate any CMake or Gradle project to Bazel in three commands.
 
 <Steps>
 
-1. **Analyze your project**
-
-   First, detect which build system your project uses:
+1. **Analyze** — See what rebaze detects
 
    ```bash
-   rebaze analyze /path/to/project
+   rebaze analyze .
    ```
-
-   Output:
    ```
    Detected build systems: cmake
    ```
 
-2. **Preview the migration**
-
-   See what files will be generated without writing anything:
+2. **Migrate** — Generate Bazel files
 
    ```bash
-   rebaze migrate /path/to/project --dry-run
+   rebaze migrate .
    ```
 
-   This outputs the generated `MODULE.bazel` and `BUILD.bazel` content.
+   Creates: `MODULE.bazel`, `BUILD.bazel`, `.bazelversion`, `.bazelrc`
 
-3. **Run the migration**
-
-   Generate the Bazel files:
+3. **Build** — Verify it works
 
    ```bash
-   rebaze migrate /path/to/project
-   ```
-
-   This creates:
-   - `MODULE.bazel` - Module definition with dependencies
-   - `BUILD.bazel` - Build targets
-   - `.bazelversion` - Pins Bazel 9.x
-   - `.bazelrc` - Build configuration
-
-4. **Validate the migration**
-
-   Verify everything builds correctly:
-
-   ```bash
-   rebaze validate /path/to/project
-   ```
-
-   Or build directly with Bazel:
-
-   ```bash
-   cd /path/to/project
    bazel build //...
    ```
 
 </Steps>
 
-## Example Output
+Done. Your project now builds with Bazel.
 
-For a CMake project like this:
+---
 
-```cmake
-cmake_minimum_required(VERSION 3.14)
-project(myapp)
+## Preview before writing
 
-add_library(mylib src/lib.cpp)
-add_executable(myapp src/main.cpp)
-target_link_libraries(myapp mylib)
+Use `--dry-run` to see what would be generated:
+
+```bash
+rebaze migrate . --dry-run
 ```
 
-rebaze generates:
+## Customize with config
 
-```python
-# MODULE.bazel
-module(name = "myapp", version = "0.1.0")
-bazel_dep(name = "rules_cc", version = "0.1.1")
-```
-
-```python
-# BUILD.bazel
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-
-cc_library(
-    name = "mylib",
-    srcs = ["src/lib.cpp"],
-    visibility = ["//visibility:public"],
-)
-
-cc_binary(
-    name = "myapp",
-    srcs = ["src/main.cpp"],
-    deps = [":mylib"],
-)
-```
-
-## Configuration
-
-For more control, create a `rebaze.toml` in your project root:
+Create `rebaze.toml` for custom dependency mappings:
 
 ```toml
-[versions]
-rules_cc = "0.1.1"
-googletest = "1.15.2"
-
 [mappings.system_libraries]
-z = "@zlib"
-ssl = "@openssl"
+myvendorlib = "@myvendor//:lib"
 
 [strategy]
 default = "system"
 ```
 
-<Aside type="tip">
-See the [Configuration Reference](/rebaze/reference/config/) for all available options.
+Then migrate:
+
+```bash
+rebaze migrate . --config rebaze.toml
+```
+
+<Aside type="tip" title="Common patterns">
+See [Configuration Reference](/rebaze/reference/config/) for all options, or jump to [Common Recipes](#common-recipes) below.
 </Aside>
 
-## Next Steps
+## Common recipes
 
-- [CMake Migration Tutorial](/rebaze/tutorials/cmake/) - Detailed walkthrough
-- [Gradle Migration Tutorial](/rebaze/tutorials/gradle/) - For JVM projects
-- [Dependency Mappings](/rebaze/guides/dependency-mappings/) - Customize how deps are resolved
+### Map an unknown library
+
+```toml
+[mappings.system_libraries]
+customlib = "@customlib"
+```
+
+### Use hermetic builds
+
+```toml
+[strategy]
+default = "source"
+```
+
+### Pin dependency versions
+
+```toml
+[versions]
+rules_cc = "0.1.1"
+googletest = "1.15.2"
+```
+
+## Troubleshooting
+
+**"Unknown library 'xyz', skipping"**
+→ Add to `[mappings.system_libraries]` in `rebaze.toml`
+
+**Build fails after migration**
+→ Check include paths and verify all sources are captured
+
+**Missing dependencies**
+→ Run with `--verbose` to see what rebaze detected
+
+## Next steps
+
+- **[CMake Tutorial](/rebaze/tutorials/cmake/)** — Detailed walkthrough with examples
+- **[Gradle Tutorial](/rebaze/tutorials/gradle/)** — Java/Kotlin project migration
+- **[CLI Reference](/rebaze/reference/cli/)** — All command options

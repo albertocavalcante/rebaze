@@ -3,69 +3,55 @@ title: Configuration
 description: rebaze.toml configuration reference
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Create a `rebaze.toml` in your project root to customize migration.
+Create a `rebaze.toml` in your project root to customize migration behavior.
 
-## Versions
+## Common recipes
 
-Control Bazel dependency versions:
+Copy-paste these for common scenarios:
+
+### Minimal config
 
 ```toml
 [versions]
 rules_cc = "0.1.1"
-platforms = "0.0.11"
-rules_foreign_cc = "0.14.0"
-googletest = "1.15.2"
-google_benchmark = "1.9.1"
 ```
 
-## Strategy
-
-Define dependency resolution strategy:
-
-```toml
-[strategy]
-default = "system"  # system | source | conan | vcpkg
-
-[strategy.overrides]
-zlib = "source"
-openssl = "source"
-```
-
-| Strategy | Description |
-|----------|-------------|
-| `system` | System libraries via pkg-config |
-| `source` | Build from source (hermetic) |
-| `conan` | Conan package manager |
-| `vcpkg` | vcpkg package manager |
-
-## Mappings
-
-### System Libraries
-
-Map `-l` flags to Bazel targets:
+### Map a custom library
 
 ```toml
 [mappings.system_libraries]
-z = "@zlib"
-ssl = "@openssl//:ssl"
-gtest = "@googletest//:gtest"
+mylib = "@mylib"
 ```
 
-### Plain Libraries
-
-Map plain library names:
+### Hermetic builds (CI/CD)
 
 ```toml
-[mappings.plain_libraries]
-gtest = "@googletest//:gtest"
-boost = "@boost"
+[strategy]
+default = "source"
+
+[mappings.known_packages.zlib]
+version = "1.3.1"
+url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+strip_prefix = "zlib-1.3.1"
+build_system = "cmake"
+out_static_libs = ["libz.a"]
 ```
 
-### CMake Packages
+### Hybrid (fast local, hermetic CI)
 
-Map `find_package()` targets:
+```toml
+[strategy]
+default = "system"
+
+[strategy.overrides]
+openssl = "source"  # Security-critical: always hermetic
+zlib = "source"
+```
+
+### CMake package mapping
 
 ```toml
 [mappings.packages.OpenSSL]
@@ -76,21 +62,101 @@ SSL = "@openssl//:ssl"
 Crypto = "@openssl//:crypto"
 ```
 
-### Implicit System Libraries
+---
+
+## Full reference
+
+### `[versions]`
+
+Pin Bazel dependency versions:
+
+```toml
+[versions]
+rules_cc = "0.1.1"
+platforms = "0.0.11"
+rules_foreign_cc = "0.14.0"
+googletest = "1.15.2"
+google_benchmark = "1.9.1"
+```
+
+### `[strategy]`
+
+Control how external dependencies are resolved:
+
+```toml
+[strategy]
+default = "system"  # system | source | conan | vcpkg
+
+[strategy.overrides]
+zlib = "source"
+openssl = "source"
+```
+
+| Strategy | Hermetic | Build speed | Setup |
+|----------|----------|-------------|-------|
+| `system` | No | Fast | None |
+| `source` | Yes | Slow (first) | Package metadata |
+| `vcpkg` | Partial | Medium | vcpkg install |
+| `conan` | Partial | Medium | Conan install |
+
+### `[mappings]`
+
+#### System libraries
+
+Map `-l` flags to Bazel targets:
+
+```toml
+[mappings.system_libraries]
+z = "@zlib"
+ssl = "@openssl//:ssl"
+crypto = "@openssl//:crypto"
+gtest = "@googletest//:gtest"
+```
+
+#### Plain libraries
+
+Map library names without `-l` prefix:
+
+```toml
+[mappings.plain_libraries]
+gtest = "@googletest//:gtest"
+boost = "@boost"
+```
+
+#### CMake packages
+
+Map `find_package()` results:
+
+```toml
+[mappings.packages.Boost]
+target_pattern = "@boost//:{component}"
+
+[mappings.packages.Boost.components]
+filesystem = "@boost//:filesystem"
+system = "@boost//:system"
+```
+
+#### Implicit system libraries
+
+Libraries to ignore (linked by default):
 
 ```toml
 [mappings]
 implicit_system_libs = ["pthread", "c", "m", "dl", "rt"]
 ```
 
-### Ignored Libraries
+#### Ignored libraries
+
+Libraries to skip entirely:
 
 ```toml
 [mappings]
 ignored_libraries = ["fmt", "spdlog", "Threads::Threads"]
 ```
 
-### Transitive Dependencies
+#### Transitive dependencies
+
+Declare deps that pull in other deps:
 
 ```toml
 [mappings.transitive_deps]
@@ -98,7 +164,9 @@ glib = ["pcre2", "libffi", "zlib"]
 curl = ["zlib", "openssl"]
 ```
 
-### System Linkopts
+#### System linkopts
+
+Override linker flags:
 
 ```toml
 [mappings.system_linkopts]
@@ -106,9 +174,9 @@ curl = ["zlib", "openssl"]
 curl = ["-lcurl"]
 ```
 
-### Known Packages
+### `[mappings.known_packages]`
 
-For source builds:
+Define source builds for hermetic resolution:
 
 ```toml
 [mappings.known_packages.zlib]
@@ -120,7 +188,7 @@ build_system = "cmake"  # cmake | meson | autotools
 out_static_libs = ["libz.a"]
 ```
 
-## Build
+### `[build]`
 
 Configure generated BUILD files:
 
@@ -133,7 +201,9 @@ default_c_standard = "11"
 module_version = "0.1.0"
 ```
 
-### Custom Rules
+#### Custom rules
+
+Use your own rule implementations:
 
 ```toml
 [build.rules]
@@ -146,7 +216,7 @@ bzl = "@company//build:rules.bzl"
 items = ["my_cc_library", "my_cc_binary"]
 ```
 
-## Filters
+### `[filters]`
 
 Filter platform-specific artifacts:
 
@@ -158,6 +228,51 @@ excluded_copt_patterns = ["/", "-O", "-g", "-std="]
 excluded_include_patterns = ["/usr/", "/opt/"]
 ```
 
+---
+
+## Complete example
+
 <Aside type="tip">
-See [rebaze.example.toml](https://github.com/albertocavalcante/rebaze/blob/main/rebaze.example.toml) for a complete example with all options.
+See [rebaze.example.toml](https://github.com/albertocavalcante/rebaze/blob/main/rebaze.example.toml) for a full working example.
 </Aside>
+
+```toml
+# rebaze.toml - Complete example
+
+[versions]
+rules_cc = "0.1.1"
+rules_foreign_cc = "0.14.0"
+googletest = "1.15.2"
+
+[strategy]
+default = "system"
+
+[strategy.overrides]
+openssl = "source"
+zlib = "source"
+
+[mappings.system_libraries]
+z = "@zlib"
+ssl = "@openssl//:ssl"
+crypto = "@openssl//:crypto"
+
+[mappings]
+implicit_system_libs = ["pthread", "c", "m", "dl", "rt"]
+ignored_libraries = ["Threads::Threads"]
+
+[mappings.known_packages.zlib]
+version = "1.3.1"
+url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+strip_prefix = "zlib-1.3.1"
+build_system = "cmake"
+out_static_libs = ["libz.a"]
+
+[build]
+default_visibility = "//visibility:public"
+default_cxx_standard = "17"
+
+[filters]
+excluded_source_extensions = ["rc", "res", "plist"]
+excluded_define_patterns = ["_WIN32", "__APPLE__"]
+```

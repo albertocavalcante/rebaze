@@ -1,49 +1,73 @@
-# Starlight Starter Kit: Basics
+# rebaze Documentation
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+This directory contains the documentation site for rebaze, built with [Astro Starlight](https://starlight.astro.build/).
+
+## Development
+
+```bash
+cd docs
+
+# Install dependencies
+bun install
+
+# Start dev server (http://localhost:4321/rebaze)
+bun dev
+
+# Build for production
+bun build
+
+# Preview production build
+bun preview
+```
+
+## Structure
 
 ```
-bun create astro@latest -- --template starlight
-```
-
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
-
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
-
-```
-.
-├── public/
+docs/
 ├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+│   ├── content/docs/      # Documentation pages (MDX)
+│   │   ├── getting-started/
+│   │   ├── tutorials/
+│   │   ├── guides/
+│   │   ├── concepts/
+│   │   └── reference/
+│   ├── assets/            # Logos and images
+│   └── styles/            # Custom CSS
+├── public/                # Static assets
+└── astro.config.mjs       # Starlight configuration
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+## Documentation Organization
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+The docs follow the [Diataxis](https://diataxis.fr/) framework:
 
-Static assets, like favicons, can be placed in the `public/` directory.
+| Section | Purpose | Example |
+|---------|---------|---------|
+| **Getting Started** | Onboarding new users | Installation, Quick Start |
+| **Tutorials** | Learning-oriented walkthroughs | Migrate CMake Project |
+| **How-to Guides** | Task-oriented instructions | Use cmake-file-api |
+| **Concepts** | Understanding-oriented explanations | How Rebaze Works |
+| **Reference** | Information-oriented descriptions | CLI Reference, Config |
 
-## 🧞 Commands
+## Adding Pages
 
-All commands are run from the root of the project, from a terminal:
+1. Create an `.mdx` file in the appropriate directory under `src/content/docs/`
+2. Add frontmatter with `title` and `description`
+3. Add the page to the sidebar in `astro.config.mjs`
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `bun install`             | Installs dependencies                            |
-| `bun dev`             | Starts local dev server at `localhost:4321`      |
-| `bun build`           | Build your production site to `./dist/`          |
-| `bun preview`         | Preview your build locally, before deploying     |
-| `bun astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `bun astro -- --help` | Get help using the Astro CLI                     |
+Example:
 
-## 👀 Want to learn more?
+```mdx
+---
+title: My New Page
+description: What this page covers
+---
 
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+Content goes here...
+```
+
+## Deployment
+
+The docs are automatically deployed to GitHub Pages via the `.github/workflows/docs.yml` workflow on pushes to `main`.
+
+Live site: https://albertocavalcante.github.io/rebaze/

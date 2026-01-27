@@ -12,11 +12,11 @@ Migrate from Gradle, CMake, and other build tools to Bazel.
 
 | Source | Status |
 |--------|--------|
-| Gradle | In progress |
-| Maven | Planned |
-| CMake | In progress |
-| Makefile | Planned |
-| Cargo | Planned |
+| CMake | ✅ Supported |
+| Gradle | ✅ Supported |
+| Maven | 🔜 Planned |
+| Makefile | 🔜 Planned |
+| Cargo | 🔜 Planned |
 
 ## Usage
 

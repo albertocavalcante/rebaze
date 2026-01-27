@@ -28,3 +28,4 @@ Thumbs.db
 # Generated reports
 tools/cmake_corpus/reports/*.json
 tools/cmake_corpus/reports/*.md
+.playwright-mcp/

@@ -3,55 +3,85 @@ title: Introduction
 description: What is rebaze and why use it
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-**rebaze** is a CLI tool that migrates projects from CMake and Gradle to Bazel.
+**rebaze** analyzes your CMake or Gradle project and generates Bazel build files automatically.
 
-## Why Bazel?
+```bash
+rebaze migrate /path/to/project
+```
 
-Bazel offers significant advantages for large codebases:
-
-- **Fast incremental builds** - Only rebuilds what changed
-- **Hermetic builds** - Same inputs always produce same outputs
-- **Multi-language support** - C++, Java, Python, Go, and more
-- **Remote caching** - Share build artifacts across teams
-- **Remote execution** - Distribute builds across machines
-
-## Why rebaze?
-
-Migrating to Bazel manually is tedious:
-
-1. Learning Starlark syntax
-2. Writing BUILD files for every directory
-3. Mapping all dependencies to Bazel targets
-4. Handling platform-specific configurations
-
-**rebaze automates this process.**
+Output:
+- `MODULE.bazel` — Dependencies and module definition
+- `BUILD.bazel` — Build targets for your code
+- `.bazelversion` — Pins Bazel 9.x
+- `.bazelrc` — Sensible defaults
 
 ## What rebaze does
 
-1. **Analyzes** your existing build system
-2. **Parses** CMakeLists.txt or build.gradle files
-3. **Maps** dependencies to Bazel targets
-4. **Generates** MODULE.bazel and BUILD.bazel files
-5. **Validates** the migration by building
+<CardGrid>
+  <Card title="1. Analyze" icon="magnifier">
+    Detects your build system and parses build files
+  </Card>
+  <Card title="2. Transform" icon="random">
+    Maps dependencies to Bazel targets
+  </Card>
+  <Card title="3. Generate" icon="document">
+    Writes MODULE.bazel and BUILD.bazel files
+  </Card>
+  <Card title="4. Validate" icon="approve-check-circle">
+    Verifies the migration builds successfully
+  </Card>
+</CardGrid>
 
-## Supported Build Systems
+## Why migrate to Bazel?
 
-| Source | Status |
-|--------|--------|
-| CMake | ✅ Full support |
-| Gradle | ✅ Full support |
-| Maven | 🔜 Detection only |
+If you're considering Bazel, you probably already know why. For the record:
 
-<Aside type="tip">
-rebaze works best with well-structured projects that follow standard conventions for their build system.
+| Benefit | What it means |
+|---------|---------------|
+| **Fast incremental builds** | Only rebuilds what changed |
+| **Hermetic builds** | Same inputs → same outputs, always |
+| **Remote caching** | Share build artifacts across your team |
+| **Remote execution** | Distribute builds across machines |
+| **Multi-language** | C++, Java, Go, Python in one repo |
+
+## Why use rebaze?
+
+Manual migration is tedious:
+
+1. Learning Starlark syntax
+2. Writing BUILD files for every directory
+3. Mapping every dependency to Bazel targets
+4. Handling platform-specific configurations
+
+rebaze handles all of this. You focus on your code.
+
+## Supported build systems
+
+| Source | Status | Notes |
+|--------|--------|-------|
+| **CMake** | ✅ Supported | Full parser + cmake-file-api |
+| **Gradle** | ✅ Supported | Groovy and Kotlin DSL |
+| Maven | 🔜 Planned | Detection only |
+
+<Aside type="caution" title="Early development">
+rebaze is under active development. It works well for standard project structures but may need manual adjustments for complex builds.
 </Aside>
 
-## Next Steps
+## Limitations
 
-Ready to get started?
+Be aware of current limitations:
 
-1. [Install rebaze](/rebaze/getting-started/installation/)
-2. [Try the quick start guide](/rebaze/getting-started/quickstart/)
-3. [Follow a migration tutorial](/rebaze/tutorials/cmake/)
+- **CMake**: Generator expressions partially supported
+- **Gradle**: Android projects not yet supported
+- **General**: Custom build logic may need manual migration
+
+## Next steps
+
+Ready? Pick your path:
+
+1. **[Quick Start](/rebaze/getting-started/quickstart/)** — Migrate your first project in 60 seconds
+2. **[Installation](/rebaze/getting-started/installation/)** — Build from source
+3. **[CMake Tutorial](/rebaze/tutorials/cmake/)** — Detailed CMake walkthrough
+4. **[Gradle Tutorial](/rebaze/tutorials/gradle/)** — Detailed Gradle walkthrough
