@@ -18,7 +18,7 @@ pub use ast::{Argument, ArgumentPart, ArgumentValue, CMakeFile, Command};
 pub use eval::EvalContext;
 pub use project::{
     CMakeProject, Executable, ExtractError, Library, LibraryKind, Package, PkgConfigModule,
-    extract_project_from_path,
+    extract_project, extract_project_from_path, extract_project_with_context,
 };
 
 /// Parse a CMake project at the given path.
