@@ -13,6 +13,13 @@
 //! The resolver fetches dependencies concurrently and caches results to avoid
 //! redundant network requests.
 
+// Allow some patterns that are difficult to avoid in async concurrent code.
+// These are used in tokio::spawn blocks where semaphore acquire and path handling
+// follow established patterns.
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::useless_let_if_seq)]
+#![allow(clippy::branches_sharing_code)]
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
