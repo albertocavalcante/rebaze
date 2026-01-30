@@ -82,7 +82,7 @@ pub struct Executable {
 
 impl Executable {
     /// Create a new executable with just a name.
-    pub fn new(name: String) -> Self {
+    pub const fn new(name: String) -> Self {
         Self {
             name,
             sources: Vec::new(),
@@ -94,7 +94,7 @@ impl Executable {
     }
 
     /// Create a new executable with name and sources.
-    pub fn with_sources(name: String, sources: Vec<String>) -> Self {
+    pub const fn with_sources(name: String, sources: Vec<String>) -> Self {
         Self {
             name,
             sources,
@@ -120,7 +120,7 @@ pub struct Library {
 
 impl Library {
     /// Create a new library with name and kind.
-    pub fn new(name: String, kind: LibraryKind) -> Self {
+    pub const fn new(name: String, kind: LibraryKind) -> Self {
         Self {
             name,
             kind,
@@ -133,7 +133,7 @@ impl Library {
     }
 
     /// Create a new library with name, kind, and sources.
-    pub fn with_sources(name: String, kind: LibraryKind, sources: Vec<String>) -> Self {
+    pub const fn with_sources(name: String, kind: LibraryKind, sources: Vec<String>) -> Self {
         Self {
             name,
             kind,
