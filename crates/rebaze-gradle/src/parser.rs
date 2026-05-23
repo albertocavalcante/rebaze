@@ -167,3 +167,178 @@ fn extract_quoted_string(s: &str) -> Option<String> {
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // Plugin Parsing Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_plugin_line_id_with_quotes() {
+        let line = r#"id("com.android.application")"#;
+        let plugin = parse_plugin_line(line);
+
+        assert!(plugin.is_some());
+        let plugin = plugin.unwrap();
+        assert_eq!(plugin.id, "com.android.application");
+        assert!(plugin.version.is_none());
+    }
+
+    #[test]
+    fn test_parse_plugin_line_id_with_version() {
+        let line = r#"id("com.example.plugin") version "1.2.3""#;
+        let plugin = parse_plugin_line(line);
+
+        assert!(plugin.is_some());
+        let plugin = plugin.unwrap();
+        assert_eq!(plugin.id, "com.example.plugin");
+        assert_eq!(plugin.version, Some("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn test_parse_plugin_line_kotlin() {
+        let line = r#"kotlin("jvm")"#;
+        let plugin = parse_plugin_line(line);
+
+        assert!(plugin.is_some());
+        let plugin = plugin.unwrap();
+        assert_eq!(plugin.id, "org.jetbrains.kotlin.jvm");
+        assert!(plugin.version.is_none());
+    }
+
+    #[test]
+    fn test_parse_plugin_line_kotlin_with_version() {
+        let line = r#"kotlin("jvm") version "1.9.0""#;
+        let plugin = parse_plugin_line(line);
+
+        assert!(plugin.is_some());
+        let plugin = plugin.unwrap();
+        assert_eq!(plugin.id, "org.jetbrains.kotlin.jvm");
+        assert_eq!(plugin.version, Some("1.9.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_plugin_line_invalid() {
+        let line = "apply plugin: 'java'";
+        let plugin = parse_plugin_line(line);
+        assert!(plugin.is_none());
+    }
+
+    #[test]
+    fn test_parse_plugins_block() {
+        let content = r#"
+plugins {
+    id("com.android.application")
+    kotlin("jvm") version "1.9.0"
+}
+"#;
+        let mut plugins = Vec::new();
+        parse_plugins(content, true, &mut plugins);
+
+        assert_eq!(plugins.len(), 2);
+        assert_eq!(plugins[0].id, "com.android.application");
+        assert_eq!(plugins[1].id, "org.jetbrains.kotlin.jvm");
+    }
+
+    // ============================================================================
+    // Dependency Parsing Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_dependency_line_implementation() {
+        let line = r#"implementation("com.google.guava:guava:32.1.3-jre")"#;
+        let dep = parse_dependency_line(line);
+
+        assert!(dep.is_some());
+        let dep = dep.unwrap();
+        assert_eq!(dep.configuration, "implementation");
+        assert_eq!(dep.group, "com.google.guava");
+        assert_eq!(dep.artifact, "guava");
+        assert_eq!(dep.version, "32.1.3-jre");
+    }
+
+    #[test]
+    fn test_parse_dependency_line_test_implementation() {
+        let line = r#"testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")"#;
+        let dep = parse_dependency_line(line);
+
+        assert!(dep.is_some());
+        let dep = dep.unwrap();
+        assert_eq!(dep.configuration, "testImplementation");
+        assert_eq!(dep.group, "org.junit.jupiter");
+        assert_eq!(dep.artifact, "junit-jupiter");
+    }
+
+    #[test]
+    fn test_parse_dependency_line_api() {
+        let line = r#"api("io.grpc:grpc-core:1.60.0")"#;
+        let dep = parse_dependency_line(line);
+
+        assert!(dep.is_some());
+        let dep = dep.unwrap();
+        assert_eq!(dep.configuration, "api");
+    }
+
+    #[test]
+    fn test_parse_dependency_line_no_version() {
+        let line = r#"implementation("com.example:library")"#;
+        let dep = parse_dependency_line(line);
+
+        assert!(dep.is_some());
+        let dep = dep.unwrap();
+        assert_eq!(dep.group, "com.example");
+        assert_eq!(dep.artifact, "library");
+        assert_eq!(dep.version, "");
+    }
+
+    #[test]
+    fn test_parse_dependency_line_invalid() {
+        let line = "// This is a comment";
+        let dep = parse_dependency_line(line);
+        assert!(dep.is_none());
+    }
+
+    #[test]
+    fn test_parse_dependencies_block() {
+        let content = r#"
+dependencies {
+    implementation("com.google.guava:guava:32.1.3-jre")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
+}
+"#;
+        let mut deps = Vec::new();
+        parse_dependencies(content, true, &mut deps);
+
+        assert_eq!(deps.len(), 2);
+        assert_eq!(deps[0].configuration, "implementation");
+        assert_eq!(deps[1].configuration, "testImplementation");
+    }
+
+    // ============================================================================
+    // extract_quoted_string Tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_quoted_string_double_quotes() {
+        let s = r#"id("hello.world")"#;
+        let result = extract_quoted_string(s);
+        assert_eq!(result, Some("hello.world".to_string()));
+    }
+
+    #[test]
+    fn test_extract_quoted_string_single_quotes() {
+        let s = "id('hello.world')";
+        let result = extract_quoted_string(s);
+        assert_eq!(result, Some("hello.world".to_string()));
+    }
+
+    #[test]
+    fn test_extract_quoted_string_no_quotes() {
+        let s = "no quotes here";
+        let result = extract_quoted_string(s);
+        assert!(result.is_none());
+    }
+}
