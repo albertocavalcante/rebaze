@@ -121,7 +121,7 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                         .as_ref()
                         .map_or_else(BazelConfig::default, Config::bazel_config);
                     let bazel_files =
-                        rebaze_bazel::generate_from_cmake_with_config(&project, &bazel_config);
+                        rebaze_bazel::generate_from_cmake_with_config(&project, &bazel_config)?;
 
                     if options.dry_run {
                         print_files(&bazel_files);
@@ -160,7 +160,7 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
 
             match generator {
                 BuildGenerator::Native => {
-                    let bazel_files = rebaze_bazel::generate(&project);
+                    let bazel_files = rebaze_bazel::generate(&project)?;
 
                     if options.dry_run {
                         print_files(&bazel_files);
@@ -544,6 +544,39 @@ mod tests {
             config: None,
         };
         migrate(&options).unwrap();
+        let files: Vec<_> = std::fs::read_dir(temp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(files, ["CMakeLists.txt"]);
+    }
+
+    #[test]
+    fn generation_error_does_not_write_a_partial_migration() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("CMakeLists.txt"),
+            "project(example)\nadd_library(core STATIC core.c)",
+        )
+        .unwrap();
+        let mut config = BazelConfig::default();
+        config.build.rules.library_rule = "invalid-rule".into();
+        let options = MigrateOptions {
+            path: temp.path().to_str().unwrap(),
+            from: Some("cmake"),
+            dry_run: false,
+            cmake_build_dir: None,
+            cmake_config: None,
+            cmake_file_api_only: false,
+            build_generator: BuildGenerator::Native,
+            bazelle_root: None,
+            bazelle_bin: None,
+            unsafe_mode: true,
+            config: Some(Config {
+                bazel: Some(config),
+            }),
+        };
+        assert!(migrate(&options).is_err());
         let files: Vec<_> = std::fs::read_dir(temp.path())
             .unwrap()
             .map(|entry| entry.unwrap().file_name())

@@ -81,8 +81,42 @@ bazel build --config=release //crates/rebaze-cli:rebaze
 cargo fmt
 
 # Run clippy
-cargo clippy
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
+
+## Starlark generation
+
+`rebaze-starlark` owns typed rule models and file assembly. Generators serialize
+project values, paths, labels, dictionaries, and lists through Serde; they do not
+interpolate them into Starlark source. `Identifier`, `Reference`, and `Call` keep
+variable bindings, references, and call names separate from string values.
+
+`File` hoists and combines loads when documents are composed. Fixed helper
+programs live in `crates/rebaze-bazel/src/templates/*.bzl`; dynamic configuration
+is assigned through serialized tables. Generation returns `Result`, and the CLI
+finishes generating the whole file set before writing it.
+
+Tests parse complete generated files with `starlark_syntax`, including quotes,
+backslashes, Unicode, control characters, and attempted statement injection.
+These checks establish syntax and data preservation; they do not prove that every
+migration builds against every dependency or platform.
+
+The [engineering roadmap](docs/engineering-roadmap.md) records remaining
+correctness and integration gates.
+
+## CI runners
+
+Linux CI uses the `CI_LINUX_RUNNER` repository variable, defaulting to
+`ubuntu-24.04`. To onboard runmux, add `albertocavalcante/rebaze` to the runmux App's
+selected repositories and the Air's `air-ci` pool scopes and allowlist, then run
+the manually dispatched **Runmux Canary** workflow. It checks Linux ARM64,
+non-root execution, and an `rmx-air-` runner identity without checking out code.
+
+Only after that canary succeeds, set `CI_LINUX_RUNNER` to `air-ci` and run the
+complete CI workflow. Remove the variable to return to hosted Linux runners.
+The Air must be online and its runner policy must allow pull requests. ARM64
+results do not establish x86-64 compatibility; release platform jobs remain on
+their native hosted runners.
 
 ## License
 

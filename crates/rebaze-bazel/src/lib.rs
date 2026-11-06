@@ -9,32 +9,36 @@ use std::path::Path;
 pub use crate::config::MigrationConfig;
 pub use crate::generator::BazelFile;
 pub use crate::third_party::{DepsStrategy, ThirdPartyConfig, deduplicate_modules};
+pub use rebaze_starlark::{Error as GenerationError, RenderResult as GenerationResult};
 
 mod cmake_generator;
 pub mod config;
 pub mod filters;
+#[cfg(test)]
+mod generation_tests;
 mod generator;
 pub use rebaze_starlark as starlark;
 pub mod third_party;
 
 /// Generate Bazel files from a parsed Gradle project.
-#[must_use]
-pub fn generate(project: &rebaze_gradle::GradleProject) -> HashMap<String, String> {
+pub fn generate(
+    project: &rebaze_gradle::GradleProject,
+) -> GenerationResult<HashMap<String, String>> {
     let mut files = HashMap::new();
 
     // Generate MODULE.bazel
-    let module_bazel = generator::generate_module_bazel(project);
+    let module_bazel = generator::generate_module_bazel(project)?;
     files.insert("MODULE.bazel".to_string(), module_bazel);
 
     // Generate root BUILD.bazel
-    let root_build = generator::generate_root_build(project);
+    let root_build = generator::generate_root_build(project)?;
     files.insert("BUILD.bazel".to_string(), root_build);
 
     // Generate BUILD.bazel for each subproject
     for subproject in &project.subprojects {
         let subproject_path = subproject.trim_start_matches(':').replace(':', "/");
         let build_path = format!("{subproject_path}/BUILD.bazel");
-        let build_content = generator::generate_subproject_build(project, subproject);
+        let build_content = generator::generate_subproject_build(project, subproject)?;
         files.insert(build_path, build_content);
     }
 
@@ -43,29 +47,29 @@ pub fn generate(project: &rebaze_gradle::GradleProject) -> HashMap<String, Strin
 
     tracing::info!("Generated {} Bazel files", files.len());
 
-    files
+    Ok(files)
 }
 
 /// Generate Bazel files from a parsed CMake project.
-#[must_use]
-pub fn generate_from_cmake(project: &rebaze_cmake::CMakeProject) -> HashMap<String, String> {
+pub fn generate_from_cmake(
+    project: &rebaze_cmake::CMakeProject,
+) -> GenerationResult<HashMap<String, String>> {
     generate_from_cmake_with_config(project, &MigrationConfig::default())
 }
 
 /// Generate Bazel files from a parsed CMake project with custom configuration.
-#[must_use]
 pub fn generate_from_cmake_with_config(
     project: &rebaze_cmake::CMakeProject,
     config: &MigrationConfig,
-) -> HashMap<String, String> {
+) -> GenerationResult<HashMap<String, String>> {
     let mut files = HashMap::new();
 
     // Generate MODULE.bazel
-    let module_bazel = cmake_generator::generate_module_bazel(project, config);
+    let module_bazel = cmake_generator::generate_module_bazel(project, config)?;
     files.insert("MODULE.bazel".to_string(), module_bazel);
 
     // Generate root BUILD.bazel
-    let root_build = cmake_generator::generate_root_build(project, config);
+    let root_build = cmake_generator::generate_root_build(project, config)?;
     files.insert("BUILD.bazel".to_string(), root_build);
 
     // Generate .bazelversion
@@ -77,35 +81,32 @@ pub fn generate_from_cmake_with_config(
 
     // Generate third_party/ directory for pkg-config dependencies
     if !project.pkg_config_modules.is_empty() {
-        let config = ThirdPartyConfig::default();
+        let third_party_config = ThirdPartyConfig::default();
 
         // Deduplicate modules once upfront for all generation functions
         let modules = deduplicate_modules(&project.pkg_config_modules);
 
-        // Generate extensible BUILD.bazel with aliases and system library fallbacks
-        let mut third_party_build = third_party::generate_build_file(&modules, &config);
-
-        // Append source build targets (used when strategy = "source")
-        third_party_build.push_str("\n\n");
-        third_party_build.push_str(&third_party::generate_source_build_targets(&modules));
-        files.insert("third_party/BUILD.bazel".to_string(), third_party_build);
+        // Compose files structurally so every load remains ahead of rule calls.
+        let mut build = third_party::build_file(&modules, &third_party_config)?;
+        build.append(third_party::source_build_targets(&modules, config)?);
+        files.insert("third_party/BUILD.bazel".into(), build.render()?);
 
         // Generate config.bzl for customization
-        let config_bzl = third_party::generate_config_bzl(&modules, &config);
+        let config_bzl = third_party::generate_config_bzl(&modules, &third_party_config)?;
         files.insert("third_party/config.bzl".to_string(), config_bzl);
 
         // Generate source.bzl for building from source (includes module extension)
-        let source_bzl = third_party::generate_source_bzl(&modules);
+        let source_bzl = third_party::source_bzl(&modules, config)?;
         files.insert("third_party/source.bzl".to_string(), source_bzl);
 
         // Generate system_deps.bzl module extension for system libraries
-        let system_deps_bzl = third_party::generate_system_deps_bzl(&modules);
+        let system_deps_bzl = third_party::generate_system_deps_bzl(&modules)?;
         files.insert("third_party/system_deps.bzl".to_string(), system_deps_bzl);
     }
 
     tracing::info!("Generated {} Bazel files for CMake project", files.len());
 
-    files
+    Ok(files)
 }
 
 /// Supported C++ standards
@@ -471,6 +472,10 @@ mod tests {
             plugins: vec![],
             dependencies: vec![],
         };
-        assert!(generate(&project).contains_key("app/lib/BUILD.bazel"));
+        assert!(
+            generate(&project)
+                .unwrap()
+                .contains_key("app/lib/BUILD.bazel")
+        );
     }
 }

@@ -3,6 +3,14 @@
 //! This crate provides Rust types that serialize to valid Starlark code via serde_starlark.
 //! Use these types instead of manual string formatting for type-safe BUILD file generation.
 
+mod file;
+#[cfg(test)]
+mod file_tests;
+mod jvm;
+
+pub use file::{Call, Error, File, Identifier, Reference, Result as RenderResult};
+pub use jvm::{ExportsFiles, JavaLibrary, JavaTest, MavenInstall, UseExtension, UseRepo};
+
 use serde::Serialize;
 use serde::ser::{SerializeStruct, SerializeTupleStruct, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,6 +115,7 @@ impl Serialize for FunctionCall {
         S: Serializer,
     {
         use serde::ser::SerializeTupleStruct;
+        file::validate_function(self.name).map_err(serde::ser::Error::custom)?;
         let mut s = serializer.serialize_tuple_struct(self.name, self.args.len())?;
         for arg in &self.args {
             s.serialize_field(arg)?;

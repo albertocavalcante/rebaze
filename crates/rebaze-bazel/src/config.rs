@@ -582,10 +582,10 @@ impl MappingConfig {
             KnownPackageInfo {
                 version: "2.82.4".to_string(),
                 url: "https://download.gnome.org/sources/glib/2.82/glib-2.82.4.tar.xz".to_string(),
-                sha256: "937f1312d7a883e6fdd0f75ed28de2f9e4fc2ee83fece0ab46a5153d5c34ce93"
+                sha256: "37dd0877fe964cd15e9a2710b044a1830fb1bd93652a6d0cb6b8b2dff187c709"
                     .to_string(),
                 strip_prefix: "glib-2.82.4".to_string(),
-                build_system: "meson".to_string(),
+                build_system: SourceBuildSystem::Meson,
                 out_static_libs: vec!["libglib-2.0.a".to_string()],
                 out_shared_libs: vec![
                     "libglib-2.0.so".to_string(),
@@ -609,10 +609,10 @@ impl MappingConfig {
             KnownPackageInfo {
                 version: "2.82.4".to_string(),
                 url: "https://download.gnome.org/sources/glib/2.82/glib-2.82.4.tar.xz".to_string(),
-                sha256: "937f1312d7a883e6fdd0f75ed28de2f9e4fc2ee83fece0ab46a5153d5c34ce93"
+                sha256: "37dd0877fe964cd15e9a2710b044a1830fb1bd93652a6d0cb6b8b2dff187c709"
                     .to_string(),
                 strip_prefix: "glib-2.82.4".to_string(),
-                build_system: "meson".to_string(),
+                build_system: SourceBuildSystem::Meson,
                 out_static_libs: vec!["libgobject-2.0.a".to_string()],
                 out_shared_libs: vec![
                     "libgobject-2.0.so".to_string(),
@@ -627,10 +627,10 @@ impl MappingConfig {
             "pcre2".to_string(),
             KnownPackageInfo {
                 version: "10.44".to_string(),
-                url: "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.gz".to_string(),
-                sha256: "d34f02e113cf7193f1b06f1c26c1f8e7fa6e8a9fe1c3b1c29e579f5a6a6e8a19".to_string(),
+                url: "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.bz2".to_string(),
+                sha256: "d34f02e113cf7193a1ebf2770d3ac527088d485d4e047ed10e5d217c6ef5de96".to_string(),
                 strip_prefix: "pcre2-10.44".to_string(),
-                build_system: "cmake".to_string(),
+                build_system: SourceBuildSystem::Cmake,
                 out_static_libs: vec!["libpcre2-8.a".to_string()],
                 out_shared_libs: vec![],
                 deps: vec![],
@@ -647,7 +647,7 @@ impl MappingConfig {
                 sha256: "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
                     .to_string(),
                 strip_prefix: "zlib-1.3.1".to_string(),
-                build_system: "cmake".to_string(),
+                build_system: SourceBuildSystem::Cmake,
                 out_static_libs: vec!["libz.a".to_string()],
                 out_shared_libs: vec![],
                 deps: vec![],
@@ -665,7 +665,7 @@ impl MappingConfig {
                 sha256: "b0dea9df23c863a7a50e825440f3ebffabd65df1497108e5d437747843895a4e"
                     .to_string(),
                 strip_prefix: "libffi-3.4.6".to_string(),
-                build_system: "autotools".to_string(),
+                build_system: SourceBuildSystem::Autotools,
                 out_static_libs: vec!["libffi.a".to_string()],
                 out_shared_libs: vec![],
                 deps: vec![],
@@ -700,6 +700,15 @@ fn package_mapping(target_pattern: &str, components: &[(&str, &str)]) -> Package
     }
 }
 
+/// Build systems supported by generated source targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceBuildSystem {
+    Meson,
+    Cmake,
+    Autotools,
+}
+
 /// Metadata for a known package that can be built from source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnownPackageInfo {
@@ -716,7 +725,7 @@ pub struct KnownPackageInfo {
     pub strip_prefix: String,
 
     /// Build system: "cmake", "meson", or "autotools".
-    pub build_system: String,
+    pub build_system: SourceBuildSystem,
 
     /// Static libraries produced by the build.
     #[serde(default)]
@@ -1128,12 +1137,12 @@ default = "source"
         // Exact match
         let info = config.get_known_package("zlib");
         assert!(info.is_some());
-        assert_eq!(info.unwrap().build_system, "cmake");
+        assert_eq!(info.unwrap().build_system, SourceBuildSystem::Cmake);
 
         // Normalized match (strip -2.0 suffix)
         let info = config.get_known_package("glib-2.0");
         assert!(info.is_some());
-        assert_eq!(info.unwrap().build_system, "meson");
+        assert_eq!(info.unwrap().build_system, SourceBuildSystem::Meson);
 
         // Unknown
         assert!(config.get_known_package("unknown").is_none());

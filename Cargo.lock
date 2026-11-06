@@ -1543,6 +1543,7 @@ dependencies = [
  "rebaze-gradle",
  "rebaze-starlark",
  "serde",
+ "starlark_syntax",
  "tempfile",
  "thiserror 2.0.18",
  "toml",
@@ -1653,6 +1654,8 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_starlark",
+ "starlark_syntax",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

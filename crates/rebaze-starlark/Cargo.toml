@@ -10,6 +10,10 @@ rust-version.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_starlark = { workspace = true }
+thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+starlark_syntax = "0.13"

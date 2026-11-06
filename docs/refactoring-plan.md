@@ -1,5 +1,9 @@
 # First Wave Refactoring Plan: File Decomposition
 
+> Historical decomposition proposal. The [engineering roadmap](engineering-roadmap.md)
+> owns current correctness priorities and completion gates. Line counts below
+> describe an earlier revision; file splitting alone is not a readiness gate.
+
 This document details the first wave of refactoring for rebaze, focusing on decomposing large files into well-organized modules.
 
 ## Target Files

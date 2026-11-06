@@ -8,10 +8,12 @@ rust_library(
     deps = [
         "@crates//:serde",
         "@crates//:serde_starlark",
+        "@crates//:thiserror",
     ],
 )
 
 rust_test(
     name = "rebaze-starlark_test",
     crate = ":rebaze-starlark",
+    deps = ["@crates//:starlark_syntax"],
 )

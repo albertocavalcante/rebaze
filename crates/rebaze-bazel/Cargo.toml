@@ -21,3 +21,6 @@ serde.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tempfile = "3"
+
+[dev-dependencies]
+starlark_syntax = "0.13"

@@ -6,7 +6,10 @@ use rebaze_cmake::{CMakeProject, Executable, Library, LibraryKind};
 
 use crate::config::MigrationConfig;
 use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources};
-use crate::starlark::{BazelDep, CcBinary, CcLibrary, Glob, Load, Module, Package, SrcsWithHdrs};
+use crate::starlark::{
+    BazelDep, Call, CcBinary, CcLibrary, File, Glob, Identifier, Load, Module, Package, Reference,
+    RenderResult, SrcsWithHdrs, UseExtension, UseRepo,
+};
 
 /// BCR resolution result for a project.
 #[derive(Debug, Default)]
@@ -67,67 +70,70 @@ fn detect_external_deps(project: &CMakeProject) -> DetectedDeps {
     deps
 }
 
-fn serialize_starlark<T: serde::Serialize>(value: &T) -> String {
-    crate::starlark::serde_starlark::to_string(value).unwrap_or_else(|e| format!("# Error: {e}"))
-}
-
-fn push_module_header(parts: &mut Vec<String>, project: &CMakeProject, config: &MigrationConfig) {
-    parts.push(format!(
-        "\"\"\"Bazel module for {} - migrated from CMake by rebaze.\"\"\"",
+fn push_module_header(
+    parts: &mut File,
+    project: &CMakeProject,
+    config: &MigrationConfig,
+) -> RenderResult<()> {
+    parts.docstring(&format!(
+        "Bazel module for {} - migrated from CMake by rebaze.",
         project.name
-    ));
-
-    let module = Module {
+    ))?;
+    parts.statement(&Module {
         name: project.name.to_lowercase().replace('-', "_"),
         version: config.build.module_version.clone(),
-    };
-    parts.push(serialize_starlark(&module));
+    })
 }
 
-fn push_rules_cc(parts: &mut Vec<String>, config: &MigrationConfig) {
-    parts.push("# C/C++ toolchain".to_string());
-    let rules_cc = BazelDep {
-        name: "rules_cc".to_string(),
+fn push_rules_cc(parts: &mut File, config: &MigrationConfig) -> RenderResult<()> {
+    parts.comment("C/C++ toolchain");
+    parts.statement(&BazelDep {
+        name: "rules_cc".into(),
         version: config.versions.rules_cc.clone(),
-    };
-    parts.push(serialize_starlark(&rules_cc));
+    })
 }
 
 fn push_detected_frameworks(
-    parts: &mut Vec<String>,
+    parts: &mut File,
     project: &CMakeProject,
     config: &MigrationConfig,
-) {
+) -> RenderResult<()> {
     let detected = detect_external_deps(project);
-    if detected.googletest {
-        parts.push("# Testing framework (auto-detected from CMake)".to_string());
-        let googletest = BazelDep {
-            name: "googletest".to_string(),
-            version: config.versions.googletest.clone(),
-        };
-        parts.push(serialize_starlark(&googletest));
+    for (enabled, name, version) in [
+        (
+            detected.googletest,
+            "googletest",
+            &config.versions.googletest,
+        ),
+        (
+            detected.benchmark,
+            "google_benchmark",
+            &config.versions.google_benchmark,
+        ),
+    ] {
+        if enabled {
+            parts.comment("Test/benchmark framework detected from CMake");
+            parts.statement(&BazelDep {
+                name: name.into(),
+                version: version.clone(),
+            })?;
+        }
     }
-    if detected.benchmark {
-        parts.push("# Benchmarking framework (auto-detected from CMake)".to_string());
-        let benchmark = BazelDep {
-            name: "google_benchmark".to_string(),
-            version: config.versions.google_benchmark.clone(),
-        };
-        parts.push(serialize_starlark(&benchmark));
-    }
+    Ok(())
 }
 
-fn push_platforms(parts: &mut Vec<String>, project: &CMakeProject, config: &MigrationConfig) {
-    if project.packages.is_empty() {
-        return;
+fn push_platforms(
+    parts: &mut File,
+    project: &CMakeProject,
+    config: &MigrationConfig,
+) -> RenderResult<()> {
+    if !project.packages.is_empty() {
+        parts.statement(&BazelDep {
+            name: "platforms".into(),
+            version: config.versions.platforms.clone(),
+        })?;
     }
-
-    parts.push("# Platform and dependency management".to_string());
-    let platforms = BazelDep {
-        name: "platforms".to_string(),
-        version: config.versions.platforms.clone(),
-    };
-    parts.push(serialize_starlark(&platforms));
+    Ok(())
 }
 
 /// Collect all package names from the CMake project that need resolution.
@@ -223,241 +229,144 @@ fn resolve_bcr_deps(project: &CMakeProject, config: &MigrationConfig) -> BcrReso
     resolution
 }
 
-/// Push BCR dependencies to MODULE.bazel.
 fn push_bcr_dependencies(
-    parts: &mut Vec<String>,
-    project: &CMakeProject,
+    parts: &mut File,
+    resolution: &BcrResolution,
     config: &MigrationConfig,
-) {
-    let resolution = resolve_bcr_deps(project, config);
-
-    if resolution.deps.is_empty() && resolution.unresolved.is_empty() {
-        return;
-    }
-
-    parts.push("# Dependencies from Bazel Central Registry".to_string());
-
-    for dep in &resolution.deps {
-        parts.push(serialize_starlark(dep));
-    }
-
-    if !resolution.unresolved.is_empty() {
-        parts.push(String::new());
-        parts.push("# The following packages are not available in BCR:".to_string());
-        for name in &resolution.unresolved {
-            let fallback = config.strategy.bcr_fallback.as_deref().unwrap_or("system");
-            parts.push(format!("# - {name} (using {fallback} fallback)"));
+) -> RenderResult<()> {
+    if !resolution.deps.is_empty() {
+        parts.comment("Dependencies from Bazel Central Registry");
+        for dependency in &resolution.deps {
+            parts.statement(dependency)?;
         }
     }
+    for name in &resolution.unresolved {
+        let fallback = config.strategy.bcr_fallback.as_deref().unwrap_or("system");
+        parts.comment(&format!(
+            "{name} is not available in BCR (using {fallback} fallback)"
+        ));
+    }
+    Ok(())
 }
 
 fn push_pkg_config_extensions(
-    parts: &mut Vec<String>,
+    parts: &mut File,
     project: &CMakeProject,
     config: &MigrationConfig,
-) {
+) -> RenderResult<()> {
     if project.pkg_config_modules.is_empty() {
-        return;
+        return Ok(());
     }
-
-    parts.push("# Foreign build system support (for building deps from source)".to_string());
-    let rules_foreign_cc = BazelDep {
-        name: "rules_foreign_cc".to_string(),
+    parts.statement(&BazelDep {
+        name: "rules_foreign_cc".into(),
         version: config.versions.rules_foreign_cc.clone(),
-    };
-    parts.push(serialize_starlark(&rules_foreign_cc));
-
-    let mut all_source_packages = BTreeSet::new();
-    for pkg in &project.pkg_config_modules {
-        let name = pkg.prefix.to_lowercase().replace('-', "_");
-        all_source_packages.insert(name.clone());
-        // Get transitive deps from config instead of hardcoded function
-        for dep in config.get_transitive_deps(&name) {
-            all_source_packages.insert(dep);
-        }
-    }
-
-    let system_dep_names: Vec<String> = project
+    })?;
+    let all_source_packages =
+        crate::third_party::source_packages(&project.pkg_config_modules, config);
+    let system_names = project
         .pkg_config_modules
         .iter()
-        .map(|pkg| format!("system_{}", pkg.prefix.to_lowercase().replace('-', "_")))
+        .map(|package| format!("system_{}", package.prefix.to_lowercase().replace('-', "_")))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-
-    parts.push("# System library wrappers (strategy = \"system\", the default)".to_string());
-    parts.push(
-        "# NOTE: These wrap system-installed libraries - adjust paths in third_party/system_deps.bzl"
-            .to_string(),
+    parts.comment(
+        "System library wrappers (non-hermetic; review paths in third_party/system_deps.bzl)",
     );
-    parts.push(format!(
-        r#"system_deps = use_extension("//third_party:system_deps.bzl", "system_deps")
-use_repo(system_deps, {})"#,
-        system_dep_names
+    parts.assign(
+        &Identifier::new("system_deps")?,
+        &UseExtension("//third_party:system_deps.bzl", "system_deps"),
+    )?;
+    parts.statement(&UseRepo {
+        extension: Reference::new("system_deps")?,
+        repositories: system_names,
+    })?;
+    parts.comment("Uncomment to enable source downloads and the source dependency strategy");
+    parts.commented_statement(&crate::starlark::serde_starlark::Assignment::new(
+        "source_deps",
+        UseExtension("//third_party:source.bzl", "source_deps"),
+    ))?;
+    parts.commented_statement(&UseRepo {
+        extension: Reference::new("source_deps")?,
+        repositories: all_source_packages
             .iter()
-            .map(|n| format!("\"{n}\""))
-            .collect::<Vec<_>>()
-            .join(", ")
-    ));
-
-    let source_dep_names: Vec<String> = all_source_packages
-        .iter()
-        .map(|name| format!("{name}_src"))
-        .collect();
-
-    parts.push("# Source downloads (strategy = \"source\" - hermetic builds)".to_string());
-    parts.push("# NOTE: Uncomment to enable building dependencies from source".to_string());
-    parts.push(format!(
-        r#"# source_deps = use_extension("//third_party:source.bzl", "source_deps")
-# use_repo(source_deps, {})"#,
-        source_dep_names
-            .iter()
-            .map(|n| format!("\"{n}\""))
-            .collect::<Vec<_>>()
-            .join(", ")
-    ));
+            .map(|name| format!("{name}_src"))
+            .collect(),
+    })?;
+    Ok(())
 }
 
 /// Generate a MODULE.bazel file for a CMake project.
-#[must_use]
-pub fn generate_module_bazel(project: &CMakeProject, config: &MigrationConfig) -> String {
-    let mut parts = Vec::new();
-
-    push_module_header(&mut parts, project, config);
-    push_rules_cc(&mut parts, config);
-    push_detected_frameworks(&mut parts, project, config);
-    push_platforms(&mut parts, project, config);
-
-    // Use BCR dependencies when strategy is "bcr"
+pub fn generate_module_bazel(
+    project: &CMakeProject,
+    config: &MigrationConfig,
+) -> RenderResult<String> {
+    let mut file = File::new();
+    push_module_header(&mut file, project, config)?;
+    push_rules_cc(&mut file, config)?;
+    push_detected_frameworks(&mut file, project, config)?;
+    push_platforms(&mut file, project, config)?;
     if config.strategy.default == "bcr" {
-        push_bcr_dependencies(&mut parts, project, config);
-        // Only add pkg-config extensions for unresolved deps (fallback)
         let resolution = resolve_bcr_deps(project, config);
+        push_bcr_dependencies(&mut file, &resolution, config)?;
         if !resolution.unresolved.is_empty() {
-            push_pkg_config_extensions(&mut parts, project, config);
+            push_pkg_config_extensions(&mut file, project, config)?;
         }
     } else {
-        push_pkg_config_extensions(&mut parts, project, config);
+        push_pkg_config_extensions(&mut file, project, config)?;
     }
-
-    parts.join("\n\n") + "\n"
+    file.render()
 }
 
-/// Generate the root BUILD.bazel file.
-#[must_use]
-// BUILD file generation needs sequential sections (loads, package, targets) that can't be easily split
-#[allow(clippy::too_many_lines)]
-pub fn generate_root_build(project: &CMakeProject, config: &MigrationConfig) -> String {
-    let mut parts = Vec::new();
-
-    // Add header comment with review notes
-    let pkg_note = if project.pkg_config_modules.is_empty() {
-        ""
-    } else {
-        "\n#   - pkg-config deps in //third_party/ use system libs (not hermetic)"
-    };
-    parts.push(format!(
-        r"# BUILD file for {} - migrated from CMake by rebaze
-#
-# NOTE: This file was auto-generated and should be reviewed:
-#   - glob patterns use allow_empty=True (some patterns may match nothing)
-#   - include paths are inferred from source file locations{}",
-        project.name, pkg_note
+/// Generate the root BUILD.bazel, including configured custom rule names.
+pub fn generate_root_build(
+    project: &CMakeProject,
+    config: &MigrationConfig,
+) -> RenderResult<String> {
+    let mut file = File::new();
+    file.comment(&format!(
+        "BUILD file for {} - migrated from CMake by rebaze",
+        project.name
     ));
-
-    // Load statement - include standard rules and any custom rules from config
-    let uses_custom_rules = config.build.rules.library_rule != "cc_library"
-        || config.build.rules.binary_rule != "cc_binary";
-
-    // Standard cc rules load
-    let mut items = BTreeSet::new();
-    items.insert("cc_binary".to_string());
-    items.insert("cc_library".to_string());
-    let load = Load {
-        bzl: "@rules_cc//cc:defs.bzl".to_string(),
-        items,
-    };
-    parts.push(
-        crate::starlark::serde_starlark::to_string(&load)
-            .unwrap_or_else(|e| format!("# Error: {e}")),
-    );
-
-    // Add extra load statements from config (for custom rules)
-    for extra_load in &config.build.rules.extra_loads {
-        let load = Load {
-            bzl: extra_load.bzl.clone(),
-            items: extra_load.items.iter().cloned().collect(),
-        };
-        parts.push(
-            crate::starlark::serde_starlark::to_string(&load)
-                .unwrap_or_else(|e| format!("# Error: {e}")),
-        );
+    file.comment("Review generated include paths and glob patterns (allow_empty=True).");
+    file.load(Load {
+        bzl: "@rules_cc//cc:defs.bzl".into(),
+        items: ["cc_binary".into(), "cc_library".into()].into(),
+    })?;
+    for load in &config.build.rules.extra_loads {
+        file.load(Load {
+            bzl: load.bzl.clone(),
+            items: load.items.iter().cloned().collect(),
+        })?;
     }
-
-    // Add note if custom rules are configured
-    if uses_custom_rules {
-        parts.push(format!(
-            r#"# NOTE: Custom rules configured in rebaze.toml:
-#   library_rule = "{}"
-#   binary_rule = "{}"
-# The rules below use standard cc_library/cc_binary - replace as needed."#,
-            config.build.rules.library_rule, config.build.rules.binary_rule
+    for package in &project.pkg_config_modules {
+        file.comment(&format!(
+            "//third_party:{} -> {} (system libraries are non-hermetic)",
+            package.prefix.to_lowercase().replace('-', "_"),
+            package.packages.join(", ")
         ));
     }
-
-    // Add pkg-config dependency note
-    if !project.pkg_config_modules.is_empty() {
-        let mut pkg_comments =
-            vec!["# pkg-config dependencies (wrappers in //third_party):".to_string()];
-        for pkg in &project.pkg_config_modules {
-            pkg_comments.push(format!(
-                "#   //third_party:{} -> {}",
-                pkg.prefix.to_lowercase().replace('-', "_"),
-                pkg.packages.join(", ")
-            ));
-        }
-        parts.push(pkg_comments.join("\n"));
-    }
-
-    // Package visibility
-    let package = Package {
-        default_visibility: vec!["//visibility:public".to_string()],
-    };
-    parts.push(
-        crate::starlark::serde_starlark::to_string(&package)
-            .unwrap_or_else(|e| format!("# Error: {e}")),
-    );
-
-    // Generate libraries first (they may be dependencies of executables)
-    // Deduplicate by name - CMake may report both shared and static variants
-    let mut seen_libs = std::collections::BTreeSet::new();
-    for lib in &project.libraries {
-        let target_name = lib.name.replace('-', "_");
-        if seen_libs.insert(target_name) {
-            let cc_lib = build_cc_library(lib, &project.libraries, &project.aliases, config);
-            parts.push(
-                crate::starlark::serde_starlark::to_string(&cc_lib)
-                    .unwrap_or_else(|e| format!("# Error: {e}")),
-            );
+    file.statement(&Package {
+        default_visibility: vec!["//visibility:public".into()],
+    })?;
+    let mut seen_libraries = BTreeSet::new();
+    for library in &project.libraries {
+        if seen_libraries.insert(library.name.replace('-', "_")) {
+            let rule = build_cc_library(library, &project.libraries, &project.aliases, config);
+            file.statement(&Call::new(&config.build.rules.library_rule, &rule)?)?;
         }
     }
-
-    // Generate executables
-    for exe in &project.executables {
-        let cc_bin = build_cc_binary(
-            exe,
+    for executable in &project.executables {
+        let rule = build_cc_binary(
+            executable,
             &project.libraries,
             &project.pkg_config_modules,
             &project.aliases,
             config,
         );
-        parts.push(
-            crate::starlark::serde_starlark::to_string(&cc_bin)
-                .unwrap_or_else(|e| format!("# Error: {e}")),
-        );
+        file.statement(&Call::new(&config.build.rules.binary_rule, &rule)?)?;
     }
-
-    parts.join("\n\n") + "\n"
+    file.render()
 }
 
 /// Build a CcLibrary struct from a CMake Library.
@@ -690,6 +599,7 @@ fn find_minimal_glob_roots(dirs: &[String]) -> Vec<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use rebaze_cmake::Package;
@@ -738,7 +648,7 @@ mod tests {
     fn test_generate_module_bazel() {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
-        let content = generate_module_bazel(&project, &config);
+        let content = generate_module_bazel(&project, &config).unwrap();
 
         assert!(content.contains("module("));
         assert!(content.contains("test_project"));
@@ -750,7 +660,7 @@ mod tests {
     fn test_generate_root_build() {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
-        let content = generate_root_build(&project, &config);
+        let content = generate_root_build(&project, &config).unwrap();
 
         assert!(content.contains("cc_library("));
         assert!(content.contains("cc_binary("));
@@ -773,10 +683,10 @@ mod tests {
     fn test_generate_module_bazel_format() {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
-        let content = generate_module_bazel(&project, &config);
+        let content = generate_module_bazel(&project, &config).unwrap();
 
         // Check docstring is present
-        assert!(content.contains("\"\"\"Bazel module for"));
+        assert!(content.contains("\"Bazel module for"));
 
         // Check module format
         assert!(content.contains("name = \"test_project\""));
@@ -791,7 +701,7 @@ mod tests {
     fn test_generate_root_build_format() {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
-        let content = generate_root_build(&project, &config);
+        let content = generate_root_build(&project, &config).unwrap();
 
         // Check load statement
         assert!(content.contains("load("));
@@ -812,8 +722,8 @@ mod tests {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
 
-        let module = generate_module_bazel(&project, &config);
-        let build = generate_root_build(&project, &config);
+        let module = generate_module_bazel(&project, &config).unwrap();
+        let build = generate_root_build(&project, &config).unwrap();
 
         // This test verifies that the output is properly formatted Starlark
         // by checking the overall structure

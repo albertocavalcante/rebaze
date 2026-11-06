@@ -15,7 +15,7 @@ fn test_generate_bazel_for_hello_cmake() {
     }
 
     let project = rebaze_cmake::parse(&fixture_dir).unwrap();
-    let files = rebaze_bazel::generate_from_cmake(&project);
+    let files = rebaze_bazel::generate_from_cmake(&project).unwrap();
 
     // MODULE.bazel, BUILD.bazel, .bazelversion, .bazelrc
     assert_eq!(files.len(), 4);
@@ -50,7 +50,7 @@ fn test_generate_bazel_for_static_library() {
     }
 
     let project = rebaze_cmake::parse(&fixture_dir).unwrap();
-    let files = rebaze_bazel::generate_from_cmake(&project);
+    let files = rebaze_bazel::generate_from_cmake(&project).unwrap();
 
     // Check BUILD.bazel contains library and binary
     let build = files
@@ -77,7 +77,7 @@ fn test_generate_bazel_for_shared_library() {
     }
 
     let project = rebaze_cmake::parse(&fixture_dir).unwrap();
-    let files = rebaze_bazel::generate_from_cmake(&project);
+    let files = rebaze_bazel::generate_from_cmake(&project).unwrap();
 
     let build = files
         .iter()
@@ -98,7 +98,7 @@ fn test_generate_bazel_with_boost() {
     }
 
     let project = rebaze_cmake::parse(&fixture_dir).unwrap();
-    let files = rebaze_bazel::generate_from_cmake(&project);
+    let files = rebaze_bazel::generate_from_cmake(&project).unwrap();
 
     // Check MODULE.bazel has platform dep (because there are packages)
     let module = files
