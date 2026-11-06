@@ -75,7 +75,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned Rust toolchain
-        run: rustup show active-toolchain
+        run: rustup toolchain install --no-self-update
 
       - name: Ensure target is installed
         run: rustup target add ${{ matrix.target }}

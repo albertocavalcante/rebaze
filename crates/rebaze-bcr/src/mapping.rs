@@ -111,8 +111,10 @@ mod tests {
 
         // Exact match
         let mapping = lookup_cmake_package(&catalog, "protobuf");
-        assert!(mapping.is_some());
-        assert_eq!(mapping.expect("has mapping").module, "protobuf");
+        assert_eq!(
+            mapping.map(|mapping| mapping.module.as_str()),
+            Some("protobuf")
+        );
     }
 
     #[test]
@@ -121,8 +123,10 @@ mod tests {
 
         // Different case should still match
         let mapping = lookup_cmake_package(&catalog, "PROTOBUF");
-        assert!(mapping.is_some());
-        assert_eq!(mapping.expect("has mapping").module, "protobuf");
+        assert_eq!(
+            mapping.map(|mapping| mapping.module.as_str()),
+            Some("protobuf")
+        );
     }
 
     #[test]
@@ -131,8 +135,10 @@ mod tests {
 
         // Aliases like google-protobuf should map to protobuf
         let mapping = lookup_cmake_package(&catalog, "google-protobuf");
-        assert!(mapping.is_some());
-        assert_eq!(mapping.expect("has mapping").module, "protobuf");
+        assert_eq!(
+            mapping.map(|mapping| mapping.module.as_str()),
+            Some("protobuf")
+        );
     }
 
     #[test]
@@ -148,8 +154,10 @@ mod tests {
         let catalog = load_embedded_catalog();
 
         let mapping = lookup_gradle_package(&catalog, "com.google.protobuf:protobuf-java:3.21.0");
-        assert!(mapping.is_some());
-        assert_eq!(mapping.expect("has mapping").module, "protobuf");
+        assert_eq!(
+            mapping.map(|mapping| mapping.module.as_str()),
+            Some("protobuf")
+        );
     }
 
     #[test]

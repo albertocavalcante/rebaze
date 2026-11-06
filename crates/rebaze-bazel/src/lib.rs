@@ -350,13 +350,15 @@ pub fn write_files<S: std::hash::BuildHasher>(
             std::fs::create_dir_all(parent)?;
         }
         let parent = full_path.parent().context("Generated file has no parent")?;
-        let mut builder = tempfile::Builder::new();
+        let builder = tempfile::Builder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::PermissionsExt;
+            let mut builder = builder;
             // Match ordinary file creation while respecting the process umask.
             builder.permissions(std::fs::Permissions::from_mode(0o666));
-        }
+            builder
+        };
         let mut staged = builder
             .tempfile_in(parent)
             .with_context(|| format!("Failed to stage {}", full_path.display()))?;
