@@ -461,9 +461,13 @@ impl<R: Registry + 'static> Resolver<R> {
                 .map(|module| {
                     dependencies(module, false)
                         .filter_map(|(dep, _)| {
-                            selected_versions.get(dep.name.as_str()).map(|request| {
-                                ModuleKey::new(dep.name.clone(), request.version.clone())
-                            })
+                            if dep.name == root_module.name {
+                                Some(root_key.clone())
+                            } else {
+                                selected_versions.get(dep.name.as_str()).map(|request| {
+                                    ModuleKey::new(dep.name.clone(), request.version.clone())
+                                })
+                            }
                         })
                         .collect::<Vec<_>>()
                 })
@@ -487,14 +491,6 @@ impl<R: Registry + 'static> Resolver<R> {
                 deps: deps.clone(),
             };
 
-            // Add to graph
-            let key = ModuleKey::new(resolved.name.clone(), resolved.version.clone());
-            for dep_key in &deps {
-                graph.add_edge(key.clone(), dep_key.clone());
-            }
-            if is_direct {
-                graph.add_edge(root_key.clone(), key);
-            }
             modules.push(resolved);
 
             if req.dev_dependency {
@@ -562,9 +558,34 @@ impl<R: Registry + 'static> Resolver<R> {
             }
         }
 
-        // Populate nodes after metadata updates, keeping both views consistent.
+        // Populate the root and nodes after metadata updates. Sorted modules also
+        // make root edges independent of HashMap iteration and fetch completion.
+        let root_deps: Vec<_> = modules
+            .iter()
+            .filter(|module| module.is_direct)
+            .map(|module| ModuleKey::new(module.name.clone(), module.version.clone()))
+            .collect();
+        graph.add_module(ResolvedModule {
+            name: root_module.name.clone(),
+            version: root_module.version.clone(),
+            registry: String::new(),
+            is_direct: false,
+            is_dev: false,
+            compatibility_level: root_module.compatibility_level,
+            yanked: false,
+            yanked_reason: None,
+            deprecated: false,
+            deps: root_deps.clone(),
+        });
+        for key in root_deps {
+            graph.add_edge(root_key.clone(), key);
+        }
         for module in &modules {
             graph.add_module(module.clone());
+            let key = ModuleKey::new(module.name.clone(), module.version.clone());
+            for dependency in &module.deps {
+                graph.add_edge(key.clone(), dependency.clone());
+            }
         }
         Ok((modules, graph, warnings))
     }

@@ -320,6 +320,11 @@ async fn root_cycles_do_not_fetch_the_unpublished_root() {
         .unwrap();
     assert_eq!(result.modules.len(), 1);
     assert_eq!(result.stats.registry_fetches, 1);
+    let root_key = result.graph.root().unwrap();
+    let (a_key, a) = result.graph.get_by_name("a").unwrap();
+    assert_eq!(a.deps, vec![root_key.clone()]);
+    assert_eq!(result.graph.direct_deps(a_key)[0].name.as_str(), "root");
+    assert_eq!(result.graph.find_cycles().len(), 1);
 }
 
 #[tokio::test]
