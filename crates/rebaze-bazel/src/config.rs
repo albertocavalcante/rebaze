@@ -32,6 +32,7 @@ pub struct MigrationConfig {
     pub strategy: StrategyConfig,
 }
 
+// This is a template token replaced when mapping dependency components, not a format string.
 #[allow(clippy::literal_string_with_formatting_args)]
 const COMPONENT_PLACEHOLDER: &str = "{component}";
 
@@ -1099,7 +1100,7 @@ default = "source"
         assert!(deps.contains(&"zlib".to_string()));
 
         // Unknown package returns empty
-        assert!(config.get_transitive_deps("unknown").is_empty());
+        assert_eq!(config.get_transitive_deps("unknown"), Vec::<String>::new());
     }
 
     #[test]

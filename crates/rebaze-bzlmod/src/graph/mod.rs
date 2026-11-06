@@ -1213,7 +1213,7 @@ mod tests {
         graph.add_edge(c, a);
 
         let cycles = graph.find_cycles();
-        assert!(!cycles.is_empty());
+        assert_ne!(cycles, Vec::<Vec<ModuleKey>>::new());
     }
 
     #[test]

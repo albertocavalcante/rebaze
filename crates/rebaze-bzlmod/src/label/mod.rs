@@ -5,3 +5,5 @@ mod version;
 
 pub use module::ModuleName;
 pub use version::Version;
+
+pub(crate) use version::compare_version_strings;

@@ -1,4 +1,4 @@
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 rust_library(
     name = "rebaze-starlark",
@@ -9,4 +9,9 @@ rust_library(
         "@crates//:serde",
         "@crates//:serde_starlark",
     ],
+)
+
+rust_test(
+    name = "rebaze-starlark_test",
+    crate = ":rebaze-starlark",
 )

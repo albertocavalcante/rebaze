@@ -1,4 +1,4 @@
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 rust_library(
     name = "rebaze-core",
@@ -18,4 +18,10 @@ rust_library(
         "@crates//:tracing",
         "@crates//:walkdir",
     ],
+)
+
+rust_test(
+    name = "rebaze-core_test",
+    crate = ":rebaze-core",
+    deps = ["@crates//:tempfile"],
 )

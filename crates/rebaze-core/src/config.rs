@@ -110,16 +110,19 @@ impl Config {
         config_path: Option<&Path>,
         project_dir: &Path,
     ) -> Result<Self> {
-        match config_path {
-            Some(path) => {
-                // Explicit path - must exist
-                let config = Self::load_from_file(path)?;
-                tracing::info!("Loaded configuration from {}", path.display());
-                Ok(config)
-            }
-            None => {
-                // Discovery mode - optional
-                Ok(Self::load_from_project(project_dir))
+        if let Some(path) = config_path {
+            // Explicit path - must exist
+            let config = Self::load_from_file(path)?;
+            tracing::info!("Loaded configuration from {}", path.display());
+            Ok(config)
+        } else {
+            let path = project_dir.join("rebaze.toml");
+            match std::fs::metadata(&path) {
+                Ok(_) => Self::load_from_file(&path),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+                Err(error) => {
+                    Err(error).with_context(|| format!("Failed to inspect {}", path.display()))
+                }
             }
         }
     }

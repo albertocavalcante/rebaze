@@ -1,4 +1,4 @@
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 rust_library(
     name = "rebaze-gradle",
@@ -13,4 +13,9 @@ rust_library(
         "@crates//:tracing",
         "@crates//:walkdir",
     ],
+)
+
+rust_test(
+    name = "rebaze-gradle_test",
+    crate = ":rebaze-gradle",
 )
