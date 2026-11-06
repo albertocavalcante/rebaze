@@ -68,32 +68,25 @@ fn parse_plugins(content: &str, _is_kts: bool, plugins: &mut Vec<GradlePlugin>) 
 fn parse_plugin_line(line: &str) -> Option<GradlePlugin> {
     let line = line.trim();
 
-    // Handle: id("plugin.id") or id "plugin.id"
-    if line.starts_with("id") {
-        let id = extract_quoted_string(line)?;
-        let version = if line.contains("version") {
-            line.split("version").nth(1).and_then(extract_quoted_string)
-        } else {
-            None
-        };
-
-        return Some(GradlePlugin { id, version });
+    let (prefix, kotlin) = if let Some(rest) = line.strip_prefix("id") {
+        (rest, false)
+    } else {
+        (line.strip_prefix("kotlin")?, true)
+    };
+    if !prefix.starts_with('(') && !prefix.starts_with(char::is_whitespace) {
+        return None;
     }
-
-    // Handle: kotlin("jvm")
-    if line.starts_with("kotlin") {
-        let variant = extract_quoted_string(line)?;
-        let id = format!("org.jetbrains.kotlin.{variant}");
-        let version = if line.contains("version") {
-            line.split("version").nth(1).and_then(extract_quoted_string)
-        } else {
-            None
-        };
-
-        return Some(GradlePlugin { id, version });
-    }
-
-    None
+    let (id, rest) = quoted_value(prefix)?;
+    let id = if kotlin {
+        format!("org.jetbrains.kotlin.{id}")
+    } else {
+        id.to_owned()
+    };
+    let version = rest
+        .trim_start_matches(|c: char| c == ')' || c.is_whitespace())
+        .strip_prefix("version")
+        .and_then(extract_quoted_string);
+    Some(GradlePlugin { id, version })
 }
 
 fn parse_dependencies(content: &str, _is_kts: bool, deps: &mut Vec<GradleDependency>) {
@@ -132,7 +125,11 @@ fn parse_dependency_line(line: &str) -> Option<GradleDependency> {
 
     for config in configs {
         if line.starts_with(config) {
-            let rest = line.strip_prefix(config)?.trim();
+            let rest = line.strip_prefix(config)?;
+            if !rest.starts_with('(') && !rest.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let rest = rest.trim();
 
             // Parse "group:artifact:version" format
             let coords = extract_quoted_string(rest)?;
@@ -152,25 +149,37 @@ fn parse_dependency_line(line: &str) -> Option<GradleDependency> {
     None
 }
 
-fn extract_quoted_string(s: &str) -> Option<String> {
-    // Find content between quotes (single or double) or parentheses with quotes
-    let s = s.trim();
+fn extract_quoted_string(value: &str) -> Option<String> {
+    quoted_value(value).map(|(quoted, _)| quoted.to_owned())
+}
 
-    for (open, close) in [("\"", "\""), ("'", "'"), ("(\"", "\")"), ("('", "')")] {
-        if let Some(start) = s.find(open) {
-            let after_open = start + open.len();
-            if let Some(end) = s[after_open..].find(close) {
-                return Some(s[after_open..after_open + end].to_string());
-            }
-        }
-    }
-
-    None
+/// Return the first literal and the suffix after its matching closing quote.
+fn quoted_value(value: &str) -> Option<(&str, &str)> {
+    let (start, quote) = value
+        .char_indices()
+        .find(|(_, c)| matches!(c, '\'' | '"'))?;
+    let suffix = &value[start + quote.len_utf8()..];
+    let end = suffix.find(quote)?;
+    Some((&suffix[..end], &suffix[end + quote.len_utf8()..]))
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_ids_containing_version_do_not_confuse_the_version_clause() {
+        let plugin = parse_plugin_line(r#"id("com.version.plugin") version "1.2.3""#).unwrap();
+        assert_eq!(plugin.id, "com.version.plugin");
+        assert_eq!(plugin.version.as_deref(), Some("1.2.3"));
+        assert!(parse_plugin_line(r#"identity("not-a-plugin")"#).is_none());
+    }
+
+    #[test]
+    fn configuration_prefixes_are_not_dependency_declarations() {
+        assert!(parse_dependency_line(r#"implementationExtra("org.example:lib:1.0")"#).is_none());
+    }
 
     // ============================================================================
     // Plugin Parsing Tests

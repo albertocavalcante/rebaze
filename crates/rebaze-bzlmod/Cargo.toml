@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/albertocavalcante/rebaze"
-rust-version = "1.85"
+rust-version.workspace = true
 description = "Bazel module dependency resolution using MVS algorithm - Rust port of go-bzlmod"
 keywords = ["bazel", "bzlmod", "dependency", "resolution", "mvs"]
 categories = ["development-tools::build-utils"]
@@ -34,13 +34,10 @@ anyhow = "1"
 tracing = "0.1"
 
 # Starlark parsing
-starlark = "0.13"
 starlark_syntax = "0.13"
 
 # Utilities
 url = "2"
-regex = "1"
-async-channel = "2"
 indexmap = { version = "2", features = ["serde"] }
 async-trait = "0.1"
 

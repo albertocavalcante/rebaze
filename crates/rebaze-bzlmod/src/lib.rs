@@ -8,9 +8,10 @@
 //! - **Live BCR Resolution**: Fetch module metadata from Bazel Central Registry
 //! - **MVS Algorithm**: Implements Russ Cox's Minimal Version Selection
 //! - **Multi-Registry Support**: Chain private registries with BCR fallback
-//! - **Override Support**: Handle all Bazel override types
+//! - **Overrides**: Resolve single-version pins and hydrated Git/local/archive modules
+//!   (registry-specific and multiple-version resolution return explicit errors)
 //! - **Dependency Graph**: Query paths, explain version selections
-//! - **Lockfile Support**: Read/write `MODULE.bazel.lock`
+//! - **Lockfiles**: Reserved API; read/write support is not implemented
 //!
 //! # Example
 //!
@@ -50,26 +51,25 @@
 #![deny(missing_docs)]
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
-// Crate-level lint exceptions - these override the above denies for specific lints
-// Needed for Bazel builds since workspace-level Cargo.toml lints don't apply
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::return_self_not_must_use)]
-#![allow(clippy::redundant_else)]
-#![allow(clippy::option_if_let_else)]
-#![allow(clippy::collapsible_if)]
-#![allow(clippy::collapsible_else_if)]
-#![allow(clippy::if_not_else)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::manual_let_else)]
-#![allow(clippy::match_same_arms)]
-#![allow(clippy::unused_self)]
-#![allow(clippy::significant_drop_tightening)]
-// Allow expect/unwrap in specific contexts (semaphore acquire is infallible)
-#![allow(clippy::expect_used)]
+// Bazel does not inherit the workspace's API/documentation and control-flow lint policy.
+#![allow(
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::doc_markdown,
+    clippy::module_name_repetitions,
+    clippy::return_self_not_must_use,
+    clippy::redundant_else,
+    clippy::option_if_let_else,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::if_not_else,
+    clippy::too_many_lines,
+    clippy::manual_let_else,
+    clippy::match_same_arms,
+    clippy::unused_self,
+    clippy::significant_drop_tightening
+)]
 
 pub mod error;
 pub mod graph;

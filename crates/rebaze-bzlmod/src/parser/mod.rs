@@ -4,10 +4,10 @@
 //! It extracts module declarations, dependencies, and overrides.
 
 use crate::{Dependency, ModuleInfo, Override, Result};
-use starlark::syntax::{AstModule, Dialect};
 use starlark_syntax::codemap::Spanned;
 use starlark_syntax::syntax::ast::{ArgumentP, AstLiteral, AstNoPayload, CallArgsP, ExprP, StmtP};
 use starlark_syntax::syntax::module::AstModuleFields;
+use starlark_syntax::syntax::{AstModule, Dialect};
 
 /// A parsed MODULE.bazel file.
 #[derive(Debug, Clone)]
@@ -338,7 +338,11 @@ fn parse_single_version_override(args: &CallArgsP<AstNoPayload>) -> Result<Optio
 
     let version = match get_string_arg(args, "version") {
         Some(v) => crate::label::Version::new(v)?,
-        None => crate::label::Version::new("0.0.0")?,
+        None => {
+            return Err(crate::Error::Parse(
+                "single_version_override without a version is not supported".into(),
+            ));
+        }
     };
 
     let registry = get_string_arg(args, "registry");
@@ -428,6 +432,7 @@ fn parse_multiple_version_override(args: &CallArgsP<AstNoPayload>) -> Result<Opt
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

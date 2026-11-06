@@ -13,18 +13,13 @@
 //! The resolver fetches dependencies concurrently and caches results to avoid
 //! redundant network requests.
 
-// Allow some patterns that are difficult to avoid in async concurrent code.
-// These are used in tokio::spawn blocks where semaphore acquire and path handling
-// follow established patterns.
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::useless_let_if_seq)]
-#![allow(clippy::branches_sharing_code)]
-
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
-use tokio::sync::{Mutex, RwLock, Semaphore};
-use tracing::{debug, info, trace, warn};
+use tokio::sync::RwLock;
+use tokio::task::JoinSet;
+use tracing::info;
 
 use crate::graph::DependencyGraph;
 use crate::label::{ModuleName, Version};
@@ -50,63 +45,41 @@ struct DepRequest {
     dev_dependency: bool,
     /// Modules that requested this dependency.
     required_by: Vec<String>,
-    /// Compatibility level (if known).
-    compatibility_level: Option<u32>,
 }
 
-/// Context for graph building.
+/// Mutable graph state belongs to the coordinator; fetch tasks only return data.
 struct GraphBuildContext {
-    /// Dependency graph: module name -> version -> request info.
-    dep_graph: HashMap<String, HashMap<String, DepRequest>>,
-    /// Module dependencies: module name -> list of dependency names.
-    module_deps: HashMap<String, Vec<String>>,
-    /// Visiting set for cycle detection: module@version -> true.
-    visiting: HashSet<String>,
-    /// Overrides indexed by module name.
+    root_name: ModuleName,
+    requests: HashMap<String, HashMap<String, DepRequest>>,
+    modules: HashMap<ModuleKey, ModuleInfo>,
+    queued: HashSet<ModuleKey>,
     overrides: HashMap<String, Override>,
-    /// Pre-parsed MODULE.bazel for overridden modules.
     override_modules: HashMap<String, ModuleInfo>,
-    /// Cache of fetched modules: `module@version` -> `ModuleInfo`.
-    cache: HashMap<String, ModuleInfo>,
 }
 
 impl GraphBuildContext {
-    fn new(overrides: Vec<Override>, override_modules: HashMap<String, ModuleInfo>) -> Self {
-        let indexed_overrides = overrides
-            .into_iter()
-            .filter_map(|o| {
-                let name = match &o {
-                    Override::SingleVersion { module, .. } => module.as_str().to_string(),
-                    Override::Git { module, .. } => module.as_str().to_string(),
-                    Override::LocalPath { module, .. } => module.as_str().to_string(),
-                    Override::Archive { module, .. } => module.as_str().to_string(),
-                    Override::MultipleVersion { module, .. } => module.as_str().to_string(),
-                };
-                if name.is_empty() {
-                    None
-                } else {
-                    Some((name, o))
-                }
+    fn new(root: &ModuleInfo, override_modules: HashMap<String, ModuleInfo>) -> Self {
+        let overrides = root
+            .overrides
+            .iter()
+            .map(|override_| {
+                let (Override::SingleVersion { module, .. }
+                | Override::Git { module, .. }
+                | Override::LocalPath { module, .. }
+                | Override::Archive { module, .. }
+                | Override::MultipleVersion { module, .. }) = override_;
+                (module.as_str().to_owned(), override_.clone())
             })
             .collect();
-
         Self {
-            dep_graph: HashMap::new(),
-            module_deps: HashMap::new(),
-            visiting: HashSet::new(),
-            overrides: indexed_overrides,
+            root_name: root.name.clone(),
+            requests: HashMap::new(),
+            modules: HashMap::new(),
+            queued: HashSet::new(),
+            overrides,
             override_modules,
-            cache: HashMap::new(),
         }
     }
-}
-
-/// Task for the worker pool.
-#[derive(Debug, Clone)]
-struct DepTask {
-    name: String,
-    version: String,
-    path: Vec<String>,
 }
 
 /// Dependency resolver using MVS algorithm.
@@ -186,30 +159,34 @@ impl<R: Registry + 'static> Resolver<R> {
         let override_modules = self.override_modules.read().await.clone();
 
         // Initialize graph build context
-        let context = Arc::new(Mutex::new(GraphBuildContext::new(
-            root_module.overrides.clone(),
-            override_modules,
-        )));
-
-        // Build the dependency graph
-        let stats = Arc::new(Mutex::new(ResolutionStats::default()));
-
-        self.build_dependency_graph(root_module, context.clone(), stats.clone())
+        if self.options.concurrency == 0 {
+            return Err(Error::Resolution(
+                "concurrency must be greater than zero".into(),
+            ));
+        }
+        for override_ in &root_module.overrides {
+            match override_ {
+                Override::MultipleVersion { .. } => {
+                    return Err(Error::Resolution(
+                        "multiple-version override resolution is not supported".into(),
+                    ));
+                }
+                Override::SingleVersion {
+                    registry: Some(_), ..
+                } => {
+                    return Err(Error::Resolution(
+                        "registry-specific override resolution is not supported".into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        let mut ctx = GraphBuildContext::new(root_module, override_modules);
+        let mut stats = ResolutionStats::default();
+        self.build_dependency_graph(root_module, &mut ctx, &mut stats)
             .await?;
 
-        let mut ctx = context.lock().await;
-        let mut stats = stats.lock().await;
-
-        // Substitute yanked versions if enabled
-        if self.options.substitute_yanked {
-            self.substitute_yanked_versions(&mut ctx).await;
-        }
-
-        // Apply overrides
-        self.apply_overrides(&mut ctx.dep_graph, &root_module.overrides);
-
-        // Apply MVS: select highest version for each module
-        let selected_versions = self.apply_mvs(&ctx.dep_graph);
+        let selected_versions = Self::apply_mvs(&ctx.requests);
 
         // Validate direct dependencies if enabled
         let mut warnings = Vec::new();
@@ -239,672 +216,167 @@ impl<R: Registry + 'static> Resolver<R> {
 
         // Build the resolution result
         let (modules, graph, more_warnings) = self
-            .build_resolution_result(
-                &selected_versions,
-                &ctx.module_deps,
-                root_module,
-                &mut stats,
-            )
+            .build_resolution_result(&selected_versions, &ctx, root_module, &mut stats)
             .await?;
 
         warnings.extend(more_warnings);
 
         // Update stats
         stats.total_modules = modules.len();
-        stats.direct_deps = root_module.deps.len();
-        if self.options.include_dev_deps {
-            stats.direct_deps += root_module.dev_deps.len();
-        }
+        stats.direct_deps = modules.iter().filter(|module| module.is_direct).count();
         stats.transitive_deps = stats.total_modules.saturating_sub(stats.direct_deps);
 
         Ok(ResolutionResult {
             root: root_module.clone(),
             modules,
             graph,
-            stats: stats.clone(),
+            stats,
             warnings,
         })
     }
 
-    /// Build the dependency graph by recursively fetching modules.
+    /// Fetch each requested module once, with all graph mutations on this task.
+    /// Dropping the JoinSet on error or cancellation aborts outstanding fetches.
     async fn build_dependency_graph(
         &self,
-        root_module: &ModuleInfo,
-        context: Arc<Mutex<GraphBuildContext>>,
-        stats: Arc<Mutex<ResolutionStats>>,
+        root: &ModuleInfo,
+        ctx: &mut GraphBuildContext,
+        stats: &mut ResolutionStats,
     ) -> Result<()> {
-        // Create a channel for tasks
-        let (tx, rx) = async_channel::bounded::<DepTask>(self.options.concurrency * 2 + 100);
+        let mut pending = VecDeque::new();
+        let mut next_layer = VecDeque::new();
+        let mut fetches = JoinSet::new();
+        self.enqueue_dependencies(root, 0, true, ctx, &mut pending)
+            .await?;
 
-        // Semaphore for limiting concurrency
-        let semaphore = Arc::new(Semaphore::new(self.options.concurrency));
-
-        // Error holder
-        let first_error: Arc<Mutex<Option<Error>>> = Arc::new(Mutex::new(None));
-
-        // Process root module dependencies first
-        {
-            let mut ctx = context.lock().await;
-            self.process_deps(root_module, &["<root>".to_string()], &mut ctx, &tx)
-                .await?;
-        }
-
-        // Close sender after enqueueing root deps
-        drop(tx);
-
-        // Spawn workers
-        let mut handles = Vec::new();
-        for _ in 0..self.options.concurrency {
-            let rx = rx.clone();
-            let semaphore = semaphore.clone();
-            let context = context.clone();
-            let registry = self.registry.clone();
-            let first_error = first_error.clone();
-            let options = self.options.clone();
-            let stats = stats.clone();
-
-            let handle = tokio::spawn(async move {
-                while let Ok(task) = rx.recv().await {
-                    // Check if we should stop
-                    if first_error.lock().await.is_some() {
-                        continue;
-                    }
-
-                    let _permit = semaphore.acquire().await.unwrap();
-
-                    // Check depth limit
-                    if task.path.len() > options.max_depth {
-                        let mut err = first_error.lock().await;
-                        if err.is_none() {
-                            *err = Some(Error::MaxDepthExceeded(options.max_depth));
-                        }
-                        continue;
-                    }
-
-                    // Check cache first
-                    let cache_key = format!("{}@{}", task.name, task.version);
-                    let cached = {
-                        let ctx = context.lock().await;
-                        ctx.cache.get(&cache_key).cloned()
-                    };
-
-                    let module_info = if let Some(info) = cached {
-                        stats.lock().await.cache_hits += 1;
-                        info
-                    } else {
-                        // Fetch from registry
-                        match registry.get_module(&task.name, &task.version).await {
-                            Ok(info) => {
-                                stats.lock().await.registry_fetches += 1;
-                                // Cache it
-                                {
-                                    let mut ctx = context.lock().await;
-                                    ctx.cache.insert(cache_key, info.clone());
-                                }
-                                info
-                            }
-                            Err(e) => {
-                                // Check if it's a "not found" error
-                                if matches!(
-                                    &e,
-                                    Error::ModuleNotFound(_) | Error::VersionNotFound { .. }
-                                ) {
-                                    debug!(
-                                        "Module {}@{} not found, removing from graph",
-                                        task.name, task.version
-                                    );
-                                    // Remove from graph
-                                    let mut ctx = context.lock().await;
-                                    if let Some(versions) = ctx.dep_graph.get_mut(&task.name) {
-                                        versions.remove(&task.version);
-                                        if versions.is_empty() {
-                                            ctx.dep_graph.remove(&task.name);
-                                        }
-                                    }
-                                    continue;
-                                }
-
-                                let mut err = first_error.lock().await;
-                                if err.is_none() {
-                                    *err = Some(Error::Resolution(format!(
-                                        "fetch module {}@{}: {}",
-                                        task.name, task.version, e
-                                    )));
-                                }
-                                continue;
-                            }
-                        }
-                    };
-
-                    // Process this module's dependencies
-                    // We need to create a new sender for child tasks
-                    // But since we closed the original sender, we need to handle this differently
-                    // For now, process synchronously (the Go version uses a goroutine pattern)
-                    let mut ctx = context.lock().await;
-
-                    // Capture this module's dependencies
-                    let mut deps = Vec::new();
-                    for dep in &module_info.deps {
-                        if !dep.dev_dependency || options.include_dev_deps {
-                            deps.push(dep.name.as_str().to_string());
-                        }
-                    }
-                    if options.include_dev_deps {
-                        for dep in &module_info.dev_deps {
-                            deps.push(dep.name.as_str().to_string());
-                        }
-                    }
-                    if !deps.is_empty() && !module_info.name.as_str().is_empty() {
-                        ctx.module_deps
-                            .insert(module_info.name.as_str().to_string(), deps);
-                    }
-
-                    // Process each dependency
-                    for dep in module_info.deps.iter().chain(module_info.dev_deps.iter()) {
-                        let is_dev = dep.dev_dependency
-                            || module_info.dev_deps.iter().any(|d| d.name == dep.name);
-                        if is_dev && !options.include_dev_deps {
-                            continue;
-                        }
-
-                        let dep_name = dep.name.as_str();
-                        let mut effective_version = dep.version.clone();
-                        let mut skip_fetch = false;
-
-                        // Check for overrides
-                        if let Some(ovr) = ctx.overrides.get(dep_name) {
-                            match ovr {
-                                Override::SingleVersion { version, .. } => {
-                                    effective_version = version.clone();
-                                }
-                                Override::Git { .. }
-                                | Override::LocalPath { .. }
-                                | Override::Archive { .. } => {
-                                    skip_fetch = true;
-                                }
-                                Override::MultipleVersion { .. } => {
-                                    // MultipleVersion doesn't change the requested version
-                                }
-                            }
-                        }
-
-                        // Add to dep graph
-                        let versions = ctx
-                            .dep_graph
-                            .entry(dep_name.to_string())
-                            .or_insert_with(HashMap::new);
-
-                        let version_str = effective_version.as_str();
-                        if let Some(existing) = versions.get_mut(version_str) {
-                            existing.required_by.push(task.path.last().unwrap().clone());
-                            if is_dev {
-                                existing.dev_dependency = true;
-                            }
-                        } else {
-                            versions.insert(
-                                version_str.to_string(),
-                                DepRequest {
-                                    version: effective_version.clone(),
-                                    dev_dependency: is_dev,
-                                    required_by: vec![task.path.last().unwrap().clone()],
-                                    compatibility_level: None,
-                                },
-                            );
-                        }
-
-                        if skip_fetch {
-                            // Check if we have override module info
-                            // Clone the deps to avoid borrow issues
-                            let override_deps =
-                                ctx.override_modules.get(dep_name).map(|m| m.deps.clone());
-
-                            if let Some(deps) = override_deps {
-                                let dep_key =
-                                    format!("{}@{}", dep_name, effective_version.as_str());
-                                let mut dep_path = task.path.clone();
-                                dep_path.push(dep_key.clone());
-
-                                // Check depth
-                                if dep_path.len() > options.max_depth {
-                                    continue;
-                                }
-
-                                // Check if already visited
-                                if !ctx.visiting.insert(dep_key) {
-                                    continue;
-                                }
-
-                                // Process override module's deps recursively
-                                // (simplified - in production this would be more sophisticated)
-                                for sub_dep in &deps {
-                                    let sub_versions = ctx
-                                        .dep_graph
-                                        .entry(sub_dep.name.as_str().to_string())
-                                        .or_insert_with(HashMap::new);
-
-                                    let sub_ver = sub_dep.version.as_str();
-                                    if !sub_versions.contains_key(sub_ver) {
-                                        sub_versions.insert(
-                                            sub_ver.to_string(),
-                                            DepRequest {
-                                                version: sub_dep.version.clone(),
-                                                dev_dependency: sub_dep.dev_dependency,
-                                                required_by: vec![dep_name.to_string()],
-                                                compatibility_level: None,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Check if already being processed
-                        let dep_key = format!("{}@{}", dep_name, effective_version.as_str());
-                        if ctx.visiting.contains(&dep_key) {
-                            trace!("Skipping already visiting: {}", dep_key);
-                            continue;
-                        }
-                        ctx.visiting.insert(dep_key.clone());
-
-                        // Note: We can't easily send more tasks from here since we closed the sender.
-                        // In a full implementation, we'd need a different approach (like recursive spawning
-                        // or keeping the sender alive with a counter). For now, transitive deps are
-                        // handled through the cache and subsequent resolution passes.
-                    }
+        loop {
+            // Finish every fetch at this depth before scheduling the next layer.
+            // Depth checks then depend on shortest paths, not network completion order.
+            if pending.is_empty() && fetches.is_empty() {
+                if next_layer.is_empty() {
+                    break;
                 }
-            });
-
-            handles.push(handle);
-        }
-
-        // Wait for all workers
-        for handle in handles {
-            let _ = handle.await;
-        }
-
-        // Check for errors
-        let err = first_error.lock().await.take();
-        if let Some(e) = err {
-            return Err(e);
-        }
-
-        // Do additional passes to resolve transitive dependencies
-        // This is needed because the worker pool pattern above doesn't easily support
-        // spawning new tasks from within workers after the sender is dropped.
-        self.resolve_transitive_deps(context.clone(), stats).await?;
-
-        Ok(())
-    }
-
-    /// Resolve transitive dependencies that weren't fetched in the first pass.
-    async fn resolve_transitive_deps(
-        &self,
-        context: Arc<Mutex<GraphBuildContext>>,
-        stats: Arc<Mutex<ResolutionStats>>,
-    ) -> Result<()> {
-        let max_iterations = 100; // Prevent infinite loops
-        for iteration in 0..max_iterations {
-            let pending: Vec<(String, String)> = {
-                let ctx = context.lock().await;
-                let mut pending = Vec::new();
-                for (name, versions) in &ctx.dep_graph {
-                    for version in versions.keys() {
-                        let cache_key = format!("{name}@{version}");
-                        if !ctx.cache.contains_key(&cache_key) && !ctx.visiting.contains(&cache_key)
-                        {
-                            // Check if this is an overridden module that shouldn't be fetched
-                            let skip = if let Some(ovr) = ctx.overrides.get(name) {
-                                matches!(
-                                    ovr,
-                                    Override::Git { .. }
-                                        | Override::LocalPath { .. }
-                                        | Override::Archive { .. }
-                                )
-                            } else {
-                                false
-                            };
-                            if !skip {
-                                pending.push((name.clone(), version.clone()));
-                            }
-                        }
-                    }
-                }
-                pending
-            };
-
-            if pending.is_empty() {
-                debug!(
-                    "Transitive dependency resolution complete after {} iterations",
-                    iteration
+                std::mem::swap(&mut pending, &mut next_layer);
+            }
+            while fetches.len() < self.options.concurrency {
+                let Some((key, depth)) = pending.pop_front() else {
+                    break;
+                };
+                let external_override = matches!(
+                    ctx.overrides.get(key.name.as_str()),
+                    Some(
+                        Override::Git { .. }
+                            | Override::LocalPath { .. }
+                            | Override::Archive { .. }
+                    )
                 );
-                break;
-            }
+                if external_override {
+                    let module = ctx.override_modules.get(key.name.as_str()).cloned()
+                        .ok_or_else(|| Error::Resolution(format!("override for {} requires MODULE.bazel content; call add_override_module_content first", key.name)))?;
+                    self.enqueue_dependencies(&module, depth, false, ctx, &mut next_layer)
+                        .await?;
+                    ctx.modules.insert(key, module);
+                    continue;
+                }
 
-            debug!(
-                "Iteration {}: {} pending transitive dependencies",
-                iteration,
-                pending.len()
-            );
-
-            // Fetch pending modules concurrently
-            let semaphore = Arc::new(Semaphore::new(self.options.concurrency));
-            let mut handles = Vec::new();
-
-            for (name, version) in pending {
-                let semaphore = semaphore.clone();
-                let registry = self.registry.clone();
-                let context = context.clone();
-                let options = self.options.clone();
-                let stats = stats.clone();
-
-                let handle = tokio::spawn(async move {
-                    let _permit = semaphore.acquire().await.unwrap();
-                    let cache_key = format!("{name}@{version}");
-
-                    // Mark as visiting
-                    {
-                        let mut ctx = context.lock().await;
-                        ctx.visiting.insert(cache_key.clone());
-                    }
-
-                    match registry.get_module(&name, &version).await {
-                        Ok(info) => {
-                            stats.lock().await.registry_fetches += 1;
-
-                            let mut ctx = context.lock().await;
-                            ctx.cache.insert(cache_key, info.clone());
-
-                            // Add this module's deps to the graph
-                            let mut deps = Vec::new();
-                            for dep in info.deps.iter().chain(info.dev_deps.iter()) {
-                                let is_dev = dep.dev_dependency
-                                    || info.dev_deps.iter().any(|d| d.name == dep.name);
-                                if is_dev && !options.include_dev_deps {
-                                    continue;
-                                }
-
-                                deps.push(dep.name.as_str().to_string());
-
-                                let dep_name = dep.name.as_str();
-                                let mut effective_version = dep.version.clone();
-
-                                // Check for overrides
-                                if let Some(Override::SingleVersion {
-                                    version: ovr_version,
-                                    ..
-                                }) = ctx.overrides.get(dep_name)
-                                {
-                                    effective_version = ovr_version.clone();
-                                }
-
-                                let versions = ctx
-                                    .dep_graph
-                                    .entry(dep_name.to_string())
-                                    .or_insert_with(HashMap::new);
-
-                                let version_str = effective_version.as_str();
-                                if let Some(existing) = versions.get_mut(version_str) {
-                                    existing.required_by.push(name.clone());
-                                } else {
-                                    versions.insert(
-                                        version_str.to_string(),
-                                        DepRequest {
-                                            version: effective_version,
-                                            dev_dependency: is_dev,
-                                            required_by: vec![name.clone()],
-                                            compatibility_level: None,
-                                        },
-                                    );
-                                }
-                            }
-
-                            if !deps.is_empty() && !info.name.as_str().is_empty() {
-                                ctx.module_deps.insert(info.name.as_str().to_string(), deps);
-                            }
-                        }
-                        Err(e) => {
-                            if matches!(
-                                &e,
-                                Error::ModuleNotFound(_) | Error::VersionNotFound { .. }
-                            ) {
-                                debug!(
-                                    "Module {}@{} not found, removing from graph",
-                                    name, version
-                                );
-                                let mut ctx = context.lock().await;
-                                if let Some(versions) = ctx.dep_graph.get_mut(&name) {
-                                    versions.remove(&version);
-                                    if versions.is_empty() {
-                                        ctx.dep_graph.remove(&name);
-                                    }
-                                }
-                            } else {
-                                warn!("Failed to fetch {}@{}: {}", name, version, e);
-                            }
-                        }
-                    }
+                let registry = Arc::clone(&self.registry);
+                let timeout = Duration::from_secs(self.options.timeout_secs);
+                fetches.spawn(async move {
+                    let module = tokio::time::timeout(
+                        timeout,
+                        registry.get_module(key.name.as_str(), key.version.as_str()),
+                    )
+                    .await
+                    .map_err(|_| Error::Resolution(format!("fetch {key} timed out")))??;
+                    Ok::<_, Error>((key, depth, module))
                 });
-
-                handles.push(handle);
             }
 
-            // Wait for all fetches
-            for handle in handles {
-                let _ = handle.await;
-            }
+            let Some(result) = fetches.join_next().await else {
+                continue;
+            };
+            let (key, depth, module) = result.map_err(|error| {
+                Error::Resolution(format!("module fetch task failed: {error}"))
+            })??;
+            stats.registry_fetches += 1;
+            self.enqueue_dependencies(&module, depth, false, ctx, &mut next_layer)
+                .await?;
+            ctx.modules.insert(key, module);
         }
-
         Ok(())
     }
 
-    /// Process dependencies of a module.
-    async fn process_deps(
+    /// Apply root overrides and schedule previously unseen requests.
+    async fn enqueue_dependencies(
         &self,
         module: &ModuleInfo,
-        path: &[String],
+        depth: usize,
+        is_root: bool,
         ctx: &mut GraphBuildContext,
-        tx: &async_channel::Sender<DepTask>,
+        pending: &mut VecDeque<(ModuleKey, usize)>,
     ) -> Result<()> {
-        // Capture this module's dependencies for graph building
-        let mut deps = Vec::new();
-        for dep in &module.deps {
-            if !dep.dev_dependency || self.options.include_dev_deps {
-                deps.push(dep.name.as_str().to_string());
-            }
-        }
-        if self.options.include_dev_deps {
-            for dep in &module.dev_deps {
-                deps.push(dep.name.as_str().to_string());
-            }
-        }
-        if !deps.is_empty() && !module.name.as_str().is_empty() {
-            ctx.module_deps
-                .insert(module.name.as_str().to_string(), deps);
-        }
-
-        // Process each dependency
-        let all_deps: Vec<&Dependency> = module.deps.iter().chain(module.dev_deps.iter()).collect();
-
-        for dep in all_deps {
-            let is_dev = dep.dev_dependency || module.dev_deps.iter().any(|d| d.name == dep.name);
-            if is_dev && !self.options.include_dev_deps {
+        for (dep, is_dev) in dependencies(module, is_root && self.options.include_dev_deps) {
+            // The root module wins by name, even when a dependency requests another version.
+            if dep.name == ctx.root_name {
                 continue;
             }
-
-            let dep_name = dep.name.as_str();
-            let mut effective_version = dep.version.clone();
-            let mut skip_fetch = false;
-
-            // Check for overrides
-            if let Some(ovr) = ctx.overrides.get(dep_name) {
-                match ovr {
-                    Override::SingleVersion { version, .. } => {
-                        effective_version = version.clone();
-                    }
-                    Override::Git { .. }
-                    | Override::LocalPath { .. }
-                    | Override::Archive { .. } => {
-                        skip_fetch = true;
-                    }
-                    Override::MultipleVersion { .. } => {
-                        // MultipleVersion doesn't change the requested version
-                    }
-                }
-            }
-
-            // Add to dep graph
-            let versions = ctx.dep_graph.entry(dep_name.to_string()).or_default();
-
-            let version_str = effective_version.as_str();
-            let parent = path.last().map_or("<root>", String::as_str);
-
-            if let Some(existing) = versions.get_mut(version_str) {
-                existing.required_by.push(parent.to_string());
-                if is_dev {
-                    existing.dev_dependency = true;
-                }
-            } else {
-                versions.insert(
-                    version_str.to_string(),
-                    DepRequest {
-                        version: effective_version.clone(),
-                        dev_dependency: is_dev,
-                        required_by: vec![parent.to_string()],
-                        compatibility_level: None,
-                    },
-                );
-            }
-
-            if skip_fetch {
-                // Handle override modules
-                if let Some(override_module) = ctx.override_modules.get(dep_name).cloned() {
-                    let dep_key = format!("{}@{}", dep_name, effective_version.as_str());
-                    let mut dep_path = path.to_vec();
-                    dep_path.push(dep_key.clone());
-
-                    // Check depth
-                    if dep_path.len() > self.options.max_depth {
-                        return Err(Error::MaxDepthExceeded(self.options.max_depth));
-                    }
-
-                    // Check if already visited
-                    if !ctx.visiting.insert(dep_key) {
-                        continue;
-                    }
-
-                    // Process override module's deps recursively (with Box::pin for recursion)
-                    Box::pin(self.process_deps(&override_module, &dep_path, ctx, tx)).await?;
-                }
-                continue;
-            }
-
-            // Check if already being processed
-            let dep_key = format!("{}@{}", dep_name, effective_version.as_str());
-            if ctx.visiting.contains(&dep_key) {
-                trace!("Skipping already visiting: {}", dep_key);
-                continue;
-            }
-            ctx.visiting.insert(dep_key.clone());
-
-            // Check depth limit
-            let mut dep_path = path.to_vec();
-            dep_path.push(dep_key);
-            if dep_path.len() > self.options.max_depth {
-                return Err(Error::MaxDepthExceeded(self.options.max_depth));
-            }
-
-            // Enqueue task for worker
-            let task = DepTask {
-                name: dep_name.to_string(),
-                version: version_str.to_string(),
-                path: dep_path,
+            let override_ = ctx.overrides.get(dep.name.as_str());
+            let mut version = match override_ {
+                Some(Override::SingleVersion { version, .. }) => version.clone(),
+                _ => dep.version.clone(),
             };
+            // Fetch the replacement's MODULE.bazel too, so its dependencies are included.
+            if self.options.substitute_yanked
+                && override_.is_none()
+                && !self
+                    .options
+                    .allow_yanked
+                    .contains(&format!("{}@{}", dep.name, version))
+                && let Some(replacement) = self
+                    .find_non_yanked_version(dep.name.as_str(), version.as_str())
+                    .await?
+            {
+                version = Version::new(replacement)?;
+            }
+            let request = ctx
+                .requests
+                .entry(dep.name.as_str().to_owned())
+                .or_default()
+                .entry(version.as_str().to_owned())
+                .or_insert_with(|| DepRequest {
+                    version: version.clone(),
+                    dev_dependency: is_dev,
+                    required_by: Vec::new(),
+                });
+            request.dev_dependency &= is_dev;
+            request.required_by.push(module.name.as_str().to_owned());
 
-            if tx.send(task).await.is_err() {
-                // Channel closed, this is fine
-                break;
+            let key = ModuleKey::new(dep.name.clone(), version);
+            if ctx.queued.insert(key.clone()) {
+                if depth >= self.options.max_depth {
+                    return Err(Error::MaxDepthExceeded(self.options.max_depth));
+                }
+                pending.push_back((key, depth + 1));
             }
         }
-
         Ok(())
-    }
-
-    /// Apply overrides to the dependency graph.
-    fn apply_overrides(
-        &self,
-        dep_graph: &mut HashMap<String, HashMap<String, DepRequest>>,
-        overrides: &[Override],
-    ) {
-        for ovr in overrides {
-            match ovr {
-                Override::SingleVersion {
-                    module, version, ..
-                } => {
-                    let module_name = module.as_str();
-                    let version_str = version.as_str();
-
-                    if let Some(versions) = dep_graph.get(module_name) {
-                        let mut new_versions = HashMap::new();
-                        if let Some(req) = versions.get(version_str) {
-                            new_versions.insert(version_str.to_string(), req.clone());
-                        } else {
-                            new_versions.insert(
-                                version_str.to_string(),
-                                DepRequest {
-                                    version: version.clone(),
-                                    dev_dependency: false,
-                                    required_by: vec!["<override>".to_string()],
-                                    compatibility_level: None,
-                                },
-                            );
-                        }
-                        dep_graph.insert(module_name.to_string(), new_versions);
-                    } else {
-                        // Create entry for nonexistent module
-                        let mut new_versions = HashMap::new();
-                        new_versions.insert(
-                            version_str.to_string(),
-                            DepRequest {
-                                version: version.clone(),
-                                dev_dependency: false,
-                                required_by: vec!["<override>".to_string()],
-                                compatibility_level: None,
-                            },
-                        );
-                        dep_graph.insert(module_name.to_string(), new_versions);
-                    }
-                }
-                Override::Git { .. }
-                | Override::LocalPath { .. }
-                | Override::Archive { .. }
-                | Override::MultipleVersion { .. } => {
-                    // These overrides don't modify the version selection
-                }
-            }
-        }
     }
 
     /// Apply MVS: select the highest version for each module.
     fn apply_mvs(
-        &self,
         dep_graph: &HashMap<String, HashMap<String, DepRequest>>,
     ) -> HashMap<String, DepRequest> {
         let mut selected = HashMap::new();
 
         for (module_name, versions) in dep_graph {
-            let mut max_req: Option<&DepRequest> = None;
-
-            for req in versions.values() {
-                if max_req.is_none()
-                    || compare_versions(req.version.as_str(), max_req.unwrap().version.as_str()) > 0
-                {
-                    max_req = Some(req);
-                }
-            }
-
-            if let Some(req) = max_req {
-                selected.insert(module_name.clone(), req.clone());
+            if let Some(req) = versions
+                .values()
+                .max_by(|a, b| compare_versions(a.version.as_str(), b.version.as_str()).cmp(&0))
+            {
+                let mut selected_request = req.clone();
+                selected_request.dev_dependency =
+                    versions.values().all(|request| request.dev_dependency);
+                selected.insert(module_name.clone(), selected_request);
             }
         }
 
@@ -949,43 +421,55 @@ impl<R: Registry + 'static> Resolver<R> {
     async fn build_resolution_result(
         &self,
         selected_versions: &HashMap<String, DepRequest>,
-        module_deps: &HashMap<String, Vec<String>>,
+        ctx: &GraphBuildContext,
         root_module: &ModuleInfo,
         stats: &mut ResolutionStats,
     ) -> Result<(Vec<ResolvedModule>, DependencyGraph, Vec<String>)> {
+        let fetched_modules = &ctx.modules;
         let mut modules = Vec::new();
-        let mut graph = DependencyGraph::new();
+        let root_key = ModuleKey::new(root_module.name.clone(), root_module.version.clone());
+        let mut graph = DependencyGraph::with_root(root_key.clone());
         let mut warnings = Vec::new();
 
-        // Build set of direct dependency names
-        let direct_deps: HashSet<String> = root_module
-            .deps
-            .iter()
-            .chain(root_module.dev_deps.iter())
-            .map(|d| d.name.as_str().to_string())
+        let direct_deps: HashSet<&str> = dependencies(root_module, self.options.include_dev_deps)
+            .map(|(dep, _)| dep.name.as_str())
             .collect();
 
-        // Build set of selected module names for filtering dependencies
-        let selected_names: HashSet<String> = selected_versions.keys().cloned().collect();
+        // Only dependencies reachable through selected versions belong in the result.
+        let mut reachable = HashSet::new();
+        let mut pending: VecDeque<&str> = direct_deps.iter().copied().collect();
+        while let Some(name) = pending.pop_front() {
+            if !reachable.insert(name) {
+                continue;
+            }
+            if let Some(request) = selected_versions.get(name) {
+                let key = ModuleKey::new(ModuleName::new(name)?, request.version.clone());
+                if let Some(module) = fetched_modules.get(&key) {
+                    pending.extend(dependencies(module, false).map(|(dep, _)| dep.name.as_str()));
+                }
+            }
+        }
 
         for (module_name, req) in selected_versions {
-            let is_direct = direct_deps.contains(module_name);
-
-            // Get filtered dependencies
-            let deps: Vec<ModuleKey> = module_deps
-                .get(module_name)
-                .map(|deps| {
-                    deps.iter()
-                        .filter(|dep| selected_names.contains(*dep))
-                        .filter_map(|dep| {
-                            selected_versions.get(dep).map(|r| {
-                                ModuleKey::new(
-                                    ModuleName::new(dep.clone()).unwrap(),
-                                    r.version.clone(),
-                                )
-                            })
+            if !reachable.contains(module_name.as_str()) {
+                continue;
+            }
+            let is_direct = direct_deps.contains(module_name.as_str());
+            let key = ModuleKey::new(ModuleName::new(module_name.clone())?, req.version.clone());
+            let info = fetched_modules.get(&key);
+            let deps = info
+                .map(|module| {
+                    dependencies(module, false)
+                        .filter_map(|(dep, _)| {
+                            if dep.name == root_module.name {
+                                Some(root_key.clone())
+                            } else {
+                                selected_versions.get(dep.name.as_str()).map(|request| {
+                                    ModuleKey::new(dep.name.clone(), request.version.clone())
+                                })
+                            }
                         })
-                        .collect()
+                        .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
 
@@ -1000,19 +484,12 @@ impl<R: Registry + 'static> Resolver<R> {
                     .unwrap_or_else(|| crate::DEFAULT_REGISTRY.to_string()),
                 is_direct,
                 is_dev: req.dev_dependency,
-                compatibility_level: req.compatibility_level.unwrap_or(0),
+                compatibility_level: info.map_or(0, |module| module.compatibility_level),
                 yanked: false,
                 yanked_reason: None,
                 deprecated: false,
                 deps: deps.clone(),
             };
-
-            // Add to graph
-            let key = ModuleKey::new(resolved.name.clone(), resolved.version.clone());
-            for dep_key in &deps {
-                graph.add_edge(key.clone(), dep_key.clone());
-            }
-            graph.add_module(resolved.clone());
 
             modules.push(resolved);
 
@@ -1027,7 +504,17 @@ impl<R: Registry + 'static> Resolver<R> {
         // Check for yanked versions if enabled
         if self.options.check_yanked {
             for module in &mut modules {
-                match self.registry.get_metadata(module.name.as_str()).await {
+                if matches!(
+                    ctx.overrides.get(module.name.as_str()),
+                    Some(
+                        Override::Git { .. }
+                            | Override::LocalPath { .. }
+                            | Override::Archive { .. }
+                    )
+                ) {
+                    continue;
+                }
+                match self.fetch_metadata(module.name.as_str()).await {
                     Ok(metadata) => {
                         if let Some(reason) = metadata.yanked_versions.get(module.version.as_str())
                         {
@@ -1066,52 +553,41 @@ impl<R: Registry + 'static> Resolver<R> {
                             }
                         }
                     }
-                    Err(e) => {
-                        debug!(
-                            "Failed to fetch metadata for {}: {}",
-                            module.name.as_str(),
-                            e
-                        );
-                    }
+                    Err(error) => return Err(error),
                 }
             }
         }
 
+        // Populate the root and nodes after metadata updates. Sorted modules also
+        // make root edges independent of HashMap iteration and fetch completion.
+        let root_deps: Vec<_> = modules
+            .iter()
+            .filter(|module| module.is_direct)
+            .map(|module| ModuleKey::new(module.name.clone(), module.version.clone()))
+            .collect();
+        graph.add_module(ResolvedModule {
+            name: root_module.name.clone(),
+            version: root_module.version.clone(),
+            registry: String::new(),
+            is_direct: false,
+            is_dev: false,
+            compatibility_level: root_module.compatibility_level,
+            yanked: false,
+            yanked_reason: None,
+            deprecated: false,
+            deps: root_deps.clone(),
+        });
+        for key in root_deps {
+            graph.add_edge(root_key.clone(), key);
+        }
+        for module in &modules {
+            graph.add_module(module.clone());
+            let key = ModuleKey::new(module.name.clone(), module.version.clone());
+            for dependency in &module.deps {
+                graph.add_edge(key.clone(), dependency.clone());
+            }
+        }
         Ok((modules, graph, warnings))
-    }
-
-    /// Substitute yanked versions with non-yanked alternatives.
-    async fn substitute_yanked_versions(&self, ctx: &mut GraphBuildContext) {
-        let module_names: Vec<String> = ctx.dep_graph.keys().cloned().collect();
-
-        for module_name in module_names {
-            let versions: Vec<String> = ctx
-                .dep_graph
-                .get(&module_name)
-                .map(|v| v.keys().cloned().collect())
-                .unwrap_or_default();
-
-            let mut replacements = Vec::new();
-
-            for version in versions {
-                if let Some(replacement) =
-                    self.find_non_yanked_version(&module_name, &version).await
-                    && replacement != version
-                {
-                    replacements.push((version, replacement));
-                }
-            }
-
-            // Apply replacements
-            if let Some(versions) = ctx.dep_graph.get_mut(&module_name) {
-                for (old_ver, new_ver) in replacements {
-                    if let Some(mut req) = versions.remove(&old_ver) {
-                        req.version = Version::new(new_ver.clone()).unwrap();
-                        versions.insert(new_ver, req);
-                    }
-                }
-            }
-        }
     }
 
     /// Find a non-yanked replacement for a yanked version.
@@ -1119,29 +595,29 @@ impl<R: Registry + 'static> Resolver<R> {
         &self,
         module_name: &str,
         requested_version: &str,
-    ) -> Option<String> {
-        let metadata = self.registry.get_metadata(module_name).await.ok()?;
+    ) -> Result<Option<String>> {
+        let metadata = self.fetch_metadata(module_name).await?;
 
         if !metadata.yanked_versions.contains_key(requested_version) {
-            return Some(requested_version.to_string());
+            return Ok(Some(requested_version.to_string()));
         }
 
-        // Find non-yanked versions
-        let non_yanked: Vec<&String> = metadata
+        Ok(metadata
             .versions
             .iter()
-            .filter(|v| !metadata.yanked_versions.contains_key(*v))
-            .collect();
+            .filter(|version| !metadata.yanked_versions.contains_key(*version))
+            .filter(|version| compare_versions(version, requested_version) >= 0)
+            .min_by(|a, b| compare_versions(a, b).cmp(&0))
+            .cloned())
+    }
 
-        // Find the lowest non-yanked version >= requested
-        for candidate in non_yanked {
-            if compare_versions(candidate, requested_version) >= 0 {
-                return Some(candidate.clone());
-            }
-        }
-
-        // No suitable replacement found
-        Some(requested_version.to_string())
+    async fn fetch_metadata(&self, module: &str) -> Result<crate::ModuleMetadata> {
+        tokio::time::timeout(
+            Duration::from_secs(self.options.timeout_secs),
+            self.registry.get_metadata(module),
+        )
+        .await
+        .map_err(|_| Error::Resolution(format!("metadata fetch for {module} timed out")))?
     }
 }
 
@@ -1152,8 +628,24 @@ impl Resolver<crate::RegistryClient> {
     /// Resolve dependencies from MODULE.bazel content with default registry.
     pub async fn resolve(content: &str, options: ResolverOptions) -> Result<ResolutionResult> {
         let module_info = parse_module_content(content)?;
-        let registry = crate::RegistryClient::bcr();
-        let resolver = Self::new(registry, options);
+        let config = crate::RegistryClientConfig {
+            request_timeout: Duration::from_secs(options.timeout_secs),
+            ..crate::RegistryClientConfig::default()
+        };
+        let registries = options
+            .registries
+            .iter()
+            .map(|url| {
+                crate::RegistryClient::with_config(url, config.clone())
+                    .map(|client| Arc::new(client) as Arc<dyn Registry>)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if registries.is_empty() {
+            return Err(Error::Resolution(
+                "at least one registry is required".into(),
+            ));
+        }
+        let resolver = Resolver::new(crate::RegistryChain::new(registries), options);
         resolver.resolve_dependencies(&module_info).await
     }
 
@@ -1167,109 +659,23 @@ impl Resolver<crate::RegistryClient> {
     }
 }
 
-/// Parse MODULE.bazel content into `ModuleInfo`.
-///
-/// This is a simplified parser. A full implementation would use the parser module.
+/// Use the same AST parser for root, override and registry module files.
 fn parse_module_content(content: &str) -> Result<ModuleInfo> {
-    // Use the parser module if available, otherwise use a basic regex parser
-    // For now, implement a basic parser that handles common cases
-    use regex::Regex;
+    Ok(crate::ModuleFile::parse(content)?.info)
+}
 
-    let module_re =
-        Regex::new(r#"module\s*\(\s*name\s*=\s*"([^"]+)"\s*,\s*version\s*=\s*"([^"]+)""#)
-            .map_err(|e| Error::Parse(e.to_string()))?;
-
-    let bazel_dep_re = Regex::new(
-        r#"bazel_dep\s*\(\s*name\s*=\s*"([^"]+)"\s*,\s*version\s*=\s*"([^"]+)"(?:\s*,\s*dev_dependency\s*=\s*(True|False))?\s*\)"#,
-    )
-    .map_err(|e| Error::Parse(e.to_string()))?;
-
-    let (name, version) = if let Some(caps) = module_re.captures(content) {
-        (
-            caps.get(1)
-                .map_or_else(String::new, |m| m.as_str().to_string()),
-            caps.get(2)
-                .map_or_else(String::new, |m| m.as_str().to_string()),
-        )
-    } else {
-        (String::new(), String::new())
-    };
-
-    let mut deps = Vec::new();
-    let mut dev_deps = Vec::new();
-
-    for caps in bazel_dep_re.captures_iter(content) {
-        let dep_name = caps.get(1).map_or("", |m| m.as_str());
-        let dep_version = caps.get(2).map_or("", |m| m.as_str());
-        let is_dev = caps.get(3).is_some_and(|m| m.as_str() == "True");
-
-        let dep = Dependency {
-            name: ModuleName::new(dep_name)?,
-            version: Version::new(dep_version)?,
-            max_version: None,
-            repo_name: None,
-            dev_dependency: is_dev,
-        };
-
-        if is_dev {
-            dev_deps.push(dep);
-        } else {
-            deps.push(dep);
-        }
-    }
-
-    Ok(ModuleInfo {
-        name: ModuleName::new(name)?,
-        version: Version::new(if version.is_empty() {
-            "0.0.0"
-        } else {
-            &version
-        })?,
-        compatibility_level: 0,
-        bazel_compatibility: Vec::new(),
-        deps,
-        dev_deps,
-        overrides: Vec::new(),
-    })
+/// Dev dependencies in transitive modules are always ignored by Bazel.
+fn dependencies(
+    module: &ModuleInfo,
+    include_dev: bool,
+) -> impl Iterator<Item = (&Dependency, bool)> {
+    module
+        .deps
+        .iter()
+        .map(|dep| (dep, dep.dev_dependency))
+        .chain(module.dev_deps.iter().map(|dep| (dep, true)))
+        .filter(move |(_, dev)| !dev || include_dev)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_version_comparison() {
-        assert!(compare_versions("1.0.0", "0.9.0") > 0);
-        assert!(compare_versions("1.0.0", "1.0.0") == 0);
-        assert!(compare_versions("1.0.0", "1.0.1") < 0);
-        assert!(compare_versions("2.0.0", "1.9.9") > 0);
-        assert!(compare_versions("1.0.0-alpha", "1.0.0") < 0);
-        assert!(compare_versions("1.0.0-alpha", "1.0.0-beta") < 0);
-    }
-
-    #[test]
-    fn test_parse_module_content() {
-        let content = r#"
-            module(name = "my_project", version = "1.0.0")
-            bazel_dep(name = "rules_rust", version = "0.40.0")
-            bazel_dep(name = "rules_go", version = "0.50.0", dev_dependency = True)
-        "#;
-
-        let info = parse_module_content(content).unwrap();
-        assert_eq!(info.name.as_str(), "my_project");
-        assert_eq!(info.version.as_str(), "1.0.0");
-        assert_eq!(info.deps.len(), 1);
-        assert_eq!(info.deps[0].name.as_str(), "rules_rust");
-        assert_eq!(info.dev_deps.len(), 1);
-        assert_eq!(info.dev_deps[0].name.as_str(), "rules_go");
-    }
-
-    #[test]
-    fn test_resolver_options_default() {
-        let options = ResolverOptions::default();
-        assert_eq!(options.concurrency, DEFAULT_MAX_CONCURRENCY);
-        assert_eq!(options.max_depth, DEFAULT_MAX_DEPTH);
-        assert!(!options.include_dev_deps);
-        assert!(options.check_yanked);
-    }
-}
+mod tests;

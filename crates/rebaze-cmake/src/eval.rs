@@ -333,7 +333,7 @@ mod tests {
         ";
 
         let (file, errors) = parser::parse(src);
-        assert!(errors.is_empty());
+        assert_eq!(errors, Vec::<chumsky::error::Simple<char>>::new());
         let file = file.unwrap();
 
         let mut ctx = EvalContext::new();
@@ -355,7 +355,7 @@ mod tests {
         ";
 
         let (file, errors) = parser::parse(src);
-        assert!(errors.is_empty());
+        assert_eq!(errors, Vec::<chumsky::error::Simple<char>>::new());
         let file = file.unwrap();
 
         let mut ctx = EvalContext::new();
@@ -378,7 +378,7 @@ mod tests {
         ";
 
         let (file, errors) = parser::parse(src);
-        assert!(errors.is_empty());
+        assert_eq!(errors, Vec::<chumsky::error::Simple<char>>::new());
         let file = file.unwrap();
 
         let mut ctx = EvalContext::new();

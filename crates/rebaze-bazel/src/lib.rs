@@ -1,7 +1,8 @@
 //! Bazel file generator for rebaze.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 // Re-export for use by other crates
@@ -31,7 +32,7 @@ pub fn generate(project: &rebaze_gradle::GradleProject) -> HashMap<String, Strin
 
     // Generate BUILD.bazel for each subproject
     for subproject in &project.subprojects {
-        let subproject_path = subproject.replace(':', "/");
+        let subproject_path = subproject.trim_start_matches(':').replace(':', "/");
         let build_path = format!("{subproject_path}/BUILD.bazel");
         let build_content = generator::generate_subproject_build(project, subproject);
         files.insert(build_path, build_content);
@@ -291,21 +292,185 @@ fn find_sandbox_root(path: &str) -> Option<String> {
     None
 }
 
-/// Write generated Bazel files to disk.
+/// Write generated Bazel files to disk after validating the whole path set.
+///
+/// Each file is staged and atomically replaced, preserving the original on write
+/// failure. The batch is not a transaction: an IO error can leave earlier files
+/// updated. Callers must prevent concurrent changes to destination directories.
 pub fn write_files<S: std::hash::BuildHasher>(
     root: &Path,
     files: &HashMap<String, String, S>,
 ) -> Result<()> {
-    for (path, content) in files {
+    let mut paths: Vec<_> = files.keys().collect();
+    paths.sort_unstable();
+    // Validate the entire batch before changing any generated files.
+    for path in &paths {
+        let relative = Path::new(path);
+        if relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            anyhow::bail!("Generated path must be relative without traversal: {path}");
+        }
+        if paths
+            .iter()
+            .any(|other| other != path && relative.starts_with(Path::new(other)))
+        {
+            anyhow::bail!("Generated path conflicts with another output file: {path}");
+        }
+        let mut candidate = root.to_path_buf();
+        for component in relative.components() {
+            candidate.push(component);
+            match std::fs::symlink_metadata(&candidate) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    anyhow::bail!("Refusing to write through symlink: {}", candidate.display());
+                }
+                Ok(metadata) => {
+                    if candidate == root.join(path) && !metadata.is_file()
+                        || candidate != root.join(path) && !metadata.is_dir()
+                    {
+                        anyhow::bail!(
+                            "Generated path conflicts with existing entry: {}",
+                            candidate.display()
+                        );
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("Failed to inspect {}", candidate.display()));
+                }
+            }
+        }
+    }
+    for path in paths {
         let full_path = root.join(path);
-
         if let Some(parent) = full_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-
-        std::fs::write(&full_path, content)?;
+        let parent = full_path.parent().context("Generated file has no parent")?;
+        let builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        let builder = {
+            use std::os::unix::fs::PermissionsExt;
+            let mut builder = builder;
+            // Match ordinary file creation while respecting the process umask.
+            builder.permissions(std::fs::Permissions::from_mode(0o666));
+            builder
+        };
+        let mut staged = builder
+            .tempfile_in(parent)
+            .with_context(|| format!("Failed to stage {}", full_path.display()))?;
+        staged
+            .write_all(files[path].as_bytes())
+            .with_context(|| format!("Failed to write {}", full_path.display()))?;
+        if let Ok(metadata) = std::fs::metadata(&full_path) {
+            staged.as_file().set_permissions(metadata.permissions())?;
+        }
+        staged
+            .persist(&full_path)
+            .with_context(|| format!("Failed to replace {}", full_path.display()))?;
         tracing::info!("Wrote {}", full_path.display());
     }
-
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reject_invalid_batch_before_writing_valid_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        for invalid in ["../escaped", "/absolute", "sub/../../escaped", ""] {
+            let files = HashMap::from([
+                ("BUILD.bazel".into(), "valid".into()),
+                (invalid.into(), "invalid".into()),
+            ]);
+            assert!(write_files(&root, &files).is_err(), "{invalid}");
+            assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        }
+        assert!(!temp.path().join("escaped").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reject_symlinked_output_directories_and_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("BUILD.bazel"), "original").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("sub")).unwrap();
+        std::os::unix::fs::symlink(outside.join("BUILD.bazel"), root.join("BUILD.bazel")).unwrap();
+        for path in ["sub/BUILD.bazel", "BUILD.bazel"] {
+            assert!(write_files(&root, &HashMap::from([(path.into(), "changed".into())])).is_err());
+        }
+        assert_eq!(
+            std::fs::read_to_string(outside.join("BUILD.bazel")).unwrap(),
+            "original"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_output_permissions_match_normal_file_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let reference = temp.path().join("reference");
+        std::fs::write(&reference, "reference").unwrap();
+        write_files(
+            temp.path(),
+            &HashMap::from([("BUILD.bazel".into(), "new".into())]),
+        )
+        .unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&temp.path().join("BUILD.bazel")), mode(&reference));
+    }
+
+    #[test]
+    fn hardlinked_output_is_replaced_without_changing_the_other_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let original = temp.path().join("original");
+        std::fs::write(&original, "original").unwrap();
+        std::fs::hard_link(&original, temp.path().join("BUILD.bazel")).unwrap();
+        write_files(
+            temp.path(),
+            &HashMap::from([("BUILD.bazel".into(), "new".into())]),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(original).unwrap(), "original");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("BUILD.bazel")).unwrap(),
+            "new"
+        );
+    }
+
+    #[test]
+    fn conflicting_output_paths_fail_before_any_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let files = HashMap::from([
+            ("sub".into(), "file".into()),
+            ("sub/BUILD.bazel".into(), "build".into()),
+        ]);
+        assert!(write_files(temp.path(), &files).is_err());
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn leading_gradle_colon_generates_a_relative_subproject_path() {
+        let project = rebaze_gradle::GradleProject {
+            name: "example".into(),
+            path: ".".into(),
+            subprojects: vec![":app:lib".into()],
+            plugins: vec![],
+            dependencies: vec![],
+        };
+        assert!(generate(&project).contains_key("app/lib/BUILD.bazel"));
+    }
 }

@@ -345,25 +345,22 @@ fn normalize_and_filter_include(inc: &str) -> Option<String> {
 
     // Expand common CMake variables
     let normalized = if inc.starts_with("${") {
-        if let Some(end) = inc.find('}') {
-            let var = &inc[2..end];
-            let rest = &inc[end + 1..];
+        let end = inc.find('}')?;
+        let var = &inc[2..end];
+        let rest = &inc[end + 1..];
 
-            match var {
-                // Source directory variables - expand to relative path
-                "CMAKE_CURRENT_SOURCE_DIR"
-                | "CMAKE_SOURCE_DIR"
-                | "PROJECT_SOURCE_DIR"
-                | "CMAKE_CURRENT_LIST_DIR" => rest.trim_start_matches('/').to_string(),
-                // Skip binary dir references (generated files)
-                "CMAKE_CURRENT_BINARY_DIR" | "CMAKE_BINARY_DIR" | "PROJECT_BINARY_DIR" => {
-                    return None;
-                }
-                // Unknown variable - skip
-                _ => return None,
+        match var {
+            // Source directory variables - expand to relative path
+            "CMAKE_CURRENT_SOURCE_DIR"
+            | "CMAKE_SOURCE_DIR"
+            | "PROJECT_SOURCE_DIR"
+            | "CMAKE_CURRENT_LIST_DIR" => rest.trim_start_matches('/').to_string(),
+            // Skip binary dir references (generated files)
+            "CMAKE_CURRENT_BINARY_DIR" | "CMAKE_BINARY_DIR" | "PROJECT_BINARY_DIR" => {
+                return None;
             }
-        } else {
-            return None;
+            // Unknown variable - skip
+            _ => return None,
         }
     } else {
         inc.to_string()

@@ -176,13 +176,13 @@ pub struct BazelDependency {
     pub key: String,
     /// Direct dependencies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<BazelDependency>,
+    pub dependencies: Vec<Self>,
     /// Indirect dependencies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub indirect_dependencies: Vec<BazelDependency>,
+    pub indirect_dependencies: Vec<Self>,
     /// Cycles involving this dependency.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cycles: Vec<BazelDependency>,
+    pub cycles: Vec<Self>,
     /// Whether this node is unexpanded (to avoid infinite recursion).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unexpanded: bool,

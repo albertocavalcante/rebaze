@@ -4,24 +4,21 @@ rust_library(
     name = "rebaze-bzlmod",
     srcs = glob(["src/**/*.rs"]),
     edition = "2024",
+    proc_macro_deps = [
+        "@crates//:async-trait",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "@crates//:anyhow",
-        "@crates//:async-channel",
         "@crates//:indexmap",
-        "@crates//:regex",
         "@crates//:reqwest",
         "@crates//:serde",
         "@crates//:serde_json",
-        "@crates//:starlark",
         "@crates//:starlark_syntax",
         "@crates//:thiserror",
         "@crates//:tokio",
         "@crates//:tracing",
         "@crates//:url",
-    ],
-    proc_macro_deps = [
-        "@crates//:async-trait",
     ],
 )
 

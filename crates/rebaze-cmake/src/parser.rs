@@ -521,7 +521,10 @@ mod tests {
         let file = parse_ok("endif()");
         assert_eq!(file.commands.len(), 1);
         assert!(file.commands[0].is("endif"));
-        assert!(file.commands[0].arguments.is_empty());
+        assert_eq!(
+            file.commands[0].arguments,
+            Vec::<crate::ast::Argument>::new()
+        );
     }
 
     #[test]

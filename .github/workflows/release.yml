@@ -12,7 +12,11 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -70,11 +74,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+      - name: Set up pinned Rust toolchain
+        run: rustup toolchain install --no-self-update
 
       - name: Ensure target is installed
         run: rustup target add ${{ matrix.target }}
@@ -106,7 +107,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} -p rebaze-cli
+        run: cargo build --locked --release --target ${{ matrix.target }} -p rebaze-cli
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
@@ -148,7 +149,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
-    if: always() && needs.build.result != 'cancelled'
+    if: needs.build.result == 'success'
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -181,10 +182,6 @@ jobs:
       - name: Generate release notes
         id: notes
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          VERSION="${TAG#v}"
-          IS_PRERELEASE=${{ contains(steps.tag.outputs.tag, '-') }}
-
           cat > release-notes.md << 'EOF'
           ## rebaze ${{ steps.tag.outputs.tag }}
 
@@ -204,9 +201,11 @@ jobs:
 
           EOF
 
-          echo '```' >> release-notes.md
-          cat release-assets/*.sha256 >> release-notes.md
-          echo '```' >> release-notes.md
+          {
+            echo '```'
+            cat release-assets/*.sha256
+            echo '```'
+          } >> release-notes.md
 
           echo "notes-file=release-notes.md" >> "$GITHUB_OUTPUT"
 
@@ -237,7 +236,7 @@ jobs:
 
       - name: Update Homebrew tap
         if: steps.eukia.outcome == 'success' && !contains(steps.tag.outputs.tag, '-')
-        uses: albertocavalcante/actions/update-homebrew-tap@main
+        uses: albertocavalcante/actions/update-homebrew-tap@15b779ac6b45f756c3579473fd1a9dce71f93fe3 # No corresponding version tag
         continue-on-error: true
         with:
           tap-repo: albertocavalcante/homebrew-tap

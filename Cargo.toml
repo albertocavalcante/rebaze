@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/rebaze-bcr",
     "crates/rebaze-bzlmod",
@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/albertocavalcante/rebaze"
-rust-version = "1.90"
+rust-version = "1.99.1"
 
 [workspace.dependencies]
 # CLI

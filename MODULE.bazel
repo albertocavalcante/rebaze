@@ -8,12 +8,12 @@ module(
 # Rust toolchain - https://registry.bazel.build/modules/rules_rust
 bazel_dep(name = "rules_rust", version = "0.68.1")
 bazel_dep(name = "rules_license", version = "1.0.0")
-bazel_dep(name = "rules_cc", version = "0.2.14")
+bazel_dep(name = "rules_cc", version = "0.2.27")
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2024",
-    versions = ["1.90.0"],
+    versions = ["1.99.1"],
 )
 use_repo(rust, "rust_toolchains")
 
@@ -30,6 +30,7 @@ crate.from_cargo(
         "//crates/rebaze-bcr:Cargo.toml",
         "//crates/rebaze-bzlmod:Cargo.toml",
         "//crates/rebaze-cli:Cargo.toml",
+        "//crates/rebaze-cmake:Cargo.toml",
         "//crates/rebaze-cmake-file-api:Cargo.toml",
         "//crates/rebaze-core:Cargo.toml",
         "//crates/rebaze-gradle:Cargo.toml",

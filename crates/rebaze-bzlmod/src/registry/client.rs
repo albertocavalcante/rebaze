@@ -17,6 +17,8 @@ use crate::label::{ModuleName, Version};
 use crate::{ModuleInfo, ModuleMetadata, Result, SourceInfo};
 
 /// Registry interface for fetching module information.
+// async_trait adds must_use to boxed futures; that generated attribute cannot be removed here.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait Registry: Send + Sync + std::fmt::Debug {
     /// Get module metadata (versions, yanked info, etc.).
@@ -196,12 +198,12 @@ impl Clone for RegistryClient {
 
 impl RegistryClient {
     /// Create a new registry client with default configuration.
-    pub fn new(base_url: impl Into<String>) -> Self {
+    pub fn new(base_url: impl Into<String>) -> Result<Self> {
         Self::with_config(base_url, RegistryClientConfig::default())
     }
 
     /// Create a new registry client with custom configuration.
-    pub fn with_config(base_url: impl Into<String>, config: RegistryClientConfig) -> Self {
+    pub fn with_config(base_url: impl Into<String>, config: RegistryClientConfig) -> Result<Self> {
         let client = Client::builder()
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
@@ -210,25 +212,28 @@ impl RegistryClient {
             .pool_idle_timeout(Duration::from_secs(90))
             .gzip(true)
             .build()
-            .expect("failed to build HTTP client");
-
-        Self {
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            .map_err(RegistryError::Http)?;
+        let base_url = base_url.into();
+        let parsed_url = url::Url::parse(&base_url)
+            .map_err(|error| RegistryError::InvalidUrl(error.to_string()))?;
+        if !matches!(parsed_url.scheme(), "http" | "https") || parsed_url.host_str().is_none() {
+            return Err(RegistryError::InvalidUrl(base_url).into());
+        }
+        Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
             client,
             cache: Arc::new(RegistryCache::new(config.cache_ttl)),
             config,
-        }
+        })
     }
 
     /// Create a client for the default BCR.
-    #[must_use]
-    pub fn bcr() -> Self {
+    pub fn bcr() -> Result<Self> {
         Self::new(crate::DEFAULT_REGISTRY)
     }
 
     /// Create a client for the BCR GitHub mirror.
-    #[must_use]
-    pub fn bcr_mirror() -> Self {
+    pub fn bcr_mirror() -> Result<Self> {
         Self::new(crate::DEFAULT_REGISTRY_MIRROR)
     }
 
@@ -263,7 +268,7 @@ impl RegistryClient {
             if attempt > 0 {
                 debug!(attempt, "retrying request after delay");
                 tokio::time::sleep(delay).await;
-                delay *= 2; // Exponential backoff
+                delay = delay.saturating_mul(2);
             }
 
             match self.client.get(url).send().await {
@@ -328,156 +333,17 @@ impl RegistryClient {
             .map_err(|e| RegistryError::Http(e).into())
     }
 
-    /// Parse MODULE.bazel content into `ModuleInfo`.
-    ///
-    /// This is a simplified parser that extracts basic module information.
-    /// For full parsing, the `parser` module should be used.
+    /// Parse registry content with the same AST parser used for root modules.
     fn parse_module_bazel(content: &str, module: &str, version: &str) -> Result<ModuleInfo> {
-        // Extract module name from content or use provided name
-        let name =
-            Self::extract_string_field(content, "name").unwrap_or_else(|| module.to_string());
-
-        // Extract version from content or use provided version
-        let extracted_version =
-            Self::extract_string_field(content, "version").unwrap_or_else(|| version.to_string());
-
-        // Extract compatibility level
-        let compatibility_level =
-            Self::extract_int_field(content, "compatibility_level").unwrap_or(0);
-
-        // Extract bazel_compatibility
-        let bazel_compatibility =
-            Self::extract_list_field(content, "bazel_compatibility").unwrap_or_default();
-
-        // Parse dependencies
-        let deps = Self::extract_deps(content, false);
-        let dev_deps = Self::extract_deps(content, true);
-
-        Ok(ModuleInfo {
-            name: ModuleName::new(name)?,
-            version: Version::new(extracted_version)?,
-            compatibility_level,
-            bazel_compatibility,
-            deps,
-            dev_deps,
-            overrides: Vec::new(), // Overrides are typically in root module only
-        })
-    }
-
-    /// Extract a string field from MODULE.bazel content.
-    fn extract_string_field(content: &str, field: &str) -> Option<String> {
-        // Match patterns like: name = "value" or name="value"
-        let pattern = format!(r#"{field}\s*=\s*"([^"]+)""#);
-        regex::Regex::new(&pattern)
-            .ok()
-            .and_then(|re| re.captures(content))
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string())
-    }
-
-    /// Extract an integer field from MODULE.bazel content.
-    fn extract_int_field(content: &str, field: &str) -> Option<u32> {
-        let pattern = format!(r"{field}\s*=\s*(\d+)");
-        regex::Regex::new(&pattern)
-            .ok()
-            .and_then(|re| re.captures(content))
-            .and_then(|caps| caps.get(1))
-            .and_then(|m| m.as_str().parse().ok())
-    }
-
-    /// Extract a list field from MODULE.bazel content.
-    fn extract_list_field(content: &str, field: &str) -> Option<Vec<String>> {
-        // Match patterns like: field = ["item1", "item2"]
-        let pattern = format!(r"{field}\s*=\s*\[([^\]]*)\]");
-        regex::Regex::new(&pattern)
-            .ok()
-            .and_then(|re| re.captures(content))
-            .and_then(|caps| caps.get(1))
-            .map(|m| {
-                let items_str = m.as_str();
-                regex::Regex::new(r#""([^"]+)""#)
-                    .ok()
-                    .map(|re| {
-                        re.captures_iter(items_str)
-                            .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            })
-    }
-
-    /// Extract `bazel_dep` declarations from MODULE.bazel content.
-    fn extract_deps(content: &str, dev_only: bool) -> Vec<crate::Dependency> {
-        let mut deps = Vec::new();
-
-        // Match bazel_dep declarations
-        // Pattern: bazel_dep(name = "...", version = "...", ...)
-        let dep_pattern = r"bazel_dep\s*\(\s*([^)]+)\)";
-        let re = match regex::Regex::new(dep_pattern) {
-            Ok(r) => r,
-            Err(_) => return deps,
-        };
-
-        for cap in re.captures_iter(content) {
-            let args = cap.get(1).map_or("", |m| m.as_str());
-
-            // Extract name
-            let name = match Self::extract_arg_string(args, "name") {
-                Some(n) => n,
-                None => continue,
-            };
-
-            // Extract version
-            let version = match Self::extract_arg_string(args, "version") {
-                Some(v) => v,
-                None => continue,
-            };
-
-            // Check if it's a dev dependency
-            let is_dev = Self::extract_arg_bool(args, "dev_dependency").unwrap_or(false);
-
-            // Filter based on dev_only flag
-            if dev_only != is_dev {
-                continue;
-            }
-
-            // Extract optional fields
-            let max_version =
-                Self::extract_arg_string(args, "max_version").and_then(|v| Version::new(v).ok());
-            let repo_name = Self::extract_arg_string(args, "repo_name");
-
-            if let (Ok(mod_name), Ok(ver)) = (ModuleName::new(name), Version::new(version)) {
-                deps.push(crate::Dependency {
-                    name: mod_name,
-                    version: ver,
-                    max_version,
-                    repo_name,
-                    dev_dependency: is_dev,
-                });
-            }
+        let mut info = crate::ModuleFile::parse(content)?.info;
+        // Registry coordinates supply defaults when module() omits these fields.
+        if info.name.as_str() == "_root_" {
+            info.name = ModuleName::new(module)?;
         }
-
-        deps
-    }
-
-    /// Extract a string argument from function call arguments.
-    fn extract_arg_string(args: &str, arg_name: &str) -> Option<String> {
-        let pattern = format!(r#"{arg_name}\s*=\s*"([^"]+)""#);
-        regex::Regex::new(&pattern)
-            .ok()
-            .and_then(|re| re.captures(args))
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string())
-    }
-
-    /// Extract a boolean argument from function call arguments.
-    fn extract_arg_bool(args: &str, arg_name: &str) -> Option<bool> {
-        let pattern = format!(r"{arg_name}\s*=\s*(True|False)");
-        regex::Regex::new(&pattern)
-            .ok()
-            .and_then(|re| re.captures(args))
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str() == "True")
+        if info.version.as_str() == "0.0.0" {
+            info.version = Version::new(version)?;
+        }
+        Ok(info)
     }
 }
 
@@ -572,12 +438,11 @@ impl RegistryChain {
     }
 
     /// Create default chain (BCR + mirror).
-    #[must_use]
-    pub fn default_chain() -> Self {
-        Self::new(vec![
-            Arc::new(RegistryClient::bcr()),
-            Arc::new(RegistryClient::bcr_mirror()),
-        ])
+    pub fn default_chain() -> Result<Self> {
+        Ok(Self::new(vec![
+            Arc::new(RegistryClient::bcr()?),
+            Arc::new(RegistryClient::bcr_mirror()?),
+        ]))
     }
 
     /// Add a registry to the chain.
@@ -664,6 +529,8 @@ impl Registry for RegistryChain {
 }
 
 #[cfg(test)]
+// Mock setup and assertions intentionally panic on failure.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use wiremock::matchers::{method, path};
@@ -687,7 +554,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let client = RegistryClient::new(mock_server.uri());
+        let client = RegistryClient::new(mock_server.uri()).unwrap();
         let result = client.get_metadata("rules_rust").await.unwrap();
 
         assert_eq!(result.versions, vec!["1.0.0", "2.0.0"]);
@@ -710,7 +577,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let client = RegistryClient::new(mock_server.uri());
+        let client = RegistryClient::new(mock_server.uri()).unwrap();
 
         // First call - hits the server
         let result1 = client.get_metadata("rules_rust").await.unwrap();
@@ -742,7 +609,7 @@ bazel_dep(name = "bazel_skylib", version = "1.5.0")
             .mount(&mock_server)
             .await;
 
-        let client = RegistryClient::new(mock_server.uri());
+        let client = RegistryClient::new(mock_server.uri()).unwrap();
         let result = client.get_module("rules_rust", "0.40.0").await.unwrap();
 
         assert_eq!(result.name.as_str(), "rules_rust");
@@ -772,7 +639,7 @@ bazel_dep(name = "bazel_skylib", version = "1.5.0")
             .mount(&mock_server)
             .await;
 
-        let client = RegistryClient::new(mock_server.uri());
+        let client = RegistryClient::new(mock_server.uri()).unwrap();
         let result = client.get_source("rules_rust", "0.40.0").await.unwrap();
 
         assert_eq!(result.source_type, "archive");
@@ -795,7 +662,7 @@ bazel_dep(name = "bazel_skylib", version = "1.5.0")
             .mount(&mock_server)
             .await;
 
-        let client = RegistryClient::new(mock_server.uri());
+        let client = RegistryClient::new(mock_server.uri()).unwrap();
 
         assert!(client.has_module("rules_rust").await.unwrap());
         assert!(!client.has_module("nonexistent").await.unwrap());
@@ -815,7 +682,7 @@ bazel_dep(name = "bazel_skylib", version = "1.5.0")
             max_retries: 0, // Disable retries for faster test
             ..Default::default()
         };
-        let client = RegistryClient::with_config(mock_server.uri(), config);
+        let client = RegistryClient::with_config(mock_server.uri(), config).unwrap();
         let result = client.get_metadata("error_module").await;
 
         assert!(result.is_err());
@@ -845,8 +712,8 @@ bazel_dep(name = "bazel_skylib", version = "1.5.0")
             .await;
 
         let chain = RegistryChain::new(vec![
-            Arc::new(RegistryClient::new(mock_server1.uri())),
-            Arc::new(RegistryClient::new(mock_server2.uri())),
+            Arc::new(RegistryClient::new(mock_server1.uri()).unwrap()),
+            Arc::new(RegistryClient::new(mock_server2.uri()).unwrap()),
         ]);
 
         let result = chain.get_metadata("rules_rust").await.unwrap();
@@ -891,36 +758,11 @@ bazel_dep(name = "dep2", version = "2.0.0", dev_dependency = True)
     }
 
     #[test]
-    fn test_extract_string_field() {
-        let content = r#"name = "test_value""#;
-        assert_eq!(
-            RegistryClient::extract_string_field(content, "name"),
-            Some("test_value".to_string())
-        );
-
-        let content2 = r#"name="no_spaces""#;
-        assert_eq!(
-            RegistryClient::extract_string_field(content2, "name"),
-            Some("no_spaces".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_int_field() {
-        let content = "compatibility_level = 42";
-        assert_eq!(
-            RegistryClient::extract_int_field(content, "compatibility_level"),
-            Some(42)
-        );
-    }
-
-    #[test]
-    fn test_extract_list_field() {
-        let content = r#"bazel_compatibility = [">=7.0.0", "<8.0.0"]"#;
-        let result = RegistryClient::extract_list_field(content, "bazel_compatibility");
-        assert_eq!(
-            result,
-            Some(vec![">=7.0.0".to_string(), "<8.0.0".to_string()])
-        );
+    fn registry_parser_ignores_comments_and_accepts_single_quotes() {
+        let content = "# module(name = \"wrong\", version = \"9.0\")\nmodule(version = '1.2.3', name = 'actual')\nbazel_dep(version = '2.0', name = 'dep',)";
+        let info = RegistryClient::parse_module_bazel(content, "actual", "1.2.3").unwrap();
+        assert_eq!(info.name.as_str(), "actual");
+        assert_eq!(info.deps.len(), 1);
+        assert_eq!(info.deps[0].name.as_str(), "dep");
     }
 }

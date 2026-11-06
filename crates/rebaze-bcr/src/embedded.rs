@@ -66,10 +66,9 @@ mod tests {
         let catalog = load_embedded_catalog();
 
         // Boost should have component mappings
-        let boost_mapping = catalog.cmake_mappings.get("Boost");
-        assert!(boost_mapping.is_some());
-
-        let mapping = boost_mapping.expect("Boost mapping exists");
+        let Some(mapping) = catalog.cmake_mappings.get("Boost") else {
+            panic!("Boost mapping missing from embedded catalog");
+        };
         assert!(mapping.components.contains_key("filesystem"));
         assert!(mapping.components.contains_key("system"));
         assert!(mapping.components.contains_key("asio"));
