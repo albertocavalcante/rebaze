@@ -168,8 +168,19 @@ mod tests {
     #[test]
     fn nested_envelopes_belong_to_the_core_loader() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("rebaze.toml"), "[bazel.build]\nmodule_version = \"2.0\"").unwrap();
-        assert_eq!(Config::load_from_project(root.path()).unwrap().bazel_config().build.module_version, "2.0");
+        std::fs::write(
+            root.path().join("rebaze.toml"),
+            "[bazel.build]\nmodule_version = \"2.0\"",
+        )
+        .unwrap();
+        assert_eq!(
+            Config::load_from_project(root.path())
+                .unwrap()
+                .bazel_config()
+                .build
+                .module_version,
+            "2.0"
+        );
         assert!(BazelConfig::load_from_project(root.path()).is_err());
     }
 
