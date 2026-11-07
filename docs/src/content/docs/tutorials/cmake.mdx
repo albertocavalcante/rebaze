@@ -25,13 +25,15 @@ This tutorial walks through migrating a CMake C++ project to Bazel using rebaze.
 Let's start with a simple CMake project:
 
 <FileTree>
-  - myproject/
+
+- myproject/
   - CMakeLists.txt
   - src/
-  - main.cpp
-  - lib.cpp
+    - main.cpp
+    - lib.cpp
   - include/
-  - lib.h
+    - lib.h
+
 </FileTree>
 
 With this `CMakeLists.txt`:
