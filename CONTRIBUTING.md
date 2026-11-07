@@ -172,6 +172,34 @@ processes. Their results establish the tested host's compatibility, not native
 Windows execution or complete Meson/Autotools/GLib support. Record which oracles
 actually ran, separately from standard CI and optional corpus tests.
 
+### Required CMake CLI migration
+
+On Unix with Bazel 9, CMake/CTest, Make, a C compiler, and network access:
+
+```bash
+cargo build --locked -p rebaze-cli
+bash .github/scripts/test-cmake-migration.sh target/debug/rebaze
+```
+
+CI explicitly runs this oracle after the ordinary Cargo tests. It bootstraps
+verified Bazel and CMake 3.31.10 archives on the minimal Linux runner. Ordinary
+library tests never download these tools or execute the oracle implicitly.
+
+The checked-in first-party fixture contains a library, public header, executable,
+and a test registered in a subdirectory. The harness copies it into disposable
+original/migration directories, checks preview behavior, invokes the real CLI
+with normal build validation, and compares CTest/Bazel test and executable results.
+It then changes a library result: both builds must succeed and both test suites
+must fail. Missing tools/files and missing tests are failures. The literal argv
+case includes spaces, a single quote, and a dollar sign.
+
+The harness clears unrelated environment variables for the CLI/Bazel, ignores
+system/home Bazel rc files, and uses a separate output root. Optional
+`REBAZE_CMAKE_TEST_CACHE` names an absolute reusable Bazel output root; do not share
+it between simultaneous runs. It does not establish Gradle, File API test import,
+arbitrary CMake logic, external corpus, or native Windows compatibility. The CLI's
+normal migration validation still builds only; the harness explicitly runs tests.
+
 ## Test behavior and failures
 
 For a bug fix, provide a focused regression that fails on the base and passes

@@ -140,6 +140,34 @@ pub struct CcBinary {
     pub copts: Vec<String>,
 }
 
+/// Executable-backed test sharing exactly the binary's compilation attributes.
+pub struct CcTest<'a> {
+    pub name: String,
+    pub binary: &'a CcBinary,
+    /// Literal argv entries, escaped for Bazel during serialization.
+    pub args: &'a [String],
+}
+
+impl Serialize for CcTest<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut s = serializer.serialize_struct("cc_test", 7)?;
+        s.serialize_field("name", &self.name)?;
+        s.serialize_field("srcs", &self.binary.srcs)?;
+        s.serialize_field("includes", &self.binary.includes)?;
+        s.serialize_field("deps", &self.binary.deps)?;
+        s.serialize_field("defines", &self.binary.defines)?;
+        s.serialize_field("copts", &self.binary.copts)?;
+        // Bazel expands Make variables, then tokenizes args with Bourne shell rules.
+        let args: Vec<_> = self
+            .args
+            .iter()
+            .map(|arg| format!("'{}'", arg.replace('$', "$$").replace('\'', "'\"'\"'")))
+            .collect();
+        s.serialize_field("args", &args)?;
+        s.end()
+    }
+}
+
 /// Source files with optional header glob patterns.
 /// Serializes as: `["file1.c", "file2.c"] + glob(["**/*.h"])` if hdrs_glob is Some,
 /// or just `["file1.c", "file2.c"]` if hdrs_glob is None.

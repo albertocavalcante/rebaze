@@ -16,7 +16,8 @@ an arbitrary project builds correctly.
 | Maven           | Detection only; migration is unimplemented                                              |
 | Makefile, Cargo | Reported by `analyze`; migration is unimplemented                                       |
 
-CMake test generation, custom build logic, dependency strategies, and platform
+CMake test generation supports a small literal executable-backed subset. Custom
+build logic, broader test semantics, dependency strategies, and platform
 compatibility still have gaps. The [engineering roadmap](docs/engineering-roadmap.md)
 records the evidence needed to close them.
 

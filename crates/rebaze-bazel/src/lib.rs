@@ -9,6 +9,7 @@ use std::path::Path;
 pub use crate::config::MigrationConfig;
 pub use crate::generator::BazelFile;
 pub use crate::third_party::deduplicate_modules;
+pub use cmake_tests::TestError;
 pub use dependency_plan::{DependencyStrategy, PlanError};
 pub use discovery::DiscoverySnapshot;
 
@@ -21,11 +22,14 @@ pub enum GenerationError {
     Plan(#[from] PlanError),
     #[error(transparent)]
     Discovery(#[from] discovery::SnapshotError),
+    #[error(transparent)]
+    Test(#[from] TestError),
 }
 
 pub type GenerationResult<T> = std::result::Result<T, GenerationError>;
 
 mod cmake_generator;
+mod cmake_tests;
 pub mod config;
 #[cfg(test)]
 mod dependency_build_tests;
@@ -92,6 +96,7 @@ pub struct CMakeGeneration<'a> {
     project: &'a rebaze_cmake::CMakeProject,
     config: &'a MigrationConfig,
     plan: dependency_plan::DependencyPlan,
+    tests: Vec<cmake_tests::PlannedTest<'a>>,
 }
 
 pub fn plan_cmake<'a>(
@@ -101,6 +106,7 @@ pub fn plan_cmake<'a>(
     Ok(CMakeGeneration {
         project,
         config,
+        tests: cmake_tests::plan(project)?,
         plan: dependency_plan::DependencyPlan::new(project, config)?,
     })
 }
@@ -124,7 +130,12 @@ impl CMakeGeneration<'_> {
             ),
             (
                 "BUILD.bazel".into(),
-                cmake_generator::generate_root_build(self.project, self.config, &self.plan)?,
+                cmake_generator::generate_root_build(
+                    self.project,
+                    self.config,
+                    &self.plan,
+                    &self.tests,
+                )?,
             ),
             (".bazelversion".into(), "9.0.0\n".into()),
             (".bazelrc".into(), generate_cpp_bazelrc(self.project, &[])),

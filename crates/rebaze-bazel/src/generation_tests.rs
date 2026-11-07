@@ -33,6 +33,87 @@ fn assert_syntax(files: &std::collections::HashMap<String, String>) {
 }
 
 #[test]
+fn cmake_tests_render_typed_rules_and_preserve_executables() {
+    let file = rebaze_cmake::parse_source(
+        "project(example C)\nenable_testing()\nadd_executable(probe main.c)\nadd_test(NAME value COMMAND probe [=[two words'$]=] 42)",
+    ).unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    let mut config = MigrationConfig::default();
+    config.build.rules.test_rule = "company_test".into();
+    let files =
+        generate_from_cmake_with_config(&project, &config, &DiscoverySnapshot::default()).unwrap();
+    assert_syntax(&files);
+    let build = &files["BUILD.bazel"];
+    assert!(build.contains("cc_binary("));
+    assert!(build.contains("company_test("));
+    assert!(build.contains("name = \"ctest_value\""));
+    config.build.rules.test_rule = "invalid-test-rule".into();
+    assert!(
+        generate_from_cmake_with_config(&project, &config, &DiscoverySnapshot::default()).is_err()
+    );
+}
+
+#[test]
+fn unsupported_or_conflicting_cmake_tests_fail_during_planning() {
+    let config = MigrationConfig::default();
+    for (source, diagnostic) in [
+        ("add_test(NAME x COMMAND probe)", "enable_testing"),
+        (
+            "enable_testing()\nadd_test(NAME x COMMAND missing)",
+            "known executable",
+        ),
+        (
+            "enable_testing()\nadd_test(NAME bad/name COMMAND probe)",
+            "test name",
+        ),
+        (
+            "enable_testing()\nadd_test(NAME x COMMAND probe)\nadd_test(NAME x COMMAND probe)",
+            "collides",
+        ),
+        (
+            "enable_testing()\nadd_test(NAME x-y COMMAND probe)\nadd_test(NAME x_y COMMAND probe)",
+            "collides",
+        ),
+        (
+            "enable_testing()\nadd_executable(ctest_x other.c)\nadd_test(NAME x COMMAND probe)",
+            "collides",
+        ),
+        (
+            "enable_testing()\nadd_test(NAME x COMMAND probe)\nset_tests_properties(x PROPERTIES WILL_FAIL TRUE)",
+            "set_tests_properties",
+        ),
+        (
+            "enable_testing()\nif(OFF)\nadd_test(NAME x COMMAND probe)\nendif()",
+            "conditional",
+        ),
+        (
+            "enable_testing()\nset_property(TARGET probe PROPERTY TEST_LAUNCHER /usr/bin/false)\nadd_test(NAME x COMMAND probe)",
+            "launchers",
+        ),
+        (
+            "enable_testing()\nset_target_properties(probe PROPERTIES CROSSCOMPILING_EMULATOR tool)\nadd_test(NAME x COMMAND probe)",
+            "emulators",
+        ),
+        (
+            "enable_testing()\nset(CMAKE_TEST_LAUNCHER tool)\nadd_test(NAME x COMMAND probe)",
+            "initializers",
+        ),
+    ] {
+        let file = rebaze_cmake::parse_source(&format!(
+            "project(example C)\nadd_executable(probe main.c)\n{source}"
+        ))
+        .unwrap();
+        let project = rebaze_cmake::extract_project(&file, ".".into());
+        let error = crate::plan_cmake(&project, &config).unwrap_err();
+        assert!(
+            matches!(error, crate::GenerationError::Test(_)),
+            "{source}: {error}"
+        );
+        assert!(error.to_string().contains(diagnostic), "{source}: {error}");
+    }
+}
+
+#[test]
 fn gradle_project_and_target_strings_cannot_inject_source() {
     let project = rebaze_gradle::GradleProject {
         name: "example\"\"\"\nfail('injected')\r\0🦀".into(),

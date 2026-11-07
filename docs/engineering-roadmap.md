@@ -3,7 +3,9 @@
 The next milestone is a reproducible native migration: small checked-in CMake
 and Gradle projects migrate, build, and run their tests with Bazel 9 from a clean
 checkout. Explicit discovery and the managed dependency strategy plan are now
-implemented. Next prove the complete CLI migration and test path. Additional source formats follow
+implemented. A required first-party CMake CLI build/test fixture now covers the
+literal executable-backed test path. Next prove the JVM path and expand native
+semantics through explicit fixtures. Additional source formats follow
 those correctness gates.
 
 This is the authoritative implementation sequence. The earlier
@@ -48,7 +50,7 @@ independent review of the final head.
 | ----------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1                       | Completed: explicit discovery inputs and deterministic native rendering | Identical project/configuration/snapshot inputs produce identical path-content maps without running a process or accessing the network during generation.  |
 | 2                       | Completed managed pkg-config dependency strategy plan                   | System, source, and BCR aliases/imports agree; unsupported or incomplete choices fail before writing; existing valid configuration has migration coverage. |
-| 3                       | Required first-party migration fixtures                                 | Clean CI migrates native/JVM fixtures, builds them, runs their tests, and verifies expected behavior. Missing required inputs fail visibly.                |
+| 3                       | Required first-party migration fixtures: CMake present, JVM pending     | Clean CI migrates native/JVM fixtures, builds them, runs their tests, and verifies expected behavior. Missing required inputs fail visibly.                |
 | 4                       | Bounded inputs and defined failure behavior                             | Hostile/oversized inputs fail within documented limits, preserve recoverable state, and produce actionable diagnostics.                                    |
 | Parallel delivery track | Repeatable contributor checks and verified runner/platform claims       | Local/CI checks agree; runner identity and head are recorded; native platform evidence matches every compatibility claim.                                  |
 
@@ -99,13 +101,22 @@ prevalidation can precede planning; per-file write recovery is unchanged.
 
 ### 3. Prove real migrations with required fixtures
 
+The checked-in CMake fixture is now an explicit required Cargo CI step. It runs
+the real native CLI in a disposable copy, compares original/generated builds,
+CTest/Bazel tests and executable output, and proves a changed assertion fails
+both test suites while builds still succeed. It also checks preview side effects,
+literal argv preservation, public headers and subdirectory test registration.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for its independent entry point and tools.
+This establishes a narrow source-parser test subset; the JVM path and broader
+native semantics remain pending.
+
 1. Check in small first-party fixtures: a CMake library/executable with headers
    and a Gradle JVM project. Pin their build inputs and expected observable results.
 2. Exercise the actual CLI with `--build-generator native`, preserving a copy of
    the original fixture. Compare the original and migrated build/test behavior.
 3. Extend coverage to a custom macro, a test target, and transitive system/source/BCR
-   dependencies. Native CMake test generation is currently incomplete; add it as
-   a separately reviewed implementation when its fixture requires it.
+   dependencies. Broader CMake test semantics need separately reviewed fixtures;
+   unsupported forms currently fail before generation writes.
 4. Keep networked Bazel/build oracles explicit and separate from offline unit tests.
    Record Bazel/rule/tool versions and the OS/architecture that actually ran.
 
