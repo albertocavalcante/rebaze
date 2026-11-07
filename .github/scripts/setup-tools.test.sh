@@ -46,6 +46,8 @@ for tool in rust bazel; do
     exit 1
   fi
   grep -q 'checksum mismatch' "$fixture/bad-digest.log"
+  test ! -e "$GITHUB_ENV"
+  test ! -e "$GITHUB_PATH"
   if [[ -e "$REBAZE_BOOTSTRAP_TEST_MARKER" ]]; then
     echo "Invalid installer executed." >&2
     exit 1
@@ -69,10 +71,14 @@ if REBAZE_BOOTSTRAP_ARCH=unsupported PATH="$fixture/bin" bash "$script_dir/setup
 fi
 test ! -s "$REBAZE_BOOTSTRAP_TEST_LOG"
 
-rustup() { printf '%s\n' "$*" >>"$REBAZE_BOOTSTRAP_TEST_LOG"; }
+rustup() {
+  [[ "$TMPDIR" == "$RUNNER_TEMP" ]] || return 1
+  printf '%s\n' "$*" >>"$REBAZE_BOOTSTRAP_TEST_LOG"
+}
 export -f rustup
 PATH="$fixture/bin" bash "$script_dir/setup-rust.sh"
 grep -qx 'toolchain install --no-self-update' "$REBAZE_BOOTSTRAP_TEST_LOG"
 grep -qx "$CARGO_HOME/bin" "$GITHUB_PATH"
 grep -qx "RUSTUP_HOME=$RUNNER_TEMP/rustup" "$GITHUB_ENV"
+grep -qx "TMPDIR=$RUNNER_TEMP" "$GITHUB_ENV"
 printf 'Tool bootstrap failure and existing-toolchain checks passed.\n'

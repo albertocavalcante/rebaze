@@ -10,3 +10,14 @@ download_verified_tool() {
   fi
   chmod 0700 "$destination"
 }
+
+# Compilers and rustdoc use the default temp directory, not our installer path.
+prepare_job_temp() {
+  if [[ -n "${RUNNER_TEMP:-}" ]]; then export TMPDIR="$RUNNER_TEMP"; fi
+}
+
+publish_job_temp() {
+  if [[ -n "${GITHUB_ENV:-}" && -n "${RUNNER_TEMP:-}" ]]; then
+    printf 'TMPDIR=%s\n' "$TMPDIR" >>"$GITHUB_ENV"
+  fi
+}

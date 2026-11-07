@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=.github/scripts/download-tool.sh
 source "$script_dir/download-tool.sh"
+prepare_job_temp
 
 # Runner temporary storage is on its writable disk; /tmp may be a small noexec tmpfs.
 if [[ -n "${RUNNER_TEMP:-}" ]]; then
@@ -45,3 +46,5 @@ fi
 if [[ -n "${GITHUB_ENV:-}" && -n "${RUNNER_TEMP:-}" ]]; then
   printf 'CARGO_HOME=%s\nRUSTUP_HOME=%s\n' "$CARGO_HOME" "$RUSTUP_HOME" >>"$GITHUB_ENV"
 fi
+
+publish_job_temp

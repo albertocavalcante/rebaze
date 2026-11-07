@@ -36,7 +36,9 @@ jobs:
             printf 'Commit: %s\n\n' "$GITHUB_SHA"
             printf 'Platform: %s/%s, UID %s\n' "$(uname -s)" "$(uname -m)" "$(id -u)"
           } >>"$GITHUB_STEP_SUMMARY"
-          probe=$(mktemp "$RUNNER_TEMP/rebaze-exec.XXXXXXXX")
+          # Exercise the default temp selection used by compilers and doctests.
+          export TMPDIR="$RUNNER_TEMP"
+          probe=$(mktemp)
           trap 'rm "$probe"' EXIT
           cp /usr/bin/true "$probe"
           chmod 0700 "$probe"

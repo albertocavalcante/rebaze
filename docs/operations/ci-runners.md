@@ -112,7 +112,12 @@ The pool has two CPUs and 4 GiB RAM. CI bounds compilation to two jobs and disab
 Cargo development debug information to reduce memory/disk pressure. When tool
 homes are unset, Rust setup defaults them to disk-backed `RUNNER_TEMP`; inherited
 explicit homes are preserved. Avoid the image's small/noexec `/tmp` for downloaded
-executables. Setup publishes environment changes only after success.
+executables. Both bootstrap scripts explicitly set and publish `TMPDIR` to
+`RUNNER_TEMP`, because rustdoc also compiles and executes through the default temp
+directory. Checking only the installer path misses this failure. Inspect the
+pinned deployed image itself: the current image predates the launcher temp-dir
+fix present in newer runmux source. Setup publishes environment changes only
+after success.
 
 ## Public pull requests and failure recovery
 

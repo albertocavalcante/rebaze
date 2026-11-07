@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=.github/scripts/download-tool.sh
 source "$script_dir/download-tool.sh"
+prepare_job_temp
 version=$(<"$script_dir/../../.bazelversion")
 case "$version/$(uname -s)/$(uname -m)" in
 9.0.0/Linux/aarch64)
@@ -27,3 +28,5 @@ mkdir -p "$tool_bin"
 mv "$setup_dir/bazel" "$tool_bin/bazel"
 "$tool_bin/bazel" --version
 if [[ -n "${GITHUB_PATH:-}" ]]; then printf '%s\n' "$tool_bin" >>"$GITHUB_PATH"; fi
+
+publish_job_temp
