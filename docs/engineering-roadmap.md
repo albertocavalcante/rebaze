@@ -136,9 +136,11 @@ These tasks support the milestone without widening its language support:
   gates. Preserve useful per-area checks and make missing tools/checks visible.
 - Pin contributor tooling where it affects repeatability, including the Bun runtime,
   and run documentation checks on PRs. Add executable checks for first-run examples.
-- Complete runmux through the [runner runbook](operations/ci-runners.md): add-only
-  App grant, healthy engine/service, guarded pool change, canary, then complete CI.
-  Record run URLs, runner names, and the reviewed head before changing compatibility claims.
+- Keep runmux activation evidence current through the
+  [runner runbook](operations/ci-runners.md): add-only grants, exact active profile,
+  guarded idle changes, and canary plus full CI on actual runners. Maintain hosted
+  rollback, fork approval policy, verified tool bootstraps, and separate host/engine
+  disk gates. Record run URLs, runner names, and the reviewed head.
 - Keep x86-64, macOS, and Windows claims tied to native evidence. ARM64 runmux and
   cross-compilation do not replace those executions.
 - Expand the standalone Bzlmod library against a named Bazel oracle/corpus before
