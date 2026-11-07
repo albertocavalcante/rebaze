@@ -1,8 +1,8 @@
-//! Native link decisions shared by preparation and rendering; no host IO.
+//! Validate native target identity and link intent without host IO.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
-use rebaze_cmake::{CMakeProject, Library};
+use rebaze_cmake::CMakeProject;
 
 use crate::config::{DependencyMapping, MigrationConfig};
 use crate::dependency_plan::DependencyPlan;
@@ -14,93 +14,246 @@ pub enum NativeLinkError {
     )]
     Unresolved { target: String, dependency: String },
     #[error(
+        "target {target:?} uses alias {alias:?} with unresolved dependency {dependency:?}; configure the terminal dependency mapping in rebaze.toml or explicitly omit that dependency"
+    )]
+    AliasUnresolved {
+        target: String,
+        alias: String,
+        dependency: String,
+    },
+    #[error(
         "target {target:?} has a comment instead of a mapping for {dependency:?}; configure a Bazel label or explicitly omit the dependency"
     )]
     CommentMapping { target: String, dependency: String },
+    #[error(
+        "native target {0:?} must use ASCII letters, digits, '_', '-', '.', or '+' and cannot be '.' or '..'"
+    )]
+    InvalidTarget(String),
+    #[error("{current} collides with {previous} at generated target {name:?}")]
+    Collision {
+        name: String,
+        previous: String,
+        current: String,
+    },
+    #[error("alias {0:?} conflicts with a production target or has an invalid name")]
+    InvalidAlias(String),
+    #[error("native alias cycle includes {0:?}")]
+    AliasCycle(String),
+    #[error("target {target:?} cannot link executable dependency {dependency:?}")]
+    ExecutableLink { target: String, dependency: String },
+    #[error("no prepared native dependencies for target {0:?}")]
+    MissingTarget(String),
 }
 
-pub fn validate(
-    project: &CMakeProject,
-    config: &MigrationConfig,
-    plan: &DependencyPlan,
-) -> Result<(), NativeLinkError> {
-    for (name, links) in project
-        .libraries
-        .iter()
-        .map(|library| (&library.name, &library.link_libraries))
-        .chain(
-            project
-                .executables
-                .iter()
-                .map(|exe| (&exe.name, &exe.link_libraries)),
-        )
-    {
-        dependencies(
-            name,
-            links,
-            &project.libraries,
-            &project.aliases,
+/// One output namespace shared by production and generated test targets.
+#[derive(Debug, Default)]
+pub struct TargetNames(BTreeMap<String, String>);
+
+impl TargetNames {
+    pub fn register(&mut self, name: &str, origin: String) -> Result<String, NativeLinkError> {
+        if !valid_name(name) {
+            return Err(NativeLinkError::InvalidTarget(name.into()));
+        }
+        let normalized = name.replace('-', "_");
+        if let Some(previous) = self.0.get(&normalized) {
+            return Err(NativeLinkError::Collision {
+                name: normalized,
+                previous: previous.clone(),
+                current: origin,
+            });
+        }
+        self.0.insert(normalized.clone(), origin);
+        Ok(normalized)
+    }
+}
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && !matches!(name, "." | "..")
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.' | b'+'))
+}
+
+/// Dependencies are resolved once against validated target and alias identities.
+#[derive(Debug)]
+pub struct NativeLinkPlan {
+    targets: BTreeMap<String, PlannedTarget>,
+}
+
+#[derive(Debug)]
+pub struct PlannedTarget {
+    pub name: String,
+    pub dependencies: Vec<String>,
+}
+
+impl NativeLinkPlan {
+    pub fn new(
+        project: &CMakeProject,
+        config: &MigrationConfig,
+        plan: &DependencyPlan,
+        names: &mut TargetNames,
+    ) -> Result<Self, NativeLinkError> {
+        let mut libraries = BTreeMap::new();
+        let mut executables = BTreeSet::new();
+        let mut target_names = BTreeMap::new();
+        for library in &project.libraries {
+            let normalized =
+                names.register(&library.name, format!("library {:?}", library.name))?;
+            libraries.insert(library.name.clone(), format!(":{normalized}"));
+            target_names.insert(library.name.clone(), normalized);
+        }
+        for executable in &project.executables {
+            let normalized = names.register(
+                &executable.name,
+                format!("executable {:?}", executable.name),
+            )?;
+            executables.insert(executable.name.clone());
+            target_names.insert(executable.name.clone(), normalized);
+        }
+        for alias in project.aliases.keys().collect::<BTreeSet<_>>() {
+            if !alias.split("::").all(valid_name)
+                || libraries.contains_key(alias)
+                || executables.contains(alias)
+            {
+                return Err(NativeLinkError::InvalidAlias(alias.clone()));
+            }
+        }
+        let aliases = resolve_aliases(project)?;
+        let resolver = Resolver {
+            libraries: &libraries,
+            executables: &executables,
+            aliases: &aliases,
             config,
             plan,
-        )?;
+        };
+        // Invalid unused aliases are still invalid project intent. Their terminal
+        // may be a configured external imported target omitted by extraction.
+        for alias in aliases.keys() {
+            resolver.link(alias, alias)?;
+        }
+        let targets = project
+            .libraries
+            .iter()
+            .map(|library| (&library.name, &library.link_libraries))
+            .chain(
+                project
+                    .executables
+                    .iter()
+                    .map(|exe| (&exe.name, &exe.link_libraries)),
+            )
+            .map(|(name, links)| {
+                let mut seen = BTreeSet::new();
+                let mut deps = Vec::new();
+                for link in links {
+                    if let DependencyMapping::Mapped(label) = resolver.link(name, link)?
+                        && seen.insert(label.clone())
+                    {
+                        deps.push(label);
+                    }
+                }
+                let output_name = target_names
+                    .remove(name)
+                    .ok_or_else(|| NativeLinkError::MissingTarget(name.clone()))?;
+                Ok((
+                    name.clone(),
+                    PlannedTarget {
+                        name: output_name,
+                        dependencies: deps,
+                    },
+                ))
+            })
+            .collect::<Result<_, NativeLinkError>>()?;
+        Ok(Self { targets })
     }
-    Ok(())
+
+    pub fn target(&self, target: &str) -> Result<&PlannedTarget, NativeLinkError> {
+        self.targets
+            .get(target)
+            .ok_or_else(|| NativeLinkError::MissingTarget(target.into()))
+    }
 }
 
-pub fn dependencies(
-    target: &str,
-    links: &[String],
-    libraries: &[Library],
-    aliases: &HashMap<String, String>,
-    config: &MigrationConfig,
-    plan: &DependencyPlan,
-) -> Result<Vec<String>, NativeLinkError> {
-    let internal_names: BTreeSet<_> = libraries
-        .iter()
-        .map(|library| library.name.as_str())
-        .collect();
-    let mut seen = BTreeSet::new();
-    let mut deps = Vec::new();
-    for link in links {
-        let resolved = aliases.get(link).map_or(link.as_str(), String::as_str);
-        // Preserve the existing one-hop/namespace behavior until target identity
-        // and alias graph validation are handled by the following work package.
-        let local_name = resolved.rsplit("::").next().unwrap_or(resolved);
-        let mapping = if internal_names.contains(local_name) {
-            DependencyMapping::Mapped(format!(":{}", local_name.replace('-', "_")))
-        } else if let Some(label) = plan.managed_link(resolved) {
-            DependencyMapping::Mapped(label)
-        } else {
-            config.map_dependency(resolved)
-        };
-        match mapping {
-            DependencyMapping::Mapped(label) => {
-                if label.trim_start().starts_with('#') {
-                    return Err(NativeLinkError::CommentMapping {
-                        target: target.into(),
-                        dependency: link.clone(),
-                    });
-                }
-                if seen.insert(label.clone()) {
-                    deps.push(label);
-                }
+/// Iterative, memoized traversal avoids call-stack dependence on alias depth.
+fn resolve_aliases(project: &CMakeProject) -> Result<BTreeMap<String, String>, NativeLinkError> {
+    let mut resolved = BTreeMap::<String, String>::new();
+    let aliases: BTreeMap<_, _> = project.aliases.iter().collect();
+    for alias in aliases.keys() {
+        if resolved.contains_key(alias.as_str()) {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut current = alias.as_str();
+        let terminal = loop {
+            if let Some(terminal) = resolved.get(current) {
+                break terminal.clone();
             }
-            DependencyMapping::Omitted(_) => {}
-            DependencyMapping::Unresolved => {
-                return Err(NativeLinkError::Unresolved {
+            let Some(next) = project.aliases.get(current) else {
+                break current.to_string();
+            };
+            if !seen.insert(current) {
+                return Err(NativeLinkError::AliasCycle(current.into()));
+            }
+            path.push(current);
+            current = next;
+        };
+        for name in path {
+            resolved.insert(name.into(), terminal.clone());
+        }
+    }
+    Ok(resolved)
+}
+
+struct Resolver<'a> {
+    libraries: &'a BTreeMap<String, String>,
+    executables: &'a BTreeSet<String>,
+    aliases: &'a BTreeMap<String, String>,
+    config: &'a MigrationConfig,
+    plan: &'a DependencyPlan,
+}
+
+impl Resolver<'_> {
+    fn link(&self, target: &str, link: &str) -> Result<DependencyMapping, NativeLinkError> {
+        let resolved = self.aliases.get(link).map_or(link, String::as_str);
+        let mapping = if let Some(label) = self.libraries.get(resolved) {
+            DependencyMapping::Mapped(label.clone())
+        } else if self.executables.contains(resolved) {
+            return Err(NativeLinkError::ExecutableLink {
+                target: target.into(),
+                dependency: link.into(),
+            });
+        } else if let Some(label) = self.plan.managed_link(resolved) {
+            DependencyMapping::Mapped(label)
+        } else if resolved.starts_with("PkgConfig::") {
+            // This namespace names prepared pkg-config requests, not arbitrary
+            // aliases into a third_party package that might never be generated.
+            DependencyMapping::Unresolved
+        } else {
+            self.config.map_dependency(resolved)
+        };
+        match &mapping {
+            DependencyMapping::Mapped(label) if label.trim_start().starts_with('#') => {
+                return Err(NativeLinkError::CommentMapping {
                     target: target.into(),
-                    dependency: link.clone(),
+                    dependency: link.into(),
                 });
             }
+            DependencyMapping::Unresolved => {
+                if resolved != link {
+                    return Err(NativeLinkError::AliasUnresolved {
+                        target: target.into(),
+                        alias: link.into(),
+                        dependency: resolved.into(),
+                    });
+                }
+                return Err(NativeLinkError::Unresolved {
+                    target: target.into(),
+                    dependency: link.into(),
+                });
+            }
+            _ => {}
         }
+        Ok(mapping)
     }
-    // Keep the existing managed strategy edges until the per-target ownership
-    // replacement has its own compatibility coverage.
-    for name in plan.aliases.keys() {
-        let label = format!("//third_party:{name}");
-        if seen.insert(label.clone()) {
-            deps.push(label);
-        }
-    }
-    Ok(deps)
 }

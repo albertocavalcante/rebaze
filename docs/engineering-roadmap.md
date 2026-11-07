@@ -186,13 +186,14 @@ effort estimates only after the first reproductions; no calendar promise is made
 
 ### R01 — Reject unresolved native dependencies and target collisions
 
-Progress: native preparation now rejects unresolved required links and mapping
-comments, with typed mapping/omission decisions and a required CLI preservation
-regression. Target identity, alias-graph validation, and per-target dependency
-ownership remain open; this work package is not complete.
+Implemented: native preparation rejects unresolved required links and mapping
+comments, validates production/test output names and alias graphs, and resolves
+exact per-target dependency edges once. Typed mapping/omission decisions and CLI
+preservation regressions cover these failures. R01's implementation is in place;
+broader usage requirements and ordered compiler/linker semantics remain R10 work.
 
 **Original problem:** dependency mapping returned TODO strings that generation
-filtered out. Normalized names can still silently drop a library, such as
+filtered out. Normalized names also silently dropped libraries such as
 `foo-bar` versus `foo_bar`.
 See [mapping](../crates/rebaze-bazel/src/config.rs) and
 [native generation](../crates/rebaze-bazel/src/cmake_generator.rs).

@@ -82,20 +82,23 @@ pub struct CMakeGeneration<'a> {
     config: &'a MigrationConfig,
     plan: dependency_plan::DependencyPlan,
     tests: Vec<cmake_tests::PlannedTest<'a>>,
+    links: native_links::NativeLinkPlan,
 }
 
 pub fn plan_cmake<'a>(
     project: &'a rebaze_cmake::CMakeProject,
     config: &'a MigrationConfig,
 ) -> GenerationResult<CMakeGeneration<'a>> {
-    let tests = cmake_tests::plan(project)?;
     let plan = dependency_plan::DependencyPlan::new(project, config)?;
-    native_links::validate(project, config, &plan)?;
+    let mut names = native_links::TargetNames::default();
+    let links = native_links::NativeLinkPlan::new(project, config, &plan, &mut names)?;
+    let tests = cmake_tests::plan(project, &mut names)?;
     Ok(CMakeGeneration {
         project,
         config,
         plan,
         tests,
+        links,
     })
 }
 
@@ -121,7 +124,7 @@ impl CMakeGeneration<'_> {
                 cmake_generator::generate_root_build(
                     self.project,
                     self.config,
-                    &self.plan,
+                    &self.links,
                     &self.tests,
                 )?,
             ),

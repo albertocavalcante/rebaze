@@ -54,7 +54,11 @@ migrated_output=$("$work/migrated/bazel-bin/probe" "two words'\$" 42 "")
 test "$migrated_output" = "$original_output"
 
 # Unsupported planning must preserve an existing generated BUILD.
-cp "$work/migrated/BUILD.bazel" "$work/generated-before.bazel"
+generated_files=(BUILD.bazel MODULE.bazel .bazelversion .bazelrc)
+mkdir "$work/generated-before"
+for file in "${generated_files[@]}"; do
+  cp "$work/migrated/$file" "$work/generated-before/$file"
+done
 assert_rejected() {
   local diagnostic=$1
   if isolated "$cli" migrate "$work/migrated" --build-generator native --unsafe-mode >"$work/rejection.log" 2>&1; then
@@ -65,7 +69,9 @@ assert_rejected() {
     cat "$work/rejection.log" >&2
     exit 1
   fi
-  cmp "$work/generated-before.bazel" "$work/migrated/BUILD.bazel"
+  for file in "${generated_files[@]}"; do
+    cmp "$work/generated-before/$file" "$work/migrated/$file"
+  done
   cp "$fixture/CMakeLists.txt" "$work/migrated/CMakeLists.txt"
 }
 # Launcher state must survive merging tests registered in a child directory.
@@ -85,6 +91,12 @@ for dependency in Unknown::Required unknown_required -lunknown_required; do
   printf '\ntarget_link_libraries(probe %s)\n' "$dependency" >>"$work/migrated/CMakeLists.txt"
   assert_rejected 'target "probe" requires unresolved dependency'
 done
+printf '\nadd_library(dep-one STATIC dep.c)\nadd_library(dep_one STATIC dep.c)\n' >>"$work/migrated/CMakeLists.txt"
+assert_rejected 'collides with'
+printf '\ntarget_link_libraries(probe Unknown::dep)\n' >>"$work/migrated/CMakeLists.txt"
+assert_rejected 'requires unresolved dependency'
+printf '\nadd_library(Alias::one ALIAS Alias::two)\nadd_library(Alias::two ALIAS Alias::one)\n' >>"$work/migrated/CMakeLists.txt"
+assert_rejected 'alias cycle'
 
 # A successful build must not hide an actual assertion failure in either suite.
 for root in original migrated; do

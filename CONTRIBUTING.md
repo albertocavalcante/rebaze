@@ -167,6 +167,10 @@ really needs no generated edge. Mapping methods and the `filters` convenience
 wrappers now return `DependencyMapping` rather than `Option<String>`; match
 `Mapped`, `Omitted(reason)`, and `Unresolved` explicitly. Unknown links are never
 successful TODO comments. Empty configured mapping values remain explicit omissions.
+Preparation also rejects output-name collisions and invalid/cyclic aliases.
+Namespace-qualified links need an exact alias, a prepared pkg-config request,
+or a configured mapping; they never match a local library by suffix. Only a
+target's selected dependencies become generated edges.
 
 `ThirdPartyConfig`, `DepsStrategy`, and direct third-party rendering helpers have
 been removed. They could disagree with `MigrationConfig` and the shared plan.
