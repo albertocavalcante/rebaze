@@ -15,7 +15,7 @@ fn test_generate_bazel_for_hello_cmake() {
     }
 
     let project = rebaze_cmake::parse(&fixture_dir).unwrap();
-    let files = rebaze_bazel::generate_from_cmake(&project).unwrap();
+    let files = rebaze_bazel::generate_from_cmake(&project, &unavailable(&project)).unwrap();
 
     // MODULE.bazel, BUILD.bazel, .bazelversion, .bazelrc
     assert_eq!(files.len(), 4);
@@ -50,7 +50,7 @@ fn test_generate_bazel_for_static_library() {
     }
 
     let project = rebaze_cmake::parse(&fixture_dir).unwrap();
-    let files = rebaze_bazel::generate_from_cmake(&project).unwrap();
+    let files = rebaze_bazel::generate_from_cmake(&project, &unavailable(&project)).unwrap();
 
     // Check BUILD.bazel contains library and binary
     let build = files
@@ -77,7 +77,7 @@ fn test_generate_bazel_for_shared_library() {
     }
 
     let project = rebaze_cmake::parse(&fixture_dir).unwrap();
-    let files = rebaze_bazel::generate_from_cmake(&project).unwrap();
+    let files = rebaze_bazel::generate_from_cmake(&project, &unavailable(&project)).unwrap();
 
     let build = files
         .iter()
@@ -98,7 +98,7 @@ fn test_generate_bazel_with_boost() {
     }
 
     let project = rebaze_cmake::parse(&fixture_dir).unwrap();
-    let files = rebaze_bazel::generate_from_cmake(&project).unwrap();
+    let files = rebaze_bazel::generate_from_cmake(&project, &unavailable(&project)).unwrap();
 
     // Check MODULE.bazel has platform dep (because there are packages)
     let module = files
@@ -113,4 +113,19 @@ fn test_generate_bazel_with_boost() {
         .find(|(name, _)| *name == "BUILD.bazel")
         .unwrap();
     assert!(build.1.contains("@boost//:filesystem"));
+}
+
+fn unavailable(project: &rebaze_cmake::CMakeProject) -> rebaze_bazel::DiscoverySnapshot {
+    let mut snapshot = rebaze_bazel::DiscoverySnapshot::default();
+    for module in &project.pkg_config_modules {
+        snapshot
+            .record(
+                module,
+                rebaze_bazel::discovery::ProbeOutcome::Unavailable(
+                    rebaze_bazel::discovery::UnavailableReason::ToolNotFound,
+                ),
+            )
+            .unwrap();
+    }
+    snapshot
 }

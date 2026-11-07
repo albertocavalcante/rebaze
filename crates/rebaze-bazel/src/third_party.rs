@@ -16,6 +16,7 @@ use crate::starlark::{
     Alias, CcLibrary, Cmake, ConfigureMake, File, FunctionCall, Identifier, Load, Meson,
     RenderResult,
 };
+use crate::{DiscoverySnapshot, GenerationResult};
 use rebaze_cmake::PkgConfigModule;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
@@ -30,7 +31,7 @@ pub fn deduplicate_modules(modules: &[PkgConfigModule]) -> Vec<PkgConfigModule> 
     modules
         .iter()
         .filter(|pkg| {
-            let target_name = pkg.prefix.to_lowercase().replace('-', "_");
+            let target_name = crate::discovery::target_name(&pkg.prefix);
             seen.insert(target_name)
         })
         .cloned()
@@ -78,14 +79,16 @@ pub struct ThirdPartyConfig {
 pub fn generate_build_file(
     modules: &[PkgConfigModule],
     config: &ThirdPartyConfig,
-) -> RenderResult<String> {
-    build_file(modules, config)?.render()
+    discovery: &DiscoverySnapshot,
+) -> GenerationResult<String> {
+    Ok(build_file(modules, config, discovery)?.render()?)
 }
 
 pub(crate) fn build_file(
     modules: &[PkgConfigModule],
     _config: &ThirdPartyConfig,
-) -> RenderResult<File> {
+    discovery: &DiscoverySnapshot,
+) -> GenerationResult<File> {
     let mut file = File::new();
     file.load(Load {
         bzl: "@rules_cc//cc:defs.bzl".into(),
@@ -100,7 +103,7 @@ pub(crate) fn build_file(
     })?;
     file.comment("Third-party aliases and system fallbacks; system libraries are non-hermetic.");
     for package in modules {
-        let name = package.prefix.to_lowercase().replace('-', "_");
+        let name = crate::discovery::target_name(&package.prefix);
         file.comment(&format!(
             "{} -> {}",
             package.prefix,
@@ -113,12 +116,12 @@ pub(crate) fn build_file(
                 args: vec![name.clone()],
             },
         })?;
-        let linkopts = if let Some(flags) = probe_pkg_config(&package.packages) {
+        let linkopts = if let Some(info) = discovery.package(package)? {
             // Absolute include paths belong in the system repository, not cc_library.copts.
-            flags
-                .libs
-                .into_iter()
+            info.linkopts
+                .iter()
                 .filter(|flag| flag.starts_with("-l") || flag.starts_with("-L"))
+                .cloned()
                 .collect()
         } else {
             file.comment(&format!(
@@ -172,7 +175,7 @@ pub fn generate_config_bzl(
         .iter()
         .map(|package| {
             (
-                package.prefix.to_lowercase().replace('-', "_"),
+                crate::discovery::target_name(&package.prefix),
                 DependencyConfiguration {
                     packages: &package.packages,
                 },
@@ -227,7 +230,7 @@ pub(crate) fn source_packages(
     let mut packages = BTreeSet::new();
     let mut pending: Vec<_> = modules
         .iter()
-        .map(|package| package.prefix.to_lowercase().replace('-', "_"))
+        .map(|package| crate::discovery::target_name(&package.prefix))
         .collect();
     while let Some(name) = pending.pop() {
         if !packages.insert(name.clone()) {
@@ -334,104 +337,6 @@ pub(crate) fn source_build_targets(
     Ok(file)
 }
 
-/// Detected system library info from pkg-config.
-#[derive(Debug, Clone)]
-pub struct SystemLibInfo {
-    /// Library name (e.g., "glib")
-    pub name: String,
-    /// pkg-config package names
-    pub packages: Vec<String>,
-    /// Detected install prefix (e.g., /opt/homebrew/Cellar/glib/2.86.3)
-    pub prefix: Option<String>,
-    /// Include directories relative to prefix
-    pub include_dirs: Vec<String>,
-    /// Library directories relative to prefix
-    pub lib_dirs: Vec<String>,
-    /// Library names to link
-    pub libs: Vec<String>,
-}
-
-/// Probe pkg-config to get detailed library info.
-pub fn probe_system_lib(packages: &[String]) -> Option<SystemLibInfo> {
-    use std::process::Command;
-
-    let base_packages: Vec<&str> = packages
-        .iter()
-        .map(|p| p.split(">=").next().unwrap_or(p).trim())
-        .collect();
-
-    // Get prefix
-    let prefix_output = Command::new("pkg-config")
-        .args(["--variable=prefix"])
-        .args(&base_packages)
-        .output()
-        .ok()?;
-
-    if !prefix_output.status.success() {
-        return None;
-    }
-
-    let prefix = String::from_utf8_lossy(&prefix_output.stdout)
-        .trim()
-        .to_string();
-
-    if prefix.is_empty() {
-        return None;
-    }
-
-    // Get cflags to extract include dirs
-    let cflags_output = Command::new("pkg-config")
-        .args(["--cflags"])
-        .args(&base_packages)
-        .output()
-        .ok()?;
-
-    let cflags_str = String::from_utf8_lossy(&cflags_output.stdout);
-    let include_dirs: Vec<String> = cflags_str
-        .split_whitespace()
-        .filter_map(|f| f.strip_prefix("-I"))
-        .map(|p| {
-            // Try to make path relative to prefix
-            p.strip_prefix(&prefix).map_or_else(
-                || p.to_string(),
-                |rel| rel.trim_start_matches('/').to_string(),
-            )
-        })
-        .collect();
-
-    // Get libs
-    let libs_output = Command::new("pkg-config")
-        .args(["--libs"])
-        .args(&base_packages)
-        .output()
-        .ok()?;
-
-    let libs_str = String::from_utf8_lossy(&libs_output.stdout);
-    let mut libs = Vec::new();
-    let mut lib_dirs = Vec::new();
-
-    for flag in libs_str.split_whitespace() {
-        if let Some(lib) = flag.strip_prefix("-l") {
-            libs.push(lib.to_string());
-        } else if let Some(dir) = flag.strip_prefix("-L") {
-            let rel_dir = dir.strip_prefix(&prefix).map_or_else(
-                || dir.to_string(),
-                |rel| rel.trim_start_matches('/').to_string(),
-            );
-            lib_dirs.push(rel_dir);
-        }
-    }
-
-    Some(SystemLibInfo {
-        name: (*base_packages.first()?).to_string(),
-        packages: packages.to_vec(),
-        prefix: Some(prefix),
-        include_dirs,
-        lib_dirs,
-        libs,
-    })
-}
-
 #[derive(Default)]
 struct SystemConfiguration {
     path: Option<String>,
@@ -454,81 +359,31 @@ impl Serialize for SystemConfiguration {
 }
 
 /// Snapshot observed pkg-config state into a table; keep the extension program fixed.
-pub fn generate_system_deps_bzl(modules: &[PkgConfigModule]) -> RenderResult<String> {
-    let libraries: BTreeMap<_, _> = modules
-        .iter()
-        .map(|package| {
-            let configuration = probe_system_lib(&package.packages).map_or_else(
-                SystemConfiguration::default,
-                |info| SystemConfiguration {
-                    path: Some(info.prefix.unwrap_or_else(|| "/usr/local".into())),
-                    include_dirs: info.include_dirs,
-                    lib_dirs: info.lib_dirs,
-                    libs: info.libs,
-                },
-            );
-            (
-                package.prefix.to_lowercase().replace('-', "_"),
-                configuration,
-            )
-        })
-        .collect();
+pub fn generate_system_deps_bzl(
+    modules: &[PkgConfigModule],
+    discovery: &DiscoverySnapshot,
+) -> GenerationResult<String> {
+    let mut libraries = BTreeMap::new();
+    for package in modules {
+        let configuration = discovery
+            .package(package)?
+            .and_then(|info| info.system.as_ref())
+            .map_or_else(SystemConfiguration::default, |info| SystemConfiguration {
+                path: Some(info.prefix.clone()),
+                include_dirs: info.include_dirs.clone(),
+                lib_dirs: info.lib_dirs.clone(),
+                libs: info.libs.clone(),
+            });
+        libraries.insert(
+            crate::discovery::target_name(&package.prefix),
+            configuration,
+        );
+    }
     let mut file = File::new();
     file.docstring("System library snapshot from pkg-config (non-hermetic). Review paths for the target system.")?;
     file.assign(&Identifier::new("SYSTEM_LIBS")?, &libraries)?;
     file.helper_source(include_str!("templates/system_deps.bzl"));
-    file.render()
-}
-
-/// Detected pkg-config flags for a package.
-#[derive(Debug, Clone, Default)]
-pub struct PkgConfigFlags {
-    /// Compiler flags (from --cflags)
-    pub cflags: Vec<String>,
-    /// Linker flags (from --libs)
-    pub libs: Vec<String>,
-}
-
-/// Probe pkg-config to get actual flags for packages.
-/// Returns None if pkg-config is not available or the package is not found.
-pub fn probe_pkg_config(packages: &[String]) -> Option<PkgConfigFlags> {
-    use std::process::Command;
-
-    // Extract base package names (remove version constraints)
-    let base_packages: Vec<&str> = packages
-        .iter()
-        .map(|p| p.split(">=").next().unwrap_or(p).trim())
-        .collect();
-
-    // Try to get cflags
-    let cflags_output = Command::new("pkg-config")
-        .args(["--cflags"])
-        .args(&base_packages)
-        .output()
-        .ok()?;
-
-    if !cflags_output.status.success() {
-        return None;
-    }
-
-    let cflags_str = String::from_utf8_lossy(&cflags_output.stdout);
-    let cflags: Vec<String> = cflags_str.split_whitespace().map(String::from).collect();
-
-    // Try to get libs
-    let libs_output = Command::new("pkg-config")
-        .args(["--libs"])
-        .args(&base_packages)
-        .output()
-        .ok()?;
-
-    if !libs_output.status.success() {
-        return None;
-    }
-
-    let libs_str = String::from_utf8_lossy(&libs_output.stdout);
-    let libs: Vec<String> = libs_str.split_whitespace().map(String::from).collect();
-
-    Some(PkgConfigFlags { cflags, libs })
+    Ok(file.render()?)
 }
 
 /// Generate linkopts for system libraries.

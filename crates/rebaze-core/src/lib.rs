@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub mod config;
+pub mod discovery;
 pub mod model;
 
 // Re-export config types for convenience
@@ -120,9 +121,34 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                         .config
                         .as_ref()
                         .map_or_else(BazelConfig::default, Config::bazel_config);
-                    let bazel_files =
-                        rebaze_bazel::generate_from_cmake_with_config(&project, &bazel_config)?;
+                    let observations = discovery::discover_packages(
+                        &project.pkg_config_modules,
+                        &discovery::DiscoveryOptions::default(),
+                    )?;
+                    for module in rebaze_bazel::deduplicate_modules(&project.pkg_config_modules) {
+                        use rebaze_bazel::discovery::ProbeOutcome;
+                        match observations.outcome(&module)? {
+                            ProbeOutcome::Unavailable(reason) => tracing::warn!(
+                                package = ?module.prefix, reason = %reason,
+                                "Using unavailable-package fallback"
+                            ),
+                            ProbeOutcome::Available(info) if info.system.is_none() => {
+                                tracing::warn!(
+                                    package = ?module.prefix,
+                                    "No installation prefix; system wrapper needs configuration"
+                                );
+                            }
+                            // Failed probes are rejected by generation before writing outputs.
+                            ProbeOutcome::Available(_) | ProbeOutcome::Failed(_) => {}
+                        }
+                    }
+                    let bazel_files = rebaze_bazel::generate_from_cmake_with_config(
+                        &project,
+                        &bazel_config,
+                        &observations,
+                    )?;
 
+                    tracing::info!("Generated {} Bazel files", bazel_files.len());
                     if options.dry_run {
                         print_files(&bazel_files);
                     } else {
@@ -162,6 +188,7 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                 BuildGenerator::Native => {
                     let bazel_files = rebaze_bazel::generate(&project)?;
 
+                    tracing::info!("Generated {} Bazel files", bazel_files.len());
                     if options.dry_run {
                         print_files(&bazel_files);
                     } else {

@@ -2,8 +2,8 @@
 
 The next milestone is a reproducible native migration: small checked-in CMake
 and Gradle projects migrate, build, and run their tests with Bazel 9 from a clean
-checkout. First make generation consume explicit discovery data, then align
-strategy semantics, then prove the whole path. Additional source formats follow
+checkout. The explicit discovery boundary is now implemented. Next align strategy
+semantics, then prove the whole path. Additional source formats follow
 those correctness gates.
 
 This is the authoritative implementation sequence. The earlier
@@ -34,8 +34,9 @@ or input project passes.
 | Documentation/usability    | Partial    | Contributor/review/architecture guides define the workflow; examples and support claims still need executable drift checks.       |
 
 See the [architecture](architecture.md) for current behavior and boundaries.
-The most important contradiction is that generation still runs `pkg-config`,
-while reproducible rendering should depend only on declared inputs.
+Native rendering now consumes explicit discovery data. The next load-bearing
+gap is agreement between strategy configuration, imports, aliases, and generated
+dependency targets.
 
 ## Proposed implementation sequence
 
@@ -43,35 +44,36 @@ Keep each slice reviewable and independently mergeable. Every implementation PR
 includes its regression, relevant Cargo/Bazel checks, compatibility impact, and
 independent review of the final head.
 
-| Order                   | Outcome                                                           | Completion gate                                                                                                                                            |
-| ----------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1                       | Explicit discovery inputs and deterministic native rendering      | Identical project/configuration/snapshot inputs produce identical path-content maps without running a process or accessing the network during generation.  |
-| 2                       | One validated dependency strategy plan                            | System, source, and BCR aliases/imports agree; unsupported or incomplete choices fail before writing; existing valid configuration has migration coverage. |
-| 3                       | Required first-party migration fixtures                           | Clean CI migrates native/JVM fixtures, builds them, runs their tests, and verifies expected behavior. Missing required inputs fail visibly.                |
-| 4                       | Bounded inputs and defined failure behavior                       | Hostile/oversized inputs fail within documented limits, preserve recoverable state, and produce actionable diagnostics.                                    |
-| Parallel delivery track | Repeatable contributor checks and verified runner/platform claims | Local/CI checks agree; runner identity and head are recorded; native platform evidence matches every compatibility claim.                                  |
+| Order                   | Outcome                                                                 | Completion gate                                                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1                       | Completed: explicit discovery inputs and deterministic native rendering | Identical project/configuration/snapshot inputs produce identical path-content maps without running a process or accessing the network during generation.  |
+| 2                       | One validated dependency strategy plan                                  | System, source, and BCR aliases/imports agree; unsupported or incomplete choices fail before writing; existing valid configuration has migration coverage. |
+| 3                       | Required first-party migration fixtures                                 | Clean CI migrates native/JVM fixtures, builds them, runs their tests, and verifies expected behavior. Missing required inputs fail visibly.                |
+| 4                       | Bounded inputs and defined failure behavior                             | Hostile/oversized inputs fail within documented limits, preserve recoverable state, and produce actionable diagnostics.                                    |
+| Parallel delivery track | Repeatable contributor checks and verified runner/platform claims       | Local/CI checks agree; runner identity and head are recorded; native platform evidence matches every compatibility claim.                                  |
 
-### 1. Move host discovery out of rendering
+### 1. Completed: move host discovery out of rendering
 
-[Third-party generation](../crates/rebaze-bazel/src/third_party.rs) currently calls
-`probe_pkg_config` and `probe_system_lib` while producing files.
+`rebaze-bazel` now accepts an owned `DiscoverySnapshot` as an explicit CMake
+rendering input. Snapshots retain exact requests and distinguish available data,
+unavailability, and typed failures. They can be serialized and replayed. Missing,
+mismatched, and failed observations are rejected before generated output writes.
 
-1. Define an owned discovery snapshot in the generation boundary. Reuse the
-   useful existing library/flag data rather than invent another package model.
-   Distinguish an available package, a missing optional package, and a failed
-   probe; keep configured strategy separate from observed host paths.
-2. Move process execution to an explicit discovery entry point used by
-   `rebaze-core`. Use argument vectors, bounded command time/output, and typed
-   failures. Ordinary rendering must not execute configured project text.
-3. Add a pure generation entry point that accepts the project, configuration,
-   and snapshot. Migrate core and tests together; document any convenience API
-   that still performs discovery instead of hiding the effect.
-4. Test fixed snapshots on hosts with different installed packages. Exercise
-   absent tools, nonzero exit, invalid output, and timeout independently of rendering.
+`rebaze-core` owns pkg-config execution through a bounded adapter. Each distinct
+request is probed once per pass. Argument validation, shell-escaped flag parsing,
+concurrent capped stdout/stderr reads, and command deadlines have deterministic
+and real-process tests. Output capture defaults to 256 KiB per stream and command
+deadlines to five seconds; the adapter terminates/reaps the direct child on failure.
 
-Compare complete file maps, not only selected substrings. Existing native CLI
-behavior should remain stable for equivalent discovery results. Define
-normalization/order where package flags or maps would otherwise introduce drift.
+Generation has no host probes or log events. Complete file maps are compared for
+fixed/replayed snapshots, including irrelevant observations. Discovery tests cover
+missing tools, unsatisfied requests, unsuccessful queries, malformed data,
+large legitimate output, output-limit boundaries, and hanging processes.
+
+Discovery remains host-dependent and uses a trusted executable/environment. The
+limits are per command/stream; whole-project budgets and descendant-process
+containment are separate contracts. Native CMake pre-validation can still create
+build state before discovery. See the [architecture](architecture.md) for details.
 
 ### 2. Build one typed strategy plan
 
