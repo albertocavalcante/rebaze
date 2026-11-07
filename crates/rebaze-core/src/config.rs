@@ -22,10 +22,31 @@
 //! rules_jvm_external = "6.0"
 //! ```
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("failed to read configuration {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("invalid configuration: {0}")]
+    Parse(#[from] toml::de::Error),
+    #[error("configuration cannot mix flat settings with a [bazel] section")]
+    MixedFormats,
+    #[error("invalid configuration {path}: {source}")]
+    File {
+        path: PathBuf,
+        #[source]
+        source: Box<Self>,
+    },
+}
+
+type Result<T> = std::result::Result<T, ConfigError>;
 
 // Re-export target-specific configs for convenience
 pub use rebaze_bazel::config::MigrationConfig as BazelConfig;
@@ -43,7 +64,7 @@ pub use rebaze_bazel::config::MigrationConfig as BazelConfig;
 /// 3. Update `load_from_file` to parse `[foo]` section
 /// 4. Update generators to accept the config
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Bazel target configuration.
     /// Controls Bazel dependency versions, mappings, filters, and build options.
@@ -61,44 +82,40 @@ impl Config {
     /// 1. Nested: `[bazel.versions]` - explicit target sections
     /// 2. Flat: `[versions]` - legacy format, interpreted as Bazel config
     pub fn load_from_file(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-
-        Self::parse_toml(&content)
-            .with_context(|| format!("Failed to parse config file: {}", path.display()))
+        let content = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.into(),
+            source,
+        })?;
+        Self::parse_toml(&content).map_err(|source| ConfigError::File {
+            path: path.into(),
+            source: Box::new(source),
+        })
     }
 
     /// Parse TOML content into Config.
     fn parse_toml(content: &str) -> Result<Self> {
-        // First, try parsing as nested format with explicit [bazel] section
-        let value: toml::Value = toml::from_str(content)?;
-
-        if let Some(table) = value.as_table() {
-            // Check if there's an explicit [bazel] section
-            if table.contains_key("bazel") {
-                // Nested format: parse directly
-                let config: Self = toml::from_str(content)?;
-                return Ok(config);
+        let table: toml::Table = toml::from_str(content)?;
+        if table.contains_key("bazel") {
+            if ["versions", "mappings", "filters", "build", "strategy"]
+                .iter()
+                .any(|field| table.contains_key(*field))
+            {
+                return Err(ConfigError::MixedFormats);
             }
-
-            // Flat format: treat entire file as Bazel config
-            let bazel_config: BazelConfig = toml::from_str(content)?;
-            return Ok(Self {
-                bazel: Some(bazel_config),
-            });
+            Ok(toml::from_str(content)?)
+        } else {
+            Ok(Self {
+                bazel: Some(toml::from_str(content)?),
+            })
         }
-
-        // Empty or invalid - return defaults
-        Ok(Self::default())
     }
 
     /// Load configuration from a project directory.
     ///
     /// Looks for `rebaze.toml` in the given directory.
     /// Returns default config if file doesn't exist.
-    pub fn load_from_project(project_dir: &Path) -> Self {
-        let config_path = project_dir.join("rebaze.toml");
-        Self::load_from_path_or_default(Some(&config_path), project_dir)
+    pub fn load_from_project(project_dir: &Path) -> Result<Self> {
+        Self::load_from_path_or_discover(None, project_dir)
     }
 
     /// Load configuration from an explicit path, or discover from project directory.
@@ -117,33 +134,13 @@ impl Config {
             Ok(config)
         } else {
             let path = project_dir.join("rebaze.toml");
-            match std::fs::metadata(&path) {
+            match std::fs::symlink_metadata(&path) {
                 Ok(_) => Self::load_from_file(&path),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-                Err(error) => {
-                    Err(error).with_context(|| format!("Failed to inspect {}", path.display()))
-                }
-            }
-        }
-    }
-
-    /// Load from path or return defaults (non-failing version).
-    fn load_from_path_or_default(config_path: Option<&Path>, project_dir: &Path) -> Self {
-        let path = config_path.map_or_else(|| project_dir.join("rebaze.toml"), Path::to_path_buf);
-
-        if !path.exists() {
-            tracing::debug!("No config file found at {}, using defaults", path.display());
-            return Self::default();
-        }
-
-        match Self::load_from_file(&path) {
-            Ok(config) => {
-                tracing::info!("Loaded configuration from {}", path.display());
-                config
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load {}: {}. Using defaults.", path.display(), e);
-                Self::default()
+                Err(error) => Err(ConfigError::Read {
+                    path,
+                    source: error,
+                }),
             }
         }
     }
@@ -159,6 +156,53 @@ impl Config {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_or_mixed_configuration_fields_are_rejected() {
+        for content in [
+            "[build]\ndefault_visiblity = \"//visibility:private\"",
+            "[bazel]\nunknown = true",
+            "[gradle]\nunknown = true",
+            "[build]\nmodule_version = \"2.0\"\n[bazel.build]\nmodule_version = \"3.0\"",
+        ] {
+            assert!(
+                Config::parse_toml(content).is_err(),
+                "silently accepted {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn project_loaders_reject_invalid_files_instead_of_defaulting() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(
+            Config::load_from_project(root.path())
+                .unwrap()
+                .bazel_config(),
+            BazelConfig::default()
+        );
+        assert_eq!(
+            BazelConfig::load_from_project(root.path()).unwrap(),
+            BazelConfig::default()
+        );
+        let path = root.path().join("rebaze.toml");
+        std::fs::write(&path, "[build\n").unwrap();
+        assert!(Config::load_from_project(root.path()).is_err());
+        assert!(BazelConfig::load_from_project(root.path()).is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(Config::load_from_project(root.path()).is_err());
+        assert!(BazelConfig::load_from_project(root.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broken_config_symlinks_are_errors_not_absence() {
+        let root = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink("missing.toml", root.path().join("rebaze.toml")).unwrap();
+        assert!(Config::load_from_project(root.path()).is_err());
+        assert!(BazelConfig::load_from_project(root.path()).is_err());
+    }
 
     #[test]
     fn test_flat_toml_format() {

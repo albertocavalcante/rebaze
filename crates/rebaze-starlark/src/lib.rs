@@ -8,6 +8,7 @@ mod file;
 mod file_tests;
 mod jvm;
 
+pub use file::validate_function as validate_function_name;
 pub use file::{Call, Error, File, Identifier, Reference, Result as RenderResult};
 pub use jvm::{ExportsFiles, JavaLibrary, JavaTest, MavenInstall, UseExtension, UseRepo};
 

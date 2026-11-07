@@ -175,6 +175,16 @@ is now a `Vec<TargetAlias>` of observed declarations rather than a map; retain
 all declarations so preparation can reject duplicates. Recursive source extraction
 preserves child-directory aliases.
 
+Configuration project loaders now return `Result`; only an absent file selects
+defaults. Malformed/unreadable files, broken symlinks, unknown keys and mixed
+flat/nested sections are errors. Handle `Config::load_from_project(path)?` and
+`MigrationConfig::load_from_project(path)?` explicitly. Native CMake honors root
+visibility and language defaults; currently reserved overrides fail preparation.
+Gradle Java and bazelle accept only default configuration. See the
+[configuration reference](docs/src/content/docs/reference/config.mdx) for field
+support and scope. Ordinary tests validate its canonical TOML examples; site
+build/link checks and real migration fixtures establish separate behavior.
+
 `ThirdPartyConfig`, `DepsStrategy`, and direct third-party rendering helpers have
 been removed. They could disagree with `MigrationConfig` and the shared plan.
 Use `MigrationConfig.strategy` and the prepared API instead. Raw TOML spellings

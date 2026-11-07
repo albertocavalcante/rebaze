@@ -3,9 +3,16 @@ title: Configuration
 description: rebaze.toml configuration reference
 ---
 
-import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-Create a `rebaze.toml` in your project root to customize migration behavior.
+Create a `rebaze.toml` in your project root to configure native CMake generation.
+Use `--build-generator native` for this path. Gradle Java and bazelle currently
+accept only default configuration; explicit overrides are rejected rather than
+ignored. Unknown fields and mixed flat/nested formats are errors. An absent file
+selects defaults; malformed or unreadable files fail visibly.
+
+Use either flat sections such as `[build]`, or place every section under `[bazel]`
+(such as `[bazel.build]`). Do not mix them in one file.
 Omitted mapping fields retain built-in defaults. Supplied maps/lists replace their
 field, except source catalog entries merge into the built-in catalog by key; each
 supplied source entry replaces that complete entry.
@@ -107,6 +114,10 @@ for constraints, scope, and system compiler-flag limits.
 
 ### `[mappings]`
 
+These external mapping rules apply after exact local targets and prepared managed
+links are resolved. Required unresolved links fail preparation. A label mapping
+does not itself make the destination repository available.
+
 #### System libraries
 
 Map `-l` flags to Bazel targets:
@@ -131,7 +142,7 @@ boost = "@boost"
 
 #### CMake packages
 
-Map `find_package()` results:
+Map imported target namespaces/components:
 
 ```toml
 [mappings.packages.Boost]
@@ -153,7 +164,8 @@ implicit_system_libs = ["pthread", "c", "m", "dl", "rt"]
 
 #### Ignored libraries
 
-Libraries to skip entirely:
+External link items to omit deliberately. Use an ignore only when no generated
+edge is needed; it does not override exact local or prepared managed identities:
 
 ```toml
 [mappings]
@@ -172,14 +184,9 @@ curl = ["zlib", "openssl"]
 
 #### System linkopts
 
-Reserved mapping data. The managed system wrapper currently uses the explicit
-pkg-config observation; it does not consume these fallback settings:
-
-```toml
-[mappings.system_linkopts]
-"glib-2.0" = ["-lglib-2.0"]
-curl = ["-lcurl"]
-```
+Reserved legacy data: managed system wrappers use the explicit pkg-config
+observation. Non-default `mappings.system_linkopts` overrides are rejected;
+leave this field omitted.
 
 ### `[mappings.known_packages]`
 
@@ -201,16 +208,30 @@ out_static_libs = ["libz.a"]
 
 ### `[build]`
 
-Configure generated BUILD files:
+Configure the root BUILD file and language defaults:
 
 ```toml
 [build]
 default_visibility = "//visibility:public"
-header_patterns = ["**/*.h", "**/*.hpp"]
 default_cxx_standard = "17"
 default_c_standard = "11"
 module_version = "0.1.0"
 ```
+
+`default_visibility` supports `//visibility:public` and `//visibility:private`
+for production/test targets in the root BUILD file. Third-party wrapper visibility
+is separate. Other visibility policies need further implementation.
+
+Language defaults apply when that language is present and the source has no
+detected standard. Supported C++ values are `98`, `03`, `11`, `14`, `17`, `20`,
+`23`, and `26`; C values are `89`, `90`, `99`, `11`, `17`, `18`, and `23`.
+Source-detected standards take precedence. C flags use Bazel's
+[C-only options](https://bazel.build/versions/9.0.0/docs/user-manual#flag--conlyopt)
+so they also work in mixed C/C++ projects without being applied to C++ compilation.
+Compiler support for a selected standard remains a separate compatibility check.
+
+`build.header_patterns` is reserved: non-default overrides are rejected. Leave
+it omitted until configurable header ownership/globs are implemented.
 
 #### Custom rules
 
@@ -229,15 +250,11 @@ items = ["my_cc_library", "my_cc_binary"]
 
 ### `[filters]`
 
-Filter platform-specific artifacts:
-
-```toml
-[filters]
-excluded_source_extensions = ["rc", "res", "plist", "o", "obj"]
-excluded_define_patterns = ["_WIN32", "__APPLE__", "_DEBUG"]
-excluded_copt_patterns = ["/", "-O", "-g", "-std="]
-excluded_include_patterns = ["/usr/", "/opt/"]
-```
+Native generation retains its built-in filtering profile. Custom pattern semantics
+are not implemented: non-default overrides of `excluded_source_extensions`,
+`excluded_define_patterns`, `excluded_copt_patterns`, or
+`excluded_include_patterns` fail preparation. Leave `[filters]` omitted. This
+avoids silently accepting settings that do not affect generation.
 
 ---
 
@@ -283,7 +300,4 @@ out_static_libs = ["libz.a"]
 default_visibility = "//visibility:public"
 default_cxx_standard = "17"
 
-[filters]
-excluded_source_extensions = ["rc", "res", "plist"]
-excluded_define_patterns = ["_WIN32", "__APPLE__"]
 ```

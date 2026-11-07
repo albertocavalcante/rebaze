@@ -213,6 +213,13 @@ mapping needed to proceed; do not provide an implicit permissive mode.
 
 ### R02 — Make configuration intent observable
 
+Implementation progress: strict field/format handling, fallible project loaders,
+profile-specific support checks, root visibility and language defaults are in
+place. Reserved filter/header/system-linkopts overrides fail explicitly; Gradle
+Java and bazelle reject non-default settings. Canonical public TOML examples are
+validated offline. Final review, migration fixtures and CI must pass before this
+package is recorded complete.
+
 **Work:** inventory every public setting as implemented, unsupported, or deprecated.
 Wire documented filters/defaults to generation or reject unsupported non-default
 values. Test visibility and language defaults. Define precedence for flat/nested

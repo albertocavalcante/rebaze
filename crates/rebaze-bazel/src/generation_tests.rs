@@ -849,3 +849,94 @@ fn child_alias_observations_are_preserved_and_conflicts_rejected() {
     let project = rebaze_cmake::extract_project_from_path(root.path()).unwrap();
     assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
 }
+
+#[test]
+fn configured_visibility_and_language_defaults_affect_generation() {
+    let file =
+        rebaze_cmake::parse_source("project(example C CXX)\nadd_library(core core.c core.cpp)")
+            .unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    let mut config = MigrationConfig::default();
+    config.build.default_visibility = "//visibility:private".into();
+    config.build.default_cxx_standard = "20".into();
+    config.build.default_c_standard = "17".into();
+    let files =
+        generate_from_cmake_with_config(&project, &config, &DiscoverySnapshot::default()).unwrap();
+    assert!(files["BUILD.bazel"].contains("\"//visibility:private\""));
+    assert!(files[".bazelrc"].contains("--cxxopt=-std=c++20"));
+    assert!(files[".bazelrc"].contains("--conlyopt=-std=c17"));
+    assert!(!files[".bazelrc"].contains("--copt=-std="));
+}
+
+#[test]
+fn unsupported_configuration_is_rejected_before_discovery() {
+    let project = rebaze_cmake::CMakeProject::default();
+    let mut config = MigrationConfig::default();
+    config
+        .filters
+        .excluded_define_patterns
+        .push("CUSTOM".into());
+    assert!(crate::plan_cmake(&project, &config).is_err());
+    config = MigrationConfig::default();
+    config.build.header_patterns = vec!["**/*.hh".into()];
+    assert!(crate::plan_cmake(&project, &config).is_err());
+}
+
+#[test]
+fn explicit_source_standards_take_precedence_over_defaults() {
+    let file = rebaze_cmake::parse_source("project(example C CXX)\nset(CMAKE_C_STANDARD 99)\nset(CMAKE_CXX_STANDARD 14)\nadd_library(core core.c core.cpp)").unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    let mut config = MigrationConfig::default();
+    config.build.default_c_standard = "17".into();
+    config.build.default_cxx_standard = "20".into();
+    let files =
+        generate_from_cmake_with_config(&project, &config, &DiscoverySnapshot::default()).unwrap();
+    assert!(files[".bazelrc"].contains("--conlyopt=-std=c99"));
+    assert!(files[".bazelrc"].contains("--cxxopt=-std=c++14"));
+    assert!(!files[".bazelrc"].contains("-std=c17"));
+    assert!(!files[".bazelrc"].contains("-std=c++20"));
+}
+
+#[test]
+fn invalid_configuration_values_and_non_native_overrides_fail() {
+    use crate::config::ConfigProfile;
+    let mut config = MigrationConfig::default();
+    for value in ["", "11\nbuild --spawn_strategy=local", "gnu17", "future"] {
+        config.build.default_c_standard = value.into();
+        assert!(crate::plan_cmake(&rebaze_cmake::CMakeProject::default(), &config).is_err());
+    }
+    config = MigrationConfig::default();
+    config.build.default_visibility = "invalid".into();
+    assert!(crate::plan_cmake(&rebaze_cmake::CMakeProject::default(), &config).is_err());
+    config = MigrationConfig::default();
+    for profile in [ConfigProfile::NativeGradle, ConfigProfile::Bazelle] {
+        config.validate_for(profile).unwrap();
+        config.build.module_version = "2.0".into();
+        assert!(config.validate_for(profile).is_err());
+        config = MigrationConfig::default();
+    }
+}
+
+#[test]
+fn every_reserved_override_reports_its_field() {
+    for (section, field, value) in [
+        ("filters", "excluded_source_extensions", "[\"custom\"]"),
+        ("filters", "excluded_define_patterns", "[\"CUSTOM\"]"),
+        ("filters", "excluded_copt_patterns", "[\"-custom\"]"),
+        ("filters", "excluded_include_patterns", "[\"custom/\"]"),
+        ("build", "header_patterns", "[\"**/*.hh\"]"),
+        ("mappings.system_linkopts", "custom", "[\"-lcustom\"]"),
+    ] {
+        let config: MigrationConfig =
+            toml::from_str(&format!("[{section}]\n{field} = {value}")).unwrap();
+        let error = crate::plan_cmake(&rebaze_cmake::CMakeProject::default(), &config).unwrap_err();
+        let expected = if section == "mappings.system_linkopts" {
+            section.to_string()
+        } else {
+            format!("{section}.{field}")
+        };
+        assert!(
+            matches!(error, crate::GenerationError::Config(crate::config::ConfigError::UnsupportedOverride(actual)) if actual == expected)
+        );
+    }
+}

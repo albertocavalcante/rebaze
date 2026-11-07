@@ -98,6 +98,21 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
 
     match build_system.as_str() {
         "cmake" => {
+            let generator = resolve_build_generator(
+                build_system.as_str(),
+                options.build_generator,
+                bazelle_available,
+            )?;
+            let bazel_config = options
+                .config
+                .as_ref()
+                .map_or_else(BazelConfig::default, Config::bazel_config);
+            let profile = if generator == BuildGenerator::Native {
+                rebaze_bazel::config::ConfigProfile::NativeCmake
+            } else {
+                rebaze_bazel::config::ConfigProfile::Bazelle
+            };
+            bazel_config.validate_for(profile)?;
             if !options.unsafe_mode && !options.dry_run {
                 pre_validate_cmake(path, options.cmake_build_dir, options.cmake_config)?;
             }
@@ -108,19 +123,8 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                 options.cmake_config,
                 options.cmake_file_api_only,
             )?;
-            let generator = resolve_build_generator(
-                build_system.as_str(),
-                options.build_generator,
-                bazelle_available,
-            )?;
-
             match generator {
                 BuildGenerator::Native => {
-                    // Get config, falling back to defaults if not provided
-                    let bazel_config = options
-                        .config
-                        .as_ref()
-                        .map_or_else(BazelConfig::default, Config::bazel_config);
                     let generation = rebaze_bazel::plan_cmake(&project, &bazel_config)?;
                     let observations = discovery::discover_packages(
                         generation.system_modules(),
@@ -174,6 +178,11 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
             }
         }
         "gradle" => {
+            let bazel_config = options
+                .config
+                .as_ref()
+                .map_or_else(BazelConfig::default, Config::bazel_config);
+            bazel_config.validate_for(rebaze_bazel::config::ConfigProfile::NativeGradle)?;
             let project = rebaze_gradle::parse(path).context("Failed to parse Gradle project")?;
             let generator = resolve_build_generator(
                 build_system.as_str(),

@@ -3,7 +3,10 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 rust_library(
     name = "rebaze-bazel",
     srcs = glob(["src/**/*.rs"]),
-    compile_data = ["//:rebaze.example.toml"] + glob([
+    compile_data = [
+        "//:rebaze.example.toml",
+        "//:docs/src/content/docs/reference/config.mdx",
+    ] + glob([
         "src/templates/*.bzl",
         "tests/fixtures/managed_dependency/*",
     ]),

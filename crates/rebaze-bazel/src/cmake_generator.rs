@@ -296,7 +296,7 @@ pub fn generate_root_build(
         ));
     }
     file.statement(&Package {
-        default_visibility: vec!["//visibility:public".into()],
+        default_visibility: vec![config.build.default_visibility.clone()],
     })?;
     for library in &project.libraries {
         let rule = build_cc_library(library, links)?;

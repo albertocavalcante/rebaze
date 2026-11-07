@@ -40,6 +40,17 @@ ctest --test-dir "$work/original-build" --output-on-failure --no-tests=error
 original_output=$("$work/original-build/probe" "two words'\$" 42 "")
 test "$original_output" = 'rebaze fixture: 42'
 
+# Unsupported configuration must fail before even original-build state is created.
+printf '[filters]\nexcluded_define_patterns = ["CUSTOM"]\n' >"$work/migrated/rebaze.toml"
+if isolated "$cli" migrate "$work/migrated" --build-generator native >"$work/config-rejection.log" 2>&1; then
+  echo 'Unsupported configuration was silently ignored' >&2
+  exit 1
+fi
+grep -q 'filters.excluded_define_patterns overrides are not implemented' "$work/config-rejection.log"
+test ! -e "$work/migrated/.rebaze"
+test ! -e "$work/migrated/BUILD.bazel"
+rm "$work/migrated/rebaze.toml"
+
 # Preview must not create either generated outputs or original-build state.
 isolated "$cli" migrate "$work/migrated" --build-generator native --dry-run >"$work/preview.log"
 test ! -e "$work/migrated/BUILD.bazel"

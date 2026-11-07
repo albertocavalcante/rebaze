@@ -59,6 +59,35 @@ not be assumed to apply to that separate path.
 | Output writing     | All paths are preflighted. Each file uses a temporary file and atomic replacement. This is not a transaction across the complete output set.                                                                                                                              |
 | Build validation   | Core executes CMake/Bazel and reports unsuccessful status. A failed post-generation build leaves generated files available for inspection.                                                                                                                                |
 
+## Configuration intent
+
+Configuration loading distinguishes an absent file from read/parse failures.
+Both project convenience loaders return typed errors; a malformed file never
+silently selects defaults. TOML accepts either flat native settings or one
+`[bazel]` tree, rejects unknown fields recursively, and rejects mixed formats.
+
+`ConfigProfile` identifies native CMake, native Gradle Java, or bazelle. Native
+configuration support is checked before the original CMake build and again at the
+public pure preparation boundary. Gradle/bazelle reject non-default overrides
+instead of ignoring them. This does not make the complete command IO-free:
+project detection and generator availability checks have their existing boundaries.
+
+| Settings | Native CMake behavior |
+| --- | --- |
+| `versions.*` | Versions for the selected generated modules. |
+| `mappings.system_libraries`, `plain_libraries`, `packages`, `implicit_system_libs`, `ignored_libraries` | Explicit link decisions after local/managed identity resolution. |
+| `mappings.transitive_deps`, `known_packages.*` | Selected source graph, archive, outputs, and rule-specific options. |
+| `strategy.*`, including BCR overrides/pins/skips | Managed provider selection and fallback under the existing plan. |
+| `build.module_version`, `build.rules.*` | Module/rule composition; function and loaded binding names validate before tool execution. |
+| `build.default_visibility` | Public/private visibility for root production/test targets; third-party wrapper visibility stays separate. |
+| `build.default_c_standard`, `default_cxx_standard` | Defaults for present languages without detected standards; C-only flags also cover mixed C/C++ inputs. |
+| `filters.*`, `build.header_patterns`, `mappings.system_linkopts` | Reserved profile data: non-default overrides fail explicitly. |
+
+The [user reference](src/content/docs/reference/config.mdx) defines accepted values.
+Configured label syntax/destination availability and complete source compiler
+semantics still need their own validation. No configuration setting proves a
+selected compiler supports its requested language standard.
+
 ## Discovery and rendering API
 
 CMake callers supply discovery explicitly to `generate_from_cmake(project,
