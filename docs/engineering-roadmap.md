@@ -191,8 +191,9 @@ comments, with typed mapping/omission decisions and a required CLI preservation
 regression. Target identity, alias-graph validation, and per-target dependency
 ownership remain open; this work package is not complete.
 
-**Problem:** dependency mapping returns TODO strings that generation filters out.
-Normalized names can silently drop a library, such as `foo-bar` versus `foo_bar`.
+**Original problem:** dependency mapping returned TODO strings that generation
+filtered out. Normalized names can still silently drop a library, such as
+`foo-bar` versus `foo_bar`.
 See [mapping](../crates/rebaze-bazel/src/config.rs) and
 [native generation](../crates/rebaze-bazel/src/cmake_generator.rs).
 
