@@ -59,6 +59,9 @@ fn cmake_and_all_third_party_files_escape_untrusted_data() {
         packages: vec!["rebaze-unavailable\"\\package\n# injected".into()],
         required: false,
     }];
+    assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
+    project.pkg_config_modules[0].prefix = "safe_alias".into();
+    project.pkg_config_modules[0].packages = vec!["safe-package".into()];
     let files = generate_from_cmake_with_config(
         &project,
         &MigrationConfig::default(),
@@ -67,9 +70,7 @@ fn cmake_and_all_third_party_files_escape_untrusted_data() {
     .unwrap();
     assert_syntax(&files);
     assert_eq!(files.len(), 8);
-    let build = &files["third_party/BUILD.bazel"];
-    // File composition hoists foreign_cc imports ahead of generated rule calls.
-    assert!(build.find("@rules_foreign_cc").unwrap() < build.find("package(").unwrap());
+    assert!(!files["third_party/BUILD.bazel"].contains("@rules_foreign_cc"));
 }
 
 #[test]
@@ -111,12 +112,10 @@ fn known_source_builds_include_their_transitive_dependencies() {
         }],
         ..rebaze_cmake::CMakeProject::default()
     };
-    let files = generate_from_cmake_with_config(
-        &project,
-        &MigrationConfig::default(),
-        &unavailable(&project),
-    )
-    .unwrap();
+    let mut config = MigrationConfig::default();
+    config.strategy.default = "source".into();
+    let files =
+        generate_from_cmake_with_config(&project, &config, &DiscoverySnapshot::default()).unwrap();
     assert_syntax(&files);
     for dependency in [
         "glib_source",
@@ -143,10 +142,11 @@ fn configured_source_metadata_and_meson_options_are_used_consistently() {
         ..rebaze_cmake::CMakeProject::default()
     };
     let mut config = MigrationConfig::default();
+    config.strategy.default = "source".into();
     let glib = config.mappings.known_packages.get_mut("glib").unwrap();
     glib.url = "https://example.invalid/custom-glib.tar.xz".into();
     glib.build_options = vec!["-Dtests=false".into(), "-Dcustom_flag".into()];
-    glib.deps = vec!["gobject".into()]; // A cycle must terminate.
+    glib.deps = vec!["zlib".into()];
     let custom = config.mappings.known_packages["zlib"].clone();
     config
         .mappings
@@ -163,9 +163,9 @@ fn configured_source_metadata_and_meson_options_are_used_consistently() {
     assert!(build.contains("\"tests\": \"false\""));
     assert!(build.contains("\"custom_flag\": \"true\""));
     assert!(!build.contains("\"Dtests\""));
-    assert!(files["MODULE.bazel"].contains("gobject_src"));
+    assert!(files["MODULE.bazel"].contains("glib_src"));
     assert!(files["MODULE.bazel"].contains("custom_dep_src"));
-    assert!(build.contains(":custom_dep_source"));
+    assert!(build.contains("//third_party:custom_dep_source"));
     assert!(build.contains("name = \"custom_dep_source\""));
     assert_eq!(build.matches("name = \"glib_source\"").count(), 1);
     // Host-only -I flags must never leak into fallback cc_library rules.
@@ -211,7 +211,7 @@ fn snapshot_is_the_complete_host_input_and_round_trips() {
     let expected = generate_from_cmake_with_config(&project, &config, &snapshot).unwrap();
     assert_syntax(&expected);
     assert!(expected["third_party/system_deps.bzl"].contains("/sdk with spaces"));
-    assert!(expected["third_party/BUILD.bazel"].contains("-lcustom"));
+    assert!(expected["third_party/system_deps.bzl"].contains("-lcustom"));
     assert!(!expected["third_party/BUILD.bazel"].contains("copts ="));
     for _ in 0..4 {
         assert_eq!(
@@ -290,9 +290,15 @@ fn explicit_unavailability_renders_fallback_without_disguising_failure() {
     )
     .unwrap();
     assert_syntax(&files);
-    assert!(files["third_party/BUILD.bazel"].contains("TODO: Review flags"));
-    assert!(files["third_party/BUILD.bazel"].contains("-lmy"));
-    assert!(files["third_party/system_deps.bzl"].contains("\"my_lib\": {}"));
+    assert!(files["third_party/BUILD.bazel"].contains("@system_my_lib//:my_lib"));
+    assert!(!files["third_party/BUILD.bazel"].contains("-lmy"));
+    assert!(
+        !files["third_party/system_deps.bzl"]
+            .split("def _bazel_option")
+            .next()
+            .unwrap()
+            .contains("\"path\":")
+    );
 }
 
 struct RejectRenderEvents;

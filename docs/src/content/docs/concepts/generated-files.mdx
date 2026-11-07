@@ -1,129 +1,61 @@
 ---
 title: Generated Files
-description: Understanding the files rebaze generates
+description: Native migration output, dependency plans, and overwrite behavior
 ---
 
-import { FileTree, Aside } from '@astrojs/starlight/components';
+Native generators return a complete path-to-content map before writing it.
+Inspect this map with `--dry-run` and preserve your original project before a
+writing migration.
 
-This page describes all files that rebaze generates during migration.
+## Project files
 
-## Core Files
+| File            | Content                                                          |
+| --------------- | ---------------------------------------------------------------- |
+| `MODULE.bazel`  | Project module, rule dependencies, and active dependency imports |
+| `BUILD.bazel`   | Generated libraries/executables, or Gradle root targets          |
+| `.bazelversion` | Bazel `9.0.0`                                                    |
+| `.bazelrc`      | Native CMake language/compiler settings and review comments      |
 
-### MODULE.bazel
+The default CMake rules are `cc_library` and `cc_binary`, loaded from
+`rules_cc` version `0.2.27`. Detected framework imports and explicitly configured
+custom rules depend on the project. Gradle subprojects also receive their own
+`BUILD.bazel` files.
 
-The Bazel module definition file:
+## Managed CMake dependencies
 
-```python
-module(
-    name = "myproject",
-    version = "0.1.0",
-)
+CMake projects with pkg-config requests receive four additional files:
 
-bazel_dep(name = "rules_cc", version = "0.1.1")
-bazel_dep(name = "platforms", version = "0.0.11")
-bazel_dep(name = "googletest", version = "1.15.2")
-```
+| File                          | Content                                                        |
+| ----------------------------- | -------------------------------------------------------------- |
+| `third_party/BUILD.bazel`     | Direct aliases or aggregate libraries plus active source rules |
+| `third_party/config.bzl`      | Serialized resolved plan for inspection                        |
+| `third_party/source.bzl`      | Active archive table and source module extension               |
+| `third_party/system_deps.bzl` | Selected host observations and system module extension         |
 
-### BUILD.bazel
-
-The root build file with targets:
-
-```python
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-
-cc_library(
-    name = "mylib",
-    srcs = ["src/lib.cpp"],
-    hdrs = ["include/mylib.h"],
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-)
-
-cc_binary(
-    name = "myapp",
-    srcs = ["src/main.cpp"],
-    deps = [":mylib"],
-)
-```
-
-### .bazelversion
-
-Pins the Bazel version:
-
-```
-9.0.0
-```
-
-### .bazelrc
-
-Build configuration:
-
-```bash
-build --cxxopt=-std=c++17
-build --host_cxxopt=-std=c++17
-build --copt=-fPIC
-build --copt=-Wall
-test --test_output=errors
-```
-
-## Third-Party Files
-
-Generated when using pkg-config dependencies:
-
-### third_party/BUILD.bazel
-
-Alias targets for dependency resolution:
+An example source alias is:
 
 ```python
-load(":config.bzl", "STRATEGY")
-
 alias(
-    name = "zlib",
-    actual = select({
-        ":use_system": ":zlib_system",
-        ":use_source": ":zlib_source",
-    }),
-    visibility = ["//visibility:public"],
+    name = "compression",
+    actual = "//third_party:zlib_source",
 )
 ```
 
-### third_party/config.bzl
+Inactive source rules and repository imports are omitted. Helper files may have
+empty tables. To switch providers, edit `rebaze.toml` and regenerate; editing the
+inspection table alone does not change aliases or imports. Read
+[Dependency Strategies](/rebaze/concepts/dependency-strategies/) for precedence
+and [Build from Source](/rebaze/guides/source-builds/) for metadata.
 
-Central configuration:
+## Writing and recovery
 
-```python
-STRATEGY = {
-    "default": "system",
-    "zlib": "source",
-}
-```
+Writing migration replaces existing generated files. Each file is staged and
+replaced atomically after output-path preflight. The entire output set is not a
+transaction: a later I/O failure can leave an updated subset. Build validation
+failure also leaves files for inspection. Rerun from a preserved checkout or
+restore it through version control before retrying.
 
-## Project Structure After Migration
-
-<FileTree>
-- myproject/
-  - MODULE.bazel
-  - BUILD.bazel
-  - .bazelversion
-  - .bazelrc
-  - third_party/ (if pkg-config deps)
-    - BUILD.bazel
-    - config.bzl
-    - source.bzl
-    - system_deps.bzl
-  - src/
-  - include/
-</FileTree>
-
-<Aside type="note">
-Rebaze doesn't overwrite existing files by default, so your customizations are preserved on re-runs.
-</Aside>
-
-## Customizing Generated Files
-
-After migration, you can customize:
-
-1. **MODULE.bazel** - Add dependencies, change versions
-2. **BUILD.bazel** - Add targets, modify visibility
-3. **third_party/config.bzl** - Change strategies per-package
-4. **.bazelrc** - Add custom build configurations
+Changing strategies can leave old helper files from an earlier migration on
+disk; only active imports and targets in the new output are used. Keep manual
+customizations in configuration or separate files where possible, and inspect
+the generated diff before accepting it.

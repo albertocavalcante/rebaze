@@ -1,55 +1,39 @@
+def _bazel_option(value):
+    # linkopts undergo Make expansion and Bourne tokenization before reaching the linker.
+    value = value.replace("$", "$$")
+    return "'" + value.replace("'", "'\\''") + "'"
+
 def _system_lib_repo_impl(repository_ctx):
-    """Implementation of system library repository rule."""
-    name = repository_ctx.attr.lib_name
-    path = repository_ctx.attr.path
-    include_dirs = repository_ctx.attr.include_dirs
-    lib_dirs = repository_ctx.attr.lib_dirs
-    libs = repository_ctx.attr.libs
+    """Expose observed include roots and preserve linker argument order."""
+    includes = []
+    patterns = []
+    for index, directory in enumerate(repository_ctx.attr.include_dirs):
+        path = directory if directory.startswith("/") else repository_ctx.attr.path + "/" + directory
+        local = "include_{}".format(index)
+        repository_ctx.symlink(path, local)
+        includes.append(local)
+        patterns.append(local + "/**")
 
-    # Symlink the system library directory
-    repository_ctx.symlink(path, "root")
-
-    # Generate BUILD file content
-    hdrs_patterns = []
-    for d in include_dirs:
-        if d.startswith("/"):
-            # Absolute path - can't glob, skip
-            continue
-        hdrs_patterns.append("root/{}/**/*.h".format(d))
-
-    hdrs_glob = "glob({}, allow_empty = True)".format(json.encode(hdrs_patterns)) if hdrs_patterns else "[]"
-    includes_list = ["root/{}".format(d) for d in include_dirs if not d.startswith("/")]
-
-    # Build linkopts: -L for library directories, -l for libraries
-    # NOTE: We use absolute paths since we're already non-hermetic with system libs
-    linkopts = []
-    for d in lib_dirs:
-        if d.startswith("/"):
-            # Already absolute
-            linkopts.append("-L{}".format(d))
-        else:
-            # Relative to prefix - construct absolute path
-            linkopts.append("-L{}/{}".format(path, d))
-    for l in libs:
-        linkopts.append("-l{}".format(l))
-
+    # Defines propagate to consumers; arbitrary compile options remain reviewable snapshot data.
+    defines = [flag[2:] for flag in repository_ctx.attr.cflags if flag.startswith("-D")]
     build_content = '''
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(
     name = {name},
-    hdrs = {hdrs},
+    hdrs = glob({patterns}, allow_empty = True),
     includes = {includes},
+    defines = {defines},
     linkopts = {linkopts},
     visibility = ["//visibility:public"],
 )
 '''.format(
-        name = json.encode(name),
-        hdrs = hdrs_glob,
-        includes = json.encode(includes_list),
-        linkopts = json.encode(linkopts),
+        name = json.encode(repository_ctx.attr.lib_name),
+        patterns = json.encode(patterns),
+        includes = json.encode(includes),
+        defines = json.encode([_bazel_option(value) for value in defines]),
+        linkopts = json.encode([_bazel_option(value) for value in repository_ctx.attr.linkopts]),
     )
-
     repository_ctx.file("BUILD.bazel", build_content)
 
 _system_lib_repo = repository_rule(
@@ -57,9 +41,9 @@ _system_lib_repo = repository_rule(
     attrs = {
         "lib_name": attr.string(mandatory = True),
         "path": attr.string(mandatory = True),
-        "include_dirs": attr.string_list(default = ["include"]),
-        "lib_dirs": attr.string_list(default = ["lib"]),
-        "libs": attr.string_list(default = []),
+        "include_dirs": attr.string_list(),
+        "cflags": attr.string_list(),
+        "linkopts": attr.string_list(),
     },
     local = True,  # Depends on local system state
 )
@@ -102,8 +86,8 @@ def _system_deps_impl(module_ctx):
             lib_name = name,
             path = config["path"],
             include_dirs = config.get("include_dirs", ["include"]),
-            lib_dirs = config.get("lib_dirs", ["lib"]),
-            libs = config.get("libs", [name]),
+            cflags = config.get("cflags", []),
+            linkopts = config.get("linkopts", []),
         )
 
 system_deps = module_extension(

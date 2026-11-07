@@ -3,4 +3,5 @@
 exports_files([
     "Cargo.toml",
     "Cargo.lock",
+    "rebaze.example.toml",
 ])

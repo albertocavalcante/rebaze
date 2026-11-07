@@ -1,284 +1,68 @@
-# Rebaze Configuration
-# Copy this file to your project root as `rebaze.toml` to customize migration behavior.
-
-# =============================================================================
-# Bazel Dependency Versions
-# =============================================================================
-# These versions are used when generating MODULE.bazel.
-# Update them to use newer versions of Bazel rules.
+# Copy to rebaze.toml and edit for your project. See docs/reference/config on the site.
+# These are generation settings; validate the resulting project before relying on it.
 
 [versions]
-rules_cc = "0.1.1"
+rules_cc = "0.2.27"
 platforms = "0.0.11"
 rules_foreign_cc = "0.14.0"
 googletest = "1.15.2"
 google_benchmark = "1.9.1"
 
-# =============================================================================
-# Third-Party Dependency Strategy
-# =============================================================================
-# How to resolve external dependencies:
-# - "system": Use system-installed libraries (non-hermetic, but works out of the box)
-# - "source": Build from source using rules_foreign_cc (hermetic, recommended for CI)
-# - "conan": Use Conan package manager
-# - "vcpkg": Use vcpkg package manager
-
+# Implemented managed pkg-config strategies: system, source, bcr.
+# Unsupported spellings fail planning, including unused overrides.
 [strategy]
 default = "system"
+bcr_fallback = "system" # system or source, for unresolved/skipped BCR selections
 
-# Per-package strategy overrides
-# [strategy.overrides]
-# glib = "source"
-# openssl = "vcpkg"
+# A normalized CMake prefix override wins over package/catalog overrides.
+# Change this file and regenerate; generated third_party/config.bzl is inspection data.
+[strategy.overrides]
+# compression = "source" # pkg_check_modules(COMPRESSION REQUIRED zlib)
+# zlib = "source"
 
-# =============================================================================
-# System Library Mappings
-# =============================================================================
-# Map system library names to Bazel targets.
-# These are used when a CMake project links against a library like `-lz`.
+[strategy.bcr.version_pins]
+# zlib = "1.3.1.bcr.5"
 
+# Replacement modules must preserve original package/target layouts.
+[strategy.bcr.module_overrides]
+
+# Non-pkg CMake link mappings remain explicit. Supply compatible MODULE.bazel
+# declarations for custom external repositories; a target mapping does not add one.
 [mappings.system_libraries]
-# Compression
-z = "@zlib"
-zlib = "@zlib"
-bz2 = "@bzip2"
-lzma = "@lzma"
-lz4 = "@lz4"
-zstd = "@zstd"
-
-# Crypto/SSL
-ssl = "@openssl"
-crypto = "@openssl"
-openssl = "@openssl"
-
-# XML
-expat = "@expat"
-xml2 = "@libxml2"
-
-# Database
-sqlite3 = "@sqlite3"
-
-# Network
-curl = "@curl"
-
-# Regex
-pcre = "@pcre"
-"pcre2-8" = "@pcre"
-
-# Testing
-gtest = "@googletest//:gtest"
-gtest_main = "@googletest//:gtest_main"
-gmock = "@googletest//:gmock"
-gmock_main = "@googletest//:gmock_main"
-benchmark = "@google_benchmark//:benchmark"
-
-# Protobuf/gRPC
-protobuf = "@com_google_protobuf//:protobuf"
-grpc = "@com_github_grpc_grpc//:grpc"
-"grpc++" = "@com_github_grpc_grpc//:grpc++"
-
-# Add your custom library mappings here:
-# mylib = "@my_repo//:mylib"
-
-# =============================================================================
-# Implicit System Libraries
-# =============================================================================
-# Libraries that are implicitly provided by the system and don't need Bazel targets.
-
-[mappings]
-implicit_system_libs = [
-    "pthread",
-    "c",
-    "m",
-    "dl",
-    "rt",
-    "util",
-    "resolv",
-    "nsl",
-    "socket",
-]
-
-# =============================================================================
-# Plain Library Mappings
-# =============================================================================
-# Map plain library names (without -l prefix or :: separator) to Bazel targets.
-# These are used when CMake target_link_libraries uses plain names like "gtest".
+# custom = "@my_repository//:custom"
 
 [mappings.plain_libraries]
-gtest = "@googletest//:gtest"
-gtest_main = "@googletest//:gtest_main"
-gmock = "@googletest//:gmock"
-gmock_main = "@googletest//:gmock_main"
-benchmark = "@google_benchmark//:benchmark"
-boost = "@boost"
-# Add your custom plain library mappings here:
-# mylib = "@my_repo//:mylib"
-
-# =============================================================================
-# Ignored Libraries
-# =============================================================================
-# Libraries to ignore completely - no dependency will be generated.
-# Use for bundled/header-only libraries that don't need external deps.
+# custom = "@my_repository//:custom"
 
 [mappings]
-ignored_libraries = [
-    "fmt",      # Often bundled as header-only
-    "spdlog",   # Often bundled as header-only
-    "Threads::Threads",  # Handled by toolchain
-]
-
-# =============================================================================
-# Transitive Dependencies
-# =============================================================================
-# Define transitive dependencies for packages.
-# When a package is used, its transitive deps are also included.
+implicit_system_libs = ["pthread", "c", "m", "dl", "rt"]
+ignored_libraries = ["Threads::Threads"]
 
 [mappings.transitive_deps]
-glib = ["pcre2", "libffi", "zlib"]
-"glib-2.0" = ["pcre2", "libffi", "zlib"]
-gobject = ["glib", "libffi", "pcre2", "zlib"]
-"gobject-2.0" = ["glib", "libffi", "pcre2", "zlib"]
+# Source transitives inherit source unless overridden. Cycles fail planning.
+# my_package = ["zlib"]
 
-# =============================================================================
-# System Linkopts
-# =============================================================================
-# Fallback linkopts for packages when pkg-config is not available.
-# Maps package names to their linker flags.
-
-[mappings.system_linkopts]
-"glib-2.0" = ["-lglib-2.0"]
-"gobject-2.0" = ["-lgobject-2.0"]
-"gio-2.0" = ["-lgio-2.0"]
-curl = ["-lcurl"]
-openssl = ["-lssl", "-lcrypto"]
-zlib = ["-lz"]
-"libxml-2.0" = ["-lxml2"]
-
-# =============================================================================
-# Known Packages (Source Builds)
-# =============================================================================
-# Metadata for building packages from source with rules_foreign_cc.
-# Used when strategy = "source" for hermetic builds.
-
+# A full source entry replaces the catalog entry for that key. zlib is built in;
+# this commented example shows all fields used for a custom source entry.
 # [mappings.known_packages.zlib]
 # version = "1.3.1"
 # url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
 # sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
 # strip_prefix = "zlib-1.3.1"
-# build_system = "cmake"  # "cmake" | "meson" | "autotools"
+# build_system = "cmake" # cmake, meson, autotools
+# pkg_config_packages = ["zlib"] # For system overrides of source transitives
 # out_static_libs = ["libz.a"]
-# out_shared_libs = []
+# out_shared_libs = [] # Static outputs take precedence when both are present
 # deps = []
-# build_options = []
-
-# =============================================================================
-# CMake Package Mappings
-# =============================================================================
-# Map CMake find_package() targets to Bazel targets.
-# Use {component} as a placeholder for the component name.
-
-[mappings.packages.Boost]
-target_pattern = "@boost//:{component}"
-# Add component overrides if needed:
-# [mappings.packages.Boost.components]
-# filesystem = "@boost//:filesystem"
-
-[mappings.packages.OpenSSL]
-target_pattern = "@openssl//:{component}"
-[mappings.packages.OpenSSL.components]
-SSL = "@openssl//:ssl"
-Crypto = "@openssl//:crypto"
-
-[mappings.packages.GTest]
-target_pattern = "@googletest//:{component}"
-[mappings.packages.GTest.components]
-gtest = "@googletest//:gtest"
-gtest_main = "@googletest//:gtest_main"
-gmock = "@googletest//:gmock"
-gmock_main = "@googletest//:gmock_main"
-
-[mappings.packages.Protobuf]
-target_pattern = "@com_google_protobuf//:{component}"
-[mappings.packages.Protobuf.components]
-protobuf = "@com_google_protobuf//:protobuf"
-protobuf_lite = "@com_google_protobuf//:protobuf_lite"
-protoc = "@com_google_protobuf//:protoc"
-
-[mappings.packages.absl]
-target_pattern = "@com_google_absl//absl/{component}"
-
-[mappings.packages.nlohmann_json]
-target_pattern = "@nlohmann_json//:json"
-
-[mappings.packages.PkgConfig]
-target_pattern = "//third_party:{component}"
-
-# =============================================================================
-# Build Configuration
-# =============================================================================
+# build_options = ["-DBUILD_SHARED_LIBS=OFF"]
 
 [build]
-default_visibility = "//visibility:public"
-header_patterns = ["**/*.h", "**/*.hpp"]
-default_cxx_standard = "17"
-default_c_standard = "11"
 module_version = "0.1.0"
 
-# =============================================================================
-# Custom Rules (Optional)
-# =============================================================================
-# Configure custom Bazel rules instead of standard cc_library/cc_binary.
-# This is useful for organizations with their own rule wrappers (like Spotify).
-
 [build.rules]
-# Rule name for libraries (default: "cc_library")
 library_rule = "cc_library"
-# Rule name for binaries (default: "cc_binary")
 binary_rule = "cc_binary"
-# Rule name for tests (default: "cc_test")
-test_rule = "cc_test"
-
-# Extra load statements needed for custom rules
-# Example for a company with custom rules:
+# Custom rules need matching loads. Native CMake test generation is not complete.
 # [[build.rules.extra_loads]]
 # bzl = "@company//build:rules.bzl"
 # items = ["company_library", "company_binary"]
-
-# =============================================================================
-# Filter Configuration
-# =============================================================================
-# Patterns for filtering out platform-specific or non-portable artifacts.
-
-[filters]
-# File extensions to exclude from sources
-excluded_source_extensions = [
-    "rc", "res", "ico", "manifest", "def",  # Windows
-    "plist", "xib", "storyboard", "xcassets",  # macOS
-    "o", "obj", "a", "lib", "so", "dylib", "dll",  # Prebuilt
-    "cmake",  # Build system
-]
-
-# Define patterns to filter out (prefix match)
-excluded_define_patterns = [
-    "_WIN32", "WIN32", "_WIN64", "_WINDOWS", "_MSC_VER", "NOMINMAX",
-    "__APPLE__", "__MACH__",
-    "__linux__", "_GNU_SOURCE",
-    "_DEBUG", "NDEBUG",
-]
-
-# Compiler option patterns to filter out (prefix match)
-excluded_copt_patterns = [
-    "/",      # MSVC flags
-    "-O",     # Optimization
-    "-g",     # Debug
-    "-std=",  # Standard (handled by toolchain)
-    "-march=", "-mtune=",  # Architecture
-]
-
-# Include path patterns to filter out (prefix match)
-excluded_include_patterns = [
-    "/usr/",
-    "/opt/",
-    "/Library/",
-    "/System/",
-]

@@ -11,11 +11,11 @@
 //! ```toml
 //! # Flat structure (current, implies Bazel target)
 //! [versions]
-//! rules_cc = "0.1.1"
+//! rules_cc = "0.2.27"
 //!
 //! # Nested structure (future-proof, explicit target)
 //! [bazel.versions]
-//! rules_cc = "0.1.1"
+//! rules_cc = "0.2.27"
 //!
 //! # Future targets
 //! [gradle.versions]
@@ -196,7 +196,7 @@ default = "source"
     fn test_empty_config_uses_defaults() {
         let config = Config::default();
         let bazel = config.bazel_config();
-        assert_eq!(bazel.versions.rules_cc, "0.1.1"); // Default value
+        assert_eq!(bazel.versions.rules_cc, "0.2.27"); // Default value
     }
 
     #[test]

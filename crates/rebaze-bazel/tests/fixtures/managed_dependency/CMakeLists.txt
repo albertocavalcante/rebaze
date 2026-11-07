@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(rebaze_fixture_dep C)
+set(FIXTURE_VALUE 0 CACHE STRING "Value returned by the fixture dependency")
+add_library(dep STATIC dep.c)
+target_compile_definitions(dep PRIVATE FIXTURE_VALUE=${FIXTURE_VALUE})
+install(TARGETS dep ARCHIVE DESTINATION lib)
+install(FILES dep.h DESTINATION include)

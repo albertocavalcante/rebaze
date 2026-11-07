@@ -8,7 +8,8 @@ use std::path::Path;
 // Re-export for use by other crates
 pub use crate::config::MigrationConfig;
 pub use crate::generator::BazelFile;
-pub use crate::third_party::{DepsStrategy, ThirdPartyConfig, deduplicate_modules};
+pub use crate::third_party::deduplicate_modules;
+pub use dependency_plan::{DependencyStrategy, PlanError};
 pub use discovery::DiscoverySnapshot;
 
 /// Failure to render a complete native output bundle.
@@ -17,6 +18,8 @@ pub enum GenerationError {
     #[error(transparent)]
     Render(#[from] rebaze_starlark::Error),
     #[error(transparent)]
+    Plan(#[from] PlanError),
+    #[error(transparent)]
     Discovery(#[from] discovery::SnapshotError),
 }
 
@@ -24,13 +27,18 @@ pub type GenerationResult<T> = std::result::Result<T, GenerationError>;
 
 mod cmake_generator;
 pub mod config;
+#[cfg(test)]
+mod dependency_build_tests;
+mod dependency_plan;
+#[cfg(test)]
+mod dependency_plan_tests;
 pub mod discovery;
 pub mod filters;
 #[cfg(test)]
 mod generation_tests;
 mod generator;
 pub use rebaze_starlark as starlark;
-pub mod third_party;
+mod third_party;
 
 /// Generate Bazel files from a parsed Gradle project.
 pub fn generate(
@@ -74,53 +82,72 @@ pub fn generate_from_cmake_with_config(
     config: &MigrationConfig,
     discovery: &DiscoverySnapshot,
 ) -> GenerationResult<HashMap<String, String>> {
-    // Validate every observation before rendering any output.
-    for module in deduplicate_modules(&project.pkg_config_modules) {
-        discovery.package(&module)?;
-    }
-    let mut files = HashMap::new();
+    plan_cmake(project, config)?.render(discovery)
+}
 
-    // Generate MODULE.bazel
-    let module_bazel = cmake_generator::generate_module_bazel(project, config)?;
-    files.insert("MODULE.bazel".to_string(), module_bazel);
+/// Borrowed project and configuration paired with their validated output intent.
+/// Plan once, discover only `system_modules()`, then render the same preparation.
+#[derive(Debug)]
+pub struct CMakeGeneration<'a> {
+    project: &'a rebaze_cmake::CMakeProject,
+    config: &'a MigrationConfig,
+    plan: dependency_plan::DependencyPlan,
+}
 
-    // Generate root BUILD.bazel
-    let root_build = cmake_generator::generate_root_build(project, config)?;
-    files.insert("BUILD.bazel".to_string(), root_build);
+pub fn plan_cmake<'a>(
+    project: &'a rebaze_cmake::CMakeProject,
+    config: &'a MigrationConfig,
+) -> GenerationResult<CMakeGeneration<'a>> {
+    Ok(CMakeGeneration {
+        project,
+        config,
+        plan: dependency_plan::DependencyPlan::new(project, config)?,
+    })
+}
 
-    // Generate .bazelversion
-    files.insert(".bazelversion".to_string(), "9.0.0\n".to_string());
-
-    // Generate .bazelrc with C/C++ settings (no system includes - handled by module extension)
-    let bazelrc = generate_cpp_bazelrc(project, &[]);
-    files.insert(".bazelrc".to_string(), bazelrc);
-
-    // Generate third_party/ directory for pkg-config dependencies
-    if !project.pkg_config_modules.is_empty() {
-        let third_party_config = ThirdPartyConfig::default();
-
-        // Deduplicate modules once upfront for all generation functions
-        let modules = deduplicate_modules(&project.pkg_config_modules);
-
-        // Compose files structurally so every load remains ahead of rule calls.
-        let mut build = third_party::build_file(&modules, &third_party_config, discovery)?;
-        build.append(third_party::source_build_targets(&modules, config)?);
-        files.insert("third_party/BUILD.bazel".into(), build.render()?);
-
-        // Generate config.bzl for customization
-        let config_bzl = third_party::generate_config_bzl(&modules, &third_party_config)?;
-        files.insert("third_party/config.bzl".to_string(), config_bzl);
-
-        // Generate source.bzl for building from source (includes module extension)
-        let source_bzl = third_party::source_bzl(&modules, config)?;
-        files.insert("third_party/source.bzl".to_string(), source_bzl);
-
-        // Generate system_deps.bzl module extension for system libraries
-        let system_deps_bzl = third_party::generate_system_deps_bzl(&modules, discovery)?;
-        files.insert("third_party/system_deps.bzl".to_string(), system_deps_bzl);
+impl CMakeGeneration<'_> {
+    pub fn system_modules(&self) -> &[rebaze_cmake::PkgConfigModule] {
+        &self.plan.systems
     }
 
-    Ok(files)
+    pub fn render(
+        &self,
+        discovery: &DiscoverySnapshot,
+    ) -> GenerationResult<HashMap<String, String>> {
+        for module in &self.plan.systems {
+            discovery.package(module)?;
+        }
+        let mut files = HashMap::from([
+            (
+                "MODULE.bazel".into(),
+                cmake_generator::generate_module_bazel(self.project, self.config, &self.plan)?,
+            ),
+            (
+                "BUILD.bazel".into(),
+                cmake_generator::generate_root_build(self.project, self.config, &self.plan)?,
+            ),
+            (".bazelversion".into(), "9.0.0\n".into()),
+            (".bazelrc".into(), generate_cpp_bazelrc(self.project, &[])),
+        ]);
+        if !self.plan.aliases.is_empty() {
+            let mut build = third_party::build_file(&self.plan)?;
+            build.append(third_party::source_build_targets(&self.plan)?);
+            files.insert("third_party/BUILD.bazel".into(), build.render()?);
+            files.insert(
+                "third_party/config.bzl".into(),
+                third_party::config_bzl(&self.plan)?,
+            );
+            files.insert(
+                "third_party/source.bzl".into(),
+                third_party::source_bzl(&self.plan)?,
+            );
+            files.insert(
+                "third_party/system_deps.bzl".into(),
+                third_party::system_deps_bzl(&self.plan, discovery)?,
+            );
+        }
+        Ok(files)
+    }
 }
 
 /// Supported C++ standards

@@ -67,7 +67,7 @@ pub fn discover_packages(
     {
         return Err(DiscoveryError::InvalidLimits);
     }
-    let modules = rebaze_bazel::deduplicate_modules(modules);
+    let modules = rebaze_bazel::deduplicate_modules(modules)?;
     if modules.is_empty() {
         return Ok(DiscoverySnapshot::default());
     }

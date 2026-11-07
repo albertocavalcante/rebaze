@@ -27,8 +27,9 @@ reserved, and several override/resolution modes return explicit errors.
 1. The CLI loads explicit or discovered configuration and calls `rebaze-core`.
 2. Core selects the source system and generator. CMake uses parsed source files
    or an existing File API reply; Gradle uses its parser/project model.
-3. For native CMake, core explicitly discovers declared pkg-config dependencies
-   through `rebaze_core::discovery` and passes a `DiscoverySnapshot` to generation.
+3. For native CMake, core prepares one validated dependency plan, discovers only
+   its selected system requests through `rebaze_core::discovery`, then renders
+   that same preparation with the resulting `DiscoverySnapshot`.
    Gradle does not need this host snapshot. Both native generators return a map through
    `GenerationResult<HashMap<String, String>>`.
 4. A dry run prints the map in path order. A writing migration passes the complete
@@ -49,14 +50,14 @@ not be assumed to apply to that separate path.
 
 ## Data and effect boundaries
 
-| Boundary           | Current contract and limit                                                                                                                                                                                                        |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Parsing/extraction | Syntax functions consume source data; file-oriented entry points also read project files. CMake extraction supports a subset of CMake semantics.                                                                                  |
-| Configuration      | `MigrationConfig` owns versions, mappings, filters, custom rules, strategy settings, and the known source-package catalog. Some strategy settings are not consistently honored yet.                                               |
-| Host discovery     | Core runs pkg-config at an explicit boundary and supplies an owned snapshot. Rendering reads only that snapshot, project data, and configuration. Host discovery remains non-hermetic, but rendering no longer inspects the host. |
-| Starlark rendering | Models serialize values through `serde_starlark`. Validated identifiers, references, and calls distinguish generator syntax from project data.                                                                                    |
-| Output writing     | All paths are preflighted. Each file uses a temporary file and atomic replacement. This is not a transaction across the complete output set.                                                                                      |
-| Build validation   | Core executes CMake/Bazel and reports unsuccessful status. A failed post-generation build leaves generated files available for inspection.                                                                                        |
+| Boundary           | Current contract and limit                                                                                                                                                                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Parsing/extraction | Syntax functions consume source data; file-oriented entry points also read project files. CMake extraction supports a subset of CMake semantics.                                                                                                                          |
+| Configuration      | `MigrationConfig` owns versions, mappings, filters, custom rules, strategy settings, and the known source-package catalog. A typed plan validates managed pkg-config strategies and selected source graphs; other explicit CMake mappings retain their existing contract. |
+| Host discovery     | Core runs pkg-config at an explicit boundary and supplies an owned snapshot. Rendering reads only that snapshot, project data, and configuration. Host discovery remains non-hermetic, but rendering no longer inspects the host.                                         |
+| Starlark rendering | Models serialize values through `serde_starlark`. Validated identifiers, references, and calls distinguish generator syntax from project data.                                                                                                                            |
+| Output writing     | All paths are preflighted. Each file uses a temporary file and atomic replacement. This is not a transaction across the complete output set.                                                                                                                              |
+| Build validation   | Core executes CMake/Bazel and reports unsuccessful status. A failed post-generation build leaves generated files available for inspection.                                                                                                                                |
 
 ## Discovery and rendering API
 
@@ -70,7 +71,11 @@ comments; core owns logging of discovery outcomes and output counts.
 available data, explicit unavailability, or typed failures. A missing/mismatched
 observation or a failed probe is a generation error. Callers can build snapshots
 without running a tool, serialize them, and replay the same rendering inputs.
-An empty snapshot is sufficient only when no pkg-config modules need observations.
+An empty snapshot is sufficient when the plan selects no system observations,
+including source-only/BCR-only projects. `plan_cmake(project, config)` returns a
+borrowed `CMakeGeneration`; discover its `system_modules()` and call its
+`render(&snapshot)` to prepare once at the application boundary. The borrowed
+project/config cannot change underneath that preparation.
 
 `rebaze_core::discovery::discover_packages` is the explicit host adapter. It probes
 each distinct request once per pass, preserving version constraints. The adapter
@@ -93,9 +98,11 @@ the direct child. The executable and environment remain trusted host inputs;
 this is not a process sandbox or a guarantee of terminating descendant processes.
 Limits are per command/stream, not a whole-project work budget.
 
-Snapshot capture preserves paths with spaces and component boundaries. That does
-not prove all downstream Bazel `linkopts`/system-wrapper path semantics work;
-those remain part of strategy and real-build conformance checks.
+System wrappers symlink observed include roots, including outside-prefix roots,
+propagate joined `-D` definitions, and retain ordered linker arguments with Make
+and Bourne escaping. Other compiler flags remain snapshot data and require
+manual review. Three explicit build oracles cover representative system, source,
+and BCR cases; they do not establish complete pkg-config flag conformance.
 
 ## Starlark generation
 
@@ -111,9 +118,13 @@ Keep the boundary between trusted helper code and project data explicit.
 
 One configurable `KnownPackageInfo` catalog supplies source archive metadata and
 build targets. `SourceBuildSystem` distinguishes Meson, CMake, and Autotools.
-Dependency traversal unions catalog dependencies with configured transitive
-edges and terminates using a visited set. Termination does not establish that a
-cyclic dependency graph is buildable by Bazel.
+The plan unions catalog dependencies with configured transitive edges, rejects
+cycles, and limits source graphs to 64 levels and 1024 packages. It accepts at
+most 1024 root aliases and 256 packages per alias. These are planning bounds, not
+a total execution budget. Meson options become a typed map; CMake/Autotools
+options reach their rule-specific fields. Only active targets/archives/imports
+are emitted; generated `config.bzl` records resolved intent rather than running
+a second strategy resolver.
 
 Source repositories require a 64-character hexadecimal SHA-256 and use Bazel's
 checksum verification before extraction. Unknown packages need configuration;
@@ -132,4 +143,6 @@ Other tests cover configured rules, source metadata, dependency traversal, and
 generation errors before writing. Optional external CMake fixtures can be absent
 without failing their current tests. Consult [CONTRIBUTING.md](../CONTRIBUTING.md)
 for check commands and the [roadmap](engineering-roadmap.md) for missing
-end-to-end, strategy, resource-limit, and compatibility gates.
+end-to-end, resource-limit, and compatibility gates. Non-pkg explicit imported
+target mappings and complete per-target CMake dependency semantics remain outside
+the managed plan. Foreign build metadata is not universal compatibility proof.

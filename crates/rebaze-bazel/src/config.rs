@@ -300,7 +300,7 @@ pub struct VersionConfig {
 impl Default for VersionConfig {
     fn default() -> Self {
         Self {
-            rules_cc: "0.1.1".to_string(),
+            rules_cc: "0.2.27".to_string(),
             platforms: "0.0.11".to_string(),
             rules_foreign_cc: "0.14.0".to_string(),
             googletest: "1.15.2".to_string(),
@@ -325,27 +325,32 @@ pub struct MappingConfig {
 
     /// Plain library name mappings (e.g., "gtest" -> "@googletest//:gtest").
     /// Used when libraries are referenced by name without -l prefix or :: separator.
-    #[serde(default)]
     pub plain_libraries: BTreeMap<String, String>,
 
     /// Libraries to ignore completely (bundled or implicit).
     /// These won't generate any dependency entry.
-    #[serde(default)]
     pub ignored_libraries: Vec<String>,
 
     /// Transitive dependencies for packages.
     /// E.g., `"glib" -> ["pcre2", "libffi", "zlib"]`
-    #[serde(default)]
     pub transitive_deps: BTreeMap<String, Vec<String>>,
 
     /// System linkopts for packages (fallback when pkg-config unavailable).
     /// E.g., `"glib-2.0" -> ["-lglib-2.0"]`
-    #[serde(default)]
     pub system_linkopts: BTreeMap<String, Vec<String>>,
 
     /// Known package metadata for building from source.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_known_packages")]
     pub known_packages: BTreeMap<String, KnownPackageInfo>,
+}
+
+fn deserialize_known_packages<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, KnownPackageInfo>, D::Error> {
+    let supplied = BTreeMap::<String, KnownPackageInfo>::deserialize(deserializer)?;
+    let mut catalog = MappingConfig::default_known_packages();
+    catalog.extend(supplied);
+    Ok(catalog)
 }
 
 impl Default for MappingConfig {
@@ -580,6 +585,7 @@ impl MappingConfig {
         packages.insert(
             "glib".to_string(),
             KnownPackageInfo {
+                pkg_config_packages: vec!["glib-2.0".into()],
                 version: "2.82.4".to_string(),
                 url: "https://download.gnome.org/sources/glib/2.82/glib-2.82.4.tar.xz".to_string(),
                 sha256: "37dd0877fe964cd15e9a2710b044a1830fb1bd93652a6d0cb6b8b2dff187c709"
@@ -597,6 +603,7 @@ impl MappingConfig {
                     "zlib".to_string(),
                 ],
                 build_options: vec![
+                    "-Ddefault_library=static".into(),
                     "-Dtests=false".to_string(),
                     "-Dglib_debug=disabled".to_string(),
                     "-Dintrospection=disabled".to_string(),
@@ -607,6 +614,7 @@ impl MappingConfig {
         packages.insert(
             "gobject".to_string(),
             KnownPackageInfo {
+                pkg_config_packages: vec!["gobject-2.0".into()],
                 version: "2.82.4".to_string(),
                 url: "https://download.gnome.org/sources/glib/2.82/glib-2.82.4.tar.xz".to_string(),
                 sha256: "37dd0877fe964cd15e9a2710b044a1830fb1bd93652a6d0cb6b8b2dff187c709"
@@ -619,13 +627,17 @@ impl MappingConfig {
                     "libgobject-2.0.dylib".to_string(),
                 ],
                 deps: vec!["glib".to_string(), "libffi".to_string()],
-                build_options: vec!["-Dtests=false".to_string()],
+                build_options: vec![
+                    "-Ddefault_library=static".into(),
+                    "-Dtests=false".to_string(),
+                ],
             },
         );
 
         packages.insert(
             "pcre2".to_string(),
             KnownPackageInfo {
+                pkg_config_packages: vec!["libpcre2-8".into()],
                 version: "10.44".to_string(),
                 url: "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.bz2".to_string(),
                 sha256: "d34f02e113cf7193a1ebf2770d3ac527088d485d4e047ed10e5d217c6ef5de96".to_string(),
@@ -641,6 +653,7 @@ impl MappingConfig {
         packages.insert(
             "zlib".to_string(),
             KnownPackageInfo {
+                pkg_config_packages: vec!["zlib".into()],
                 version: "1.3.1".to_string(),
                 url: "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
                     .to_string(),
@@ -658,6 +671,7 @@ impl MappingConfig {
         packages.insert(
             "libffi".to_string(),
             KnownPackageInfo {
+                pkg_config_packages: vec!["libffi".into()],
                 version: "3.4.6".to_string(),
                 url:
                     "https://github.com/libffi/libffi/releases/download/v3.4.6/libffi-3.4.6.tar.gz"
@@ -726,6 +740,11 @@ pub struct KnownPackageInfo {
 
     /// Build system: "cmake", "meson", or "autotools".
     pub build_system: SourceBuildSystem,
+
+    /// pkg-config requests when a source transitive is overridden to system.
+    /// Defaults to the catalog key when omitted.
+    #[serde(default)]
+    pub pkg_config_packages: Vec<String>,
 
     /// Static libraries produced by the build.
     #[serde(default)]
@@ -912,11 +931,11 @@ pub struct LoadStatement {
 #[serde(default)]
 pub struct StrategyConfig {
     /// Default strategy for resolving dependencies.
-    /// Options: "bcr", "system", "source", "conan", "vcpkg", "prebuilt", "custom"
+    /// Implemented values: "bcr", "system", "source". Other values fail planning.
     pub default: String,
 
     /// Fallback strategy when BCR resolution fails.
-    /// Only used when default is "bcr".
+    /// Used for any BCR selection that cannot resolve; system or source.
     #[serde(default)]
     pub bcr_fallback: Option<String>,
 
@@ -967,7 +986,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = MigrationConfig::default();
-        assert_eq!(config.versions.rules_cc, "0.1.1");
+        assert_eq!(config.versions.rules_cc, "0.2.27");
         assert_eq!(config.strategy.default, "system");
     }
 
