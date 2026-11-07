@@ -38,6 +38,14 @@ that tree; each implementation PR needs fresh evidence on its own final head.
 | Delivery and operations         | Partial    | Runmux works for the reviewed workload; local checks, docs PR gates, and release identity need alignment.           |
 | Documentation and API usability | Partial    | Contributor guides exist; public configuration/API promises need executable behavior checks.                        |
 
+Since that baseline, [CI routing (#10)](https://github.com/albertocavalcante/rebaze/pull/10)
+added lightweight checks for known repository Markdown, PR builds for published
+site inputs, and checksum-verified Bun setup. Code, build/CI inputs, mixed changes,
+and unknown paths retain full verification; documentation-only nightly ranges
+skip platform builds. See the [runner runbook](operations/ci-runners.md) for routing
+and recovery. This delivers part of D02; executable examples and consumer-install
+checks remain open, as does D01's alignment of local recipes, hooks, and CI.
+
 Source inspection identified the work below. Except where linked evidence says
 otherwise, the proposed defect examples still need executable reproductions.
 The historical [file-decomposition proposal](refactoring-plan.md) is superseded
