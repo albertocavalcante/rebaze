@@ -152,12 +152,11 @@ impl DependencyPlan {
                     .plan
                     .managed_links
                     .insert(key.clone(), label.clone())
+                    && previous != label
                 {
-                    if previous != label {
-                        return Err(PlanError(format!(
-                            "pkg-config link {key:?} belongs to multiple aliases; use one alias for this request"
-                        )));
-                    }
+                    return Err(PlanError(format!(
+                        "pkg-config link {key:?} belongs to multiple aliases; use one alias for this request"
+                    )));
                 }
                 builder
                     .plan
@@ -321,12 +320,12 @@ impl Builder<'_> {
         if version.is_empty() || version.chars().any(char::is_control) {
             return Err(PlanError(format!("invalid version for module {name:?}")));
         }
-        if let Some(previous) = self.plan.modules.insert(name.into(), version.into()) {
-            if previous != version {
-                return Err(PlanError(format!(
-                    "conflicting versions for module {name:?}: {previous:?} and {version:?}"
-                )));
-            }
+        if let Some(previous) = self.plan.modules.insert(name.into(), version.into())
+            && previous != version
+        {
+            return Err(PlanError(format!(
+                "conflicting versions for module {name:?}: {previous:?} and {version:?}"
+            )));
         }
         Ok(())
     }
