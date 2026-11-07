@@ -209,6 +209,7 @@ fn extract_recursive(
                         .collect();
                     project.libraries.push(lib);
                 }
+                project.aliases.extend(subproject.aliases);
                 project.packages.extend(subproject.packages);
                 project.testing.tests.extend(subproject.testing.tests);
                 project

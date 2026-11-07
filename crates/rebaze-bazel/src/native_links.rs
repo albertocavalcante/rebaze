@@ -37,6 +37,14 @@ pub enum NativeLinkError {
     },
     #[error("alias {0:?} conflicts with a production target or has an invalid name")]
     InvalidAlias(String),
+    #[error("native identity {0:?} collides with a prepared pkg-config link")]
+    ManagedIdentityCollision(String),
+    #[error("alias {name:?} is declared more than once ({first:?} and {second:?})")]
+    DuplicateAlias {
+        name: String,
+        first: String,
+        second: String,
+    },
     #[error("native alias cycle includes {0:?}")]
     AliasCycle(String),
     #[error("target {target:?} cannot link executable dependency {dependency:?}")]
@@ -98,12 +106,22 @@ impl NativeLinkPlan {
         let mut executables = BTreeSet::new();
         let mut target_names = BTreeMap::new();
         for library in &project.libraries {
+            if plan.managed_link(&library.name).is_some() {
+                return Err(NativeLinkError::ManagedIdentityCollision(
+                    library.name.clone(),
+                ));
+            }
             let normalized =
                 names.register(&library.name, format!("library {:?}", library.name))?;
             libraries.insert(library.name.clone(), format!(":{normalized}"));
             target_names.insert(library.name.clone(), normalized);
         }
         for executable in &project.executables {
+            if plan.managed_link(&executable.name).is_some() {
+                return Err(NativeLinkError::ManagedIdentityCollision(
+                    executable.name.clone(),
+                ));
+            }
             let normalized = names.register(
                 &executable.name,
                 format!("executable {:?}", executable.name),
@@ -111,15 +129,29 @@ impl NativeLinkPlan {
             executables.insert(executable.name.clone());
             target_names.insert(executable.name.clone(), normalized);
         }
-        for alias in project.aliases.keys().collect::<BTreeSet<_>>() {
-            if !alias.split("::").all(valid_name)
-                || libraries.contains_key(alias)
-                || executables.contains(alias)
+        let mut declarations = BTreeMap::new();
+        for alias in &project.aliases {
+            if !alias.name.split("::").all(valid_name)
+                || libraries.contains_key(&alias.name)
+                || executables.contains(&alias.name)
             {
-                return Err(NativeLinkError::InvalidAlias(alias.clone()));
+                return Err(NativeLinkError::InvalidAlias(alias.name.clone()));
+            }
+            if plan.managed_link(&alias.name).is_some() {
+                return Err(NativeLinkError::ManagedIdentityCollision(
+                    alias.name.clone(),
+                ));
+            }
+            if let Some(previous) = declarations.insert(alias.name.as_str(), alias.target.as_str())
+            {
+                return Err(NativeLinkError::DuplicateAlias {
+                    name: alias.name.clone(),
+                    first: previous.into(),
+                    second: alias.target.clone(),
+                });
             }
         }
-        let aliases = resolve_aliases(project)?;
+        let aliases = resolve_aliases(&declarations)?;
         let resolver = Resolver {
             libraries: &libraries,
             executables: &executables,
@@ -175,21 +207,22 @@ impl NativeLinkPlan {
 }
 
 /// Iterative, memoized traversal avoids call-stack dependence on alias depth.
-fn resolve_aliases(project: &CMakeProject) -> Result<BTreeMap<String, String>, NativeLinkError> {
+fn resolve_aliases(
+    aliases: &BTreeMap<&str, &str>,
+) -> Result<BTreeMap<String, String>, NativeLinkError> {
     let mut resolved = BTreeMap::<String, String>::new();
-    let aliases: BTreeMap<_, _> = project.aliases.iter().collect();
     for alias in aliases.keys() {
-        if resolved.contains_key(alias.as_str()) {
+        if resolved.contains_key(*alias) {
             continue;
         }
         let mut path = Vec::new();
         let mut seen = BTreeSet::new();
-        let mut current = alias.as_str();
+        let mut current = *alias;
         let terminal = loop {
             if let Some(terminal) = resolved.get(current) {
                 break terminal.clone();
             }
-            let Some(next) = project.aliases.get(current) else {
+            let Some(next) = aliases.get(current) else {
                 break current.to_string();
             };
             if !seen.insert(current) {
@@ -225,7 +258,10 @@ impl Resolver<'_> {
             });
         } else if let Some(label) = self.plan.managed_link(resolved) {
             DependencyMapping::Mapped(label)
-        } else if resolved.starts_with("PkgConfig::") {
+        } else if resolved
+            .split_once("::")
+            .is_some_and(|(namespace, _)| namespace.eq_ignore_ascii_case("PkgConfig"))
+        {
             // This namespace names prepared pkg-config requests, not arbitrary
             // aliases into a third_party package that might never be generated.
             DependencyMapping::Unresolved

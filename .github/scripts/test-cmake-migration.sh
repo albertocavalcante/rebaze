@@ -98,6 +98,15 @@ assert_rejected 'requires unresolved dependency'
 printf '\nadd_library(Alias::one ALIAS Alias::two)\nadd_library(Alias::two ALIAS Alias::one)\n' >>"$work/migrated/CMakeLists.txt"
 assert_rejected 'alias cycle'
 
+for dependency in pkgconfig::undeclared PKGCONFIG::undeclared; do
+  printf '\ntarget_link_libraries(probe %s)\n' "$dependency" >>"$work/migrated/CMakeLists.txt"
+  assert_rejected 'requires unresolved dependency'
+done
+printf '\npkg_check_modules(Z REQUIRED IMPORTED_TARGET zlib)\nadd_library(PkgConfig::Z ALIAS dep)\n' >>"$work/migrated/CMakeLists.txt"
+assert_rejected 'collides with a prepared pkg-config link'
+printf '\nadd_library(Alias::dup ALIAS dep)\nadd_library(Alias::dup ALIAS dep)\n' >>"$work/migrated/CMakeLists.txt"
+assert_rejected 'declared more than once'
+
 # A successful build must not hide an actual assertion failure in either suite.
 for root in original migrated; do
   printf '#include "dep.h"\nint dep_value(void) { return 43; }\n' >"$work/$root/dep.c"

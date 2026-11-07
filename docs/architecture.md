@@ -156,7 +156,11 @@ Configured comment strings are rejected as mappings. Empty mapping values are
 explicit omissions; configured ignores, implicit system libraries, and the
 existing built-in package policy remain supported. Diagnostics identify the
 source target and dependency. Preparation uses one output-name table for libraries, executables, and generated
-tests. Production names accept ASCII letters, digits, underscores, hyphens, dots,
+tests. Source extraction preserves alias declarations, including duplicates and child
+directories, in `Vec<TargetAlias>`; preparation derives the validated lookup map.
+Aliases cannot shadow prepared managed identities, and undeclared case variants
+of the pkg-config namespace cannot manufacture third-party labels. Production
+names accept ASCII letters, digits, underscores, hyphens, dots,
 and plus signs (except `.` and `..`); hyphens normalize to underscores, and
 collisions fail explicitly. Aliases resolve iteratively to exact local identities
 or configured external mappings; cycles, unmapped endpoints and attempts to link

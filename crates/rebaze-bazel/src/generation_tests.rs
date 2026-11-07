@@ -743,7 +743,10 @@ fn native_alias_graph_is_validated_even_without_consumers() {
         let mut project = rebaze_cmake::extract_project(&file, ".".into());
         project
             .aliases
-            .extend(aliases.into_iter().map(|(a, b)| (a.into(), b.into())));
+            .extend(aliases.into_iter().map(|(a, b)| rebaze_cmake::TargetAlias {
+                name: a.into(),
+                target: b.into(),
+            }));
         assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
     }
 }
@@ -753,18 +756,19 @@ fn native_alias_chains_resolve_exact_local_and_configured_targets() {
     let file = rebaze_cmake::parse_source("project(example C)\nadd_library(core core.c)\nadd_executable(app main.c)\ntarget_link_libraries(app Alias::a0 Alias::ssl)").unwrap();
     let mut project = rebaze_cmake::extract_project(&file, ".".into());
     for index in 0..4096 {
-        project.aliases.insert(
-            format!("Alias::a{index}"),
-            if index == 4095 {
+        project.aliases.push(rebaze_cmake::TargetAlias {
+            name: format!("Alias::a{index}"),
+            target: if index == 4095 {
                 "core".into()
             } else {
                 format!("Alias::a{}", index + 1)
             },
-        );
+        });
     }
-    project
-        .aliases
-        .insert("Alias::ssl".into(), "OpenSSL::SSL".into());
+    project.aliases.push(rebaze_cmake::TargetAlias {
+        name: "Alias::ssl".into(),
+        target: "OpenSSL::SSL".into(),
+    });
     let files = generate_from_cmake_with_config(
         &project,
         &MigrationConfig::default(),
@@ -796,4 +800,52 @@ fn invalid_native_names_and_undeclared_pkg_aliases_fail_preparation() {
         let project = rebaze_cmake::extract_project(&file, ".".into());
         assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
     }
+}
+
+#[test]
+fn managed_identity_shadowing_and_namespace_case_bypasses_fail() {
+    for source in [
+        "pkg_check_modules(Z REQUIRED IMPORTED_TARGET zlib)\nadd_library(core core.c)\nadd_library(PkgConfig::Z ALIAS core)",
+        "add_executable(app main.c)\ntarget_link_libraries(app pkgconfig::undeclared)",
+        "add_executable(app main.c)\ntarget_link_libraries(app PKGCONFIG::undeclared)",
+    ] {
+        let file = rebaze_cmake::parse_source(&format!("project(example C)\n{source}")).unwrap();
+        let project = rebaze_cmake::extract_project(&file, ".".into());
+        assert!(
+            crate::plan_cmake(&project, &MigrationConfig::default()).is_err(),
+            "accepted {source}"
+        );
+    }
+}
+
+#[test]
+fn duplicate_source_alias_declarations_fail_preparation() {
+    let file = rebaze_cmake::parse_source("project(example C)\nadd_library(one one.c)\nadd_library(two two.c)\nadd_library(Alias::dup ALIAS one)\nadd_library(Alias::dup ALIAS two)").unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
+}
+
+#[test]
+fn child_alias_observations_are_preserved_and_conflicts_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("child")).unwrap();
+    let parent = "project(example C)\nadd_subdirectory(child)\nadd_executable(app main.c)\ntarget_link_libraries(app Alias::core)";
+    std::fs::write(root.path().join("CMakeLists.txt"), parent).unwrap();
+    std::fs::write(
+        root.path().join("child/CMakeLists.txt"),
+        "add_library(core core.c)\nadd_library(Alias::core ALIAS core)",
+    )
+    .unwrap();
+    let project = rebaze_cmake::extract_project_from_path(root.path()).unwrap();
+    assert!(
+        crate::plan_cmake(&project, &MigrationConfig::default()).is_ok(),
+        "lost child alias observations"
+    );
+    std::fs::write(
+        root.path().join("CMakeLists.txt"),
+        format!("{parent}\nadd_library(Alias::core ALIAS core)"),
+    )
+    .unwrap();
+    let project = rebaze_cmake::extract_project_from_path(root.path()).unwrap();
+    assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
 }

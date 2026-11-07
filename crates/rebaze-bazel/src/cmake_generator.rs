@@ -502,7 +502,7 @@ mod tests {
             global_include_directories: vec![],
             cxx_standard: Some("17".to_string()),
             c_standard: None,
-            aliases: std::collections::HashMap::new(),
+            aliases: Vec::new(),
             testing: rebaze_cmake::Testing::default(),
         }
     }

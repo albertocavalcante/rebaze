@@ -2,7 +2,7 @@
 //!
 //! Handles extraction of add_executable(), add_library(), and target_compile_features().
 
-use super::super::types::{CMakeProject, Executable, Library, LibraryKind};
+use super::super::types::{CMakeProject, Executable, Library, LibraryKind, TargetAlias};
 use crate::ast::{Argument, Command};
 use crate::eval::EvalContext;
 
@@ -104,7 +104,10 @@ pub fn extract_library(cmd: &Command, project: &mut CMakeProject, ctx: &EvalCont
     if is_alias {
         if let Some(real_target) = sources.into_iter().next() {
             tracing::debug!("Recording alias '{name}' -> '{real_target}'");
-            project.aliases.insert(name, real_target);
+            project.aliases.push(TargetAlias {
+                name,
+                target: real_target,
+            });
         }
         return;
     }
