@@ -15,7 +15,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  routing:
+    name: Change routing and Markdown
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.route.outputs.build }}
+      site: ${{ steps.route.outputs.site }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify the complete change
+        id: route
+        env:
+          ROUTING_EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 .github/scripts/ci_routing.py classify
+      - name: Install hash-pinned Markdown parser
+        run: |
+          python3 -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/markdown-check" -r .github/requirements-docs.txt
+          echo "PYTHONPATH=$RUNNER_TEMP/markdown-check" >> "$GITHUB_ENV"
+      - name: Test conservative routing and job gates
+        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_routing.py'
+      - name: Check repository Markdown
+        run: python3 .github/scripts/ci_routing.py check-docs
+
   bazel:
+    needs: routing
+    if: ${{ always() && !cancelled() && needs.routing.outputs.build != 'false' }}
     permissions:
       contents: read
     name: Bazel Build & Test
@@ -44,6 +76,8 @@ jobs:
         run: bazel test //... --jobs=2 --test_output=errors
 
   cargo:
+    needs: routing
+    if: ${{ always() && !cancelled() && needs.routing.outputs.build != 'false' }}
     permissions:
       contents: read
     name: Cargo Check
@@ -94,3 +128,46 @@ jobs:
 
       - name: Required Java CLI migration
         run: bash .github/scripts/test-java-migration.sh target/debug/rebaze
+
+  site:
+    name: Documentation site
+    needs: routing
+    if: ${{ always() && !cancelled() && github.event_name != 'push' && needs.routing.outputs.site != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install verified Bun
+        run: bash .github/scripts/setup-bun.sh
+      - name: Build site and validate its links
+        working-directory: docs
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+  result:
+    name: CI Result
+    needs: [routing, cargo, bazel, site]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Require all selected checks
+        env:
+          ROUTING_EVENT: ${{ github.event_name }}
+          ROUTING_RESULT: ${{ needs.routing.result }}
+          BUILD_REQUIRED: ${{ needs.routing.outputs.build }}
+          SITE_REQUIRED: ${{ needs.routing.outputs.site }}
+          CARGO_RESULT: ${{ needs.cargo.result }}
+          BAZEL_RESULT: ${{ needs.bazel.result }}
+          SITE_RESULT: ${{ needs.site.result }}
+        run: python3 .github/scripts/ci_routing.py gate

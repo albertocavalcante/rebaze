@@ -48,8 +48,8 @@ bun run preview
 
 `bun run build` validates MDX and internal site links, produces a search index,
 and writes `docs/dist`. It does not check repository Markdown links or prove that
-CLI examples build a migrated project. The lockfile pins packages; the Bun runtime
-version itself is not currently pinned.
+CLI examples build a migrated project. The lockfile pins packages; CI installs checksum-verified Bun from
+`.github/scripts/setup-bun.sh`.
 
 ## Choose a page type
 
@@ -92,4 +92,6 @@ in architecture/roadmap documents rather than the user's first-run path.
 [CONTRIBUTING.md](../CONTRIBUTING.md) and [REVIEW.md](../REVIEW.md) define validation
 and review requirements. The [documentation workflow](../.github/workflows/docs.yml)
 builds/deploys the site on matching pushes to `main` and supports manual dispatch.
-It does not currently run on every pull request, so validate site changes locally.
+Repository-only docs do not trigger deployment. CI builds the site for PR changes
+to published content, assets, configuration, or dependencies; it does not deploy
+PR content. Continue validating site changes locally with the commands above.

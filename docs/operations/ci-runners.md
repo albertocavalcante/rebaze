@@ -6,6 +6,27 @@ pool; deleting it restores the workflow's hosted `ubuntu-24.04` fallback.
 Release matrix jobs retain their configured platforms. ARM64 results do not
 establish native x86-64, macOS, or Windows behavior.
 
+## Avoid unnecessary runner work
+
+The main CI workflow classifies the full change before requesting an Air runner.
+Known root/repository Markdown runs hosted routing, structure/local-link, and
+result checks. Published site inputs build on a hosted PR job and deploy through
+the site workflow on relevant main pushes. Code, build inputs, CI scripts and
+unknown paths retain the complete Cargo/Bazel and migration gates.
+
+PR classification uses the merge base; push classification uses the complete
+before/after range. Renames include the old and new paths. Missing comparison
+history selects full verification. The final `CI Result` rejects missing routing
+outputs and failed/cancelled selected checks. No branch-protection rules are
+changed by this routing policy; preserve that result when configuring requirements.
+
+Nightly compares build-relevant changes since the published nightly tag. Docs/site
+changes alone skip its platform matrix and publication. Missing baseline history
+or an explicit force request still selects the matrix. A manual CI dispatch also
+runs every validation job. Tool bootstrap/workflow changes must validate their
+own full path; do not classify them as documentation merely because they alter
+which checks run.
+
 ## Identify the service you are changing
 
 Read the primary LaunchAgent's `ProgramArguments` before using an onboarding

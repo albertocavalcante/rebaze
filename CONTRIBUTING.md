@@ -35,8 +35,9 @@ lefthook install
 ```
 
 Hooks check selected files; they do not replace the complete checks below.
-Bun, just, and Lefthook versions are not currently pinned by this repository.
-When reporting a failure, include their versions if relevant.
+CI pins and verifies Bun in `.github/scripts/setup-bun.sh`. Local Bun, just,
+and Lefthook versions are not enforced. Include their versions when reporting
+relevant local failures.
 
 ## Build and run
 
@@ -71,6 +72,28 @@ cargo test --workspace --locked
 bazel build //...
 bazel test //... --test_output=errors
 ```
+
+CI runs the full Rust/Bazel and migration commands for code, build inputs, CI
+scripts, and unrecognized paths. Known repository-only Markdown changes run
+lightweight routing, structure, and local inline-link checks instead. Published
+site inputs run the site build on PRs and the deployment workflow on main.
+Mixed changes select every relevant check. Manual CI dispatch selects everything.
+
+`CI Result` checks the selected job outcomes, including intentional skips. Failed
+routing or cancelled/failed required jobs cannot produce a successful result.
+The routing suite includes Markdown checks using two small hash-pinned packages:
+
+```bash
+python3 -m venv .rebaze/ci-python
+.rebaze/ci-python/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-docs.txt
+.rebaze/ci-python/bin/python -m unittest discover -s .github/scripts -p 'test_ci_routing.py'
+.rebaze/ci-python/bin/python .github/scripts/ci_routing.py check-docs
+```
+
+The Markdown check parses CommonMark with tables. It checks top-level heading
+structure and local link/image destinations, including reference links, while
+ignoring literal/code examples. External URLs, anchors, and Astro MDX/site links
+need their own checks.
 
 `cargo fmt` applies Rust formatting. `just --list` shows convenience recipes;
 the explicit CI commands above are the full check contract. In particular,

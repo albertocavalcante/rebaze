@@ -29,7 +29,7 @@ jobs:
     name: Check for Changes
     timeout-minutes: 5
     outputs:
-      should_build: ${{ steps.check.outputs.should_build }}
+      should_build: ${{ steps.route.outputs.build }}
       short_sha: ${{ steps.check.outputs.short_sha }}
     permissions:
       contents: read
@@ -40,34 +40,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check for changes
+      - name: Record revision
         id: check
+        run: echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Compare build inputs with the published nightly
+        id: route
+        env:
+          ROUTING_EVENT: nightly
+          HEAD_SHA: ${{ github.sha }}
+          FORCE_FULL: ${{ inputs.force || false }}
         run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-
-          if [ "${{ inputs.force }}" == "true" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "Force build requested"
-            exit 0
-          fi
-
-          # Check if there's a nightly tag
-          if git rev-parse nightly >/dev/null 2>&1; then
-            NIGHTLY_SHA=$(git rev-parse nightly)
-            HEAD_SHA=$(git rev-parse HEAD)
-
-            if [ "$NIGHTLY_SHA" == "$HEAD_SHA" ]; then
-              echo "should_build=false" >> "$GITHUB_OUTPUT"
-              echo "No changes since last nightly"
-            else
-              echo "should_build=true" >> "$GITHUB_OUTPUT"
-              echo "Changes detected since last nightly"
-            fi
-          else
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "No previous nightly tag found"
-          fi
+          BASE_SHA=$(git rev-parse --verify 'refs/tags/nightly^{commit}' 2>/dev/null || true)
+          export BASE_SHA
+          python3 .github/scripts/ci_routing.py classify
 
   build:
     needs: check-changes
