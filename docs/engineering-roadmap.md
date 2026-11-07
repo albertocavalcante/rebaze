@@ -3,9 +3,9 @@
 The next milestone is a reproducible native migration: small checked-in CMake
 and Gradle projects migrate, build, and run their tests with Bazel 9 from a clean
 checkout. Explicit discovery and the managed dependency strategy plan are now
-implemented. A required first-party CMake CLI build/test fixture now covers the
-literal executable-backed test path. Next prove the JVM path and expand native
-semantics through explicit fixtures. Additional source formats follow
+implemented. Required first-party CMake and Gradle/Java CLI fixtures now cover
+small build/test paths, including deliberate test failures. Next harden input
+budgets and recovery contracts; expand semantics through explicit fixtures. Additional source formats follow
 those correctness gates.
 
 This is the authoritative implementation sequence. The earlier
@@ -50,7 +50,7 @@ independent review of the final head.
 | ----------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1                       | Completed: explicit discovery inputs and deterministic native rendering | Identical project/configuration/snapshot inputs produce identical path-content maps without running a process or accessing the network during generation.  |
 | 2                       | Completed managed pkg-config dependency strategy plan                   | System, source, and BCR aliases/imports agree; unsupported or incomplete choices fail before writing; existing valid configuration has migration coverage. |
-| 3                       | Required first-party migration fixtures: CMake present, JVM pending     | Clean CI migrates native/JVM fixtures, builds them, runs their tests, and verifies expected behavior. Missing required inputs fail visibly.                |
+| 3                       | Required first-party migration fixtures: native and Java present        | Clean CI migrates native/JVM fixtures, builds them, runs their tests, and verifies expected behavior. Missing required inputs fail visibly.                |
 | 4                       | Bounded inputs and defined failure behavior                             | Hostile/oversized inputs fail within documented limits, preserve recoverable state, and produce actionable diagnostics.                                    |
 | Parallel delivery track | Repeatable contributor checks and verified runner/platform claims       | Local/CI checks agree; runner identity and head are recorded; native platform evidence matches every compatibility claim.                                  |
 
@@ -107,8 +107,11 @@ CTest/Bazel tests and executable output, and proves a changed assertion fails
 both test suites while builds still succeed. It also checks preview side effects,
 literal argv preservation, public headers and subdirectory test registration.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for its independent entry point and tools.
-This establishes a narrow source-parser test subset; the JVM path and broader
-native semantics remain pending.
+The Gradle/Java fixture now compares two real JUnit 4 classes, API/project/runtime
+dependencies and main/test resources with pinned dependency verification. Both
+builds must still pass after a resource mutation while Gradle and Bazel tests
+fail. See the same contributing guide for commands and lock refresh. These are
+narrow source subsets; broader native/JVM semantics remain pending.
 
 1. Check in small first-party fixtures: a CMake library/executable with headers
    and a Gradle JVM project. Pin their build inputs and expected observable results.

@@ -200,6 +200,50 @@ it between simultaneous runs. It does not establish Gradle, File API test import
 arbitrary CMake logic, external corpus, or native Windows compatibility. The CLI's
 normal migration validation still builds only; the harness explicitly runs tests.
 
+### Required Gradle/Java CLI migration
+
+With JDK 21, Gradle 9.8.2, Bazel 9 and network access:
+
+```bash
+cargo build --locked -p rebaze-cli
+JAVA_HOME=/path/to/jdk-21 bash .github/scripts/test-java-migration.sh target/debug/rebaze
+```
+
+Replace the JDK path with your installation. CI bootstraps checksum-verified
+Temurin 21.0.13+9 and Gradle 9.8.2 on Linux ARM64/x86-64, then runs this required
+oracle separately from ordinary unit tests. The fixture has two Java projects,
+API/project/runtime/test dependencies, main/test resources, two JUnit 4 classes
+(including one without a `Test` filename suffix), and a non-test helper.
+
+The harness runs original Gradle tests, normal native CLI migration and Bazel
+build/tests in disposable copies. It checks two discovered classes, preview
+behavior, input preservation, and rejected framework/abstract-class/symlink
+changes preserving an existing BUILD. Changing a main resource must leave builds
+successful while both test suites fail. Missing files/tools/tests fail visibly.
+System/home Bazel rc files, Gradle user init scripts and unrelated environment
+are excluded. `REBAZE_JAVA_TEST_CACHE` may name an absolute reusable Bazel output
+root; never share it between concurrent runs.
+
+The fixture pins JARs in `maven_install.json` and Gradle artifacts/metadata in
+`gradle/verification-metadata.xml`. Normal CLI build validation requires an
+existing reviewed Maven lock when Maven dependencies are present. To prepare a
+new lock deliberately in a disposable copy, generate with `--unsafe-mode` (no
+builds), run `bazel run @rebaze_maven//:pin`, review the downloaded artifacts and
+reported JSON, save that JSON as `maven_install.json`, and migrate normally again.
+After pinning, update it with `REPIN=1 bazel run @rebaze_maven//:pin`. Review the
+lock diff with dependency edits. Refresh Gradle verification metadata explicitly
+with `gradle --write-verification-metadata sha256 test`, including a cold-cache
+run; compare artifacts/checksums with Maven Central before accepting changes.
+Never disable verification to make a missing checksum pass.
+
+Source extraction supports literal Java metadata in Groovy/Kotlin build files;
+it does not execute Gradle or evaluate arbitrary DSL. Unsupported plugins,
+custom settings/build logic, compiler/source-set customization, relative project
+dependencies, compile-only configurations, dynamic versions and non-JUnit-4 test
+semantics fail visibly. See [architecture](docs/architecture.md) for the exact
+source/test subset. Normal CLI validation remains build-only; the harness runs
+Gradle/Bazel tests explicitly.
+
 ## Test behavior and failures
 
 For a bug fix, provide a focused regression that fails on the base and passes

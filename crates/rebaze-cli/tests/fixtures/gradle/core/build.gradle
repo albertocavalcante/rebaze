@@ -1,0 +1,9 @@
+plugins {
+    id 'java-library'
+}
+repositories {
+    mavenCentral()
+}
+dependencies {
+    api 'org.hamcrest:hamcrest-core:1.3'
+}

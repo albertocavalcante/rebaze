@@ -148,6 +148,51 @@ Source repositories require a 64-character hexadecimal SHA-256 and use Bazel's
 checksum verification before extraction. Unknown packages need configuration;
 source metadata and extension activation do not constitute universal build support.
 
+## Gradle Java generation
+
+Gradle input now has one `GradleModule` per declared project, including implicit
+parents of nested `include` paths. Discovery reads settings/build files and
+conventional `src/main/java`, `src/test/java` and main/test resource trees. It
+rejects ambiguous Groovy/Kotlin build files and source symlinks, including symlinked
+ancestors. Undeclared directories are not treated as projects. `GradleError`
+retains source/IO diagnostics. The lexer/parser and Java-header classifier consume
+source text; generation consumes the resulting owned data without IO.
+
+`Dependency` distinguishes literal Maven coordinates from project references.
+Generation validates paths, plugins, fixed Maven versions, label collisions and
+production project cycles before returning files. It partitions implementation,
+API exports, runtime-only, test-implementation and test-runtime dependencies.
+Project references must be absolute colon-prefixed paths. Generated libraries
+are `//path:lib`; tests are `//path:test_<qualified_class_with_underscores>`.
+Source/resource lists are explicit observations; regenerate when files change.
+No empty placeholder tests or test dependencies are emitted on production rules.
+
+The supported test subset is conventional public top-level JUnit 4 classes with
+direct `org.junit.Test` annotations, package/path agreement and an explicit JUnit
+4 dependency. Helpers compile with test sources but do not become test targets.
+Inheritance, abstract/ignored/custom-runner classes, JUnit 3/5, Unicode escapes
+and text blocks require broader Java/Gradle evaluation and are rejected. This is
+a source subset, not a complete Java parser or Gradle interpreter. Built-in
+`java`, `java-library` and aggregator `base` plugins are supported; other plugins,
+custom blocks, source sets, compiler settings, version catalogs, exclusions,
+compile-only scopes and dynamic coordinates are unsupported.
+
+Generated files target Bazel 9, Java 21, rules_java 9.9.0 and
+rules_jvm_external 6.10. The project's `rebaze_maven` namespace stays distinct
+from Maven repositories contributed by toolchain modules. A fixed Java-only
+`aar_import` adapter avoids loading Android rule implementations when importing
+JARs; it explicitly fails AAR dependencies. It uses a canonical main-repository
+label, so it also loads correctly from the generated external Maven repository.
+
+An existing root `maven_install.json` is explicit input data and is preserved in
+the output map. Normal CLI build validation requires this reviewed lock for
+Maven dependencies. Preview and `--unsafe-mode` can prepare an unpinned module
+without executing builds; pin/review explicitly before normal migration. The
+first-party fixture additionally has strict Gradle SHA-256 verification metadata.
+Its explicit oracle compares real original/generated tests and deliberately
+failing assertions. It establishes the tested Java/JUnit subset and platforms,
+not arbitrary Gradle/Kotlin/Android or complete dependency-resolution equivalence.
+
 ## Failure and compatibility evidence
 
 Native generation completes before output writing. The writer rejects traversal,

@@ -16,6 +16,8 @@ pub use discovery::DiscoverySnapshot;
 /// Failure to render a complete native output bundle.
 #[derive(Debug, thiserror::Error)]
 pub enum GenerationError {
+    #[error("cannot migrate Gradle Java project: {0}")]
+    Gradle(String),
     #[error(transparent)]
     Render(#[from] rebaze_starlark::Error),
     #[error(transparent)]
@@ -48,28 +50,7 @@ mod third_party;
 pub fn generate(
     project: &rebaze_gradle::GradleProject,
 ) -> GenerationResult<HashMap<String, String>> {
-    let mut files = HashMap::new();
-
-    // Generate MODULE.bazel
-    let module_bazel = generator::generate_module_bazel(project)?;
-    files.insert("MODULE.bazel".to_string(), module_bazel);
-
-    // Generate root BUILD.bazel
-    let root_build = generator::generate_root_build(project)?;
-    files.insert("BUILD.bazel".to_string(), root_build);
-
-    // Generate BUILD.bazel for each subproject
-    for subproject in &project.subprojects {
-        let subproject_path = subproject.trim_start_matches(':').replace(':', "/");
-        let build_path = format!("{subproject_path}/BUILD.bazel");
-        let build_content = generator::generate_subproject_build(project, subproject)?;
-        files.insert(build_path, build_content);
-    }
-
-    // Generate .bazelversion
-    files.insert(".bazelversion".to_string(), "9.0.0\n".to_string());
-
-    Ok(files)
+    generator::generate(project)
 }
 
 /// Generate Bazel files from a parsed CMake project.
@@ -523,14 +504,24 @@ mod tests {
         assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
     }
 
+    fn java_module(path: &str) -> rebaze_gradle::GradleModule {
+        rebaze_gradle::GradleModule {
+            path: path.into(),
+            plugins: vec![rebaze_gradle::GradlePlugin {
+                id: "java".into(),
+                version: None,
+            }],
+            ..rebaze_gradle::GradleModule::default()
+        }
+    }
+
     #[test]
     fn leading_gradle_colon_generates_a_relative_subproject_path() {
         let project = rebaze_gradle::GradleProject {
             name: "example".into(),
             path: ".".into(),
-            subprojects: vec![":app:lib".into()],
-            plugins: vec![],
-            dependencies: vec![],
+            modules: vec![java_module(":app:lib")],
+            maven_lock: None,
         };
         assert!(
             generate(&project)

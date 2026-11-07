@@ -40,7 +40,7 @@ sha256sum() {
 }
 export -f curl uname sha256sum
 
-for tool in rust bazel cmake; do
+for tool in rust bazel cmake jdk gradle; do
   if PATH="$fixture/bin" bash "$script_dir/setup-$tool.sh" >"$fixture/bad-digest.log" 2>&1; then
     echo 'An invalid installer digest was accepted.' >&2
     exit 1
