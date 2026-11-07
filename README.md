@@ -1,123 +1,76 @@
 # rebaze
 
-Migrate from Gradle, CMake, and other build tools to Bazel.
+Generate Bazel build files from CMake and Gradle projects, preview the result,
+and validate the generated build.
 
-## Status
+rebaze is in early development. Review generated files before relying on them.
+It targets Bazel 9; a successful parse or generation does not establish that
+an arbitrary project builds correctly.
 
-**Early development** - not ready for production use.
+## Current scope
 
-**Bazel 9 only** - rebaze currently validates against Bazel 9.x.
+| Input           | Current behavior                                                                        |
+| --------------- | --------------------------------------------------------------------------------------- |
+| CMake           | Native generation from parsed files or CMake File API data; optional bazelle generation |
+| Gradle          | Native JVM generation from a subset of Groovy and Kotlin build files                    |
+| Maven           | Detection only; migration is unimplemented                                              |
+| Makefile, Cargo | Reported by `analyze`; migration is unimplemented                                       |
 
-## Supported Migrations
+CMake test generation, custom build logic, dependency strategies, and platform
+compatibility still have gaps. The [engineering roadmap](docs/engineering-roadmap.md)
+records the evidence needed to close them.
 
-| Source | Status |
-|--------|--------|
-| CMake | ✅ Supported |
-| Gradle | ✅ Supported |
-| Maven | 🔜 Planned |
-| Makefile | 🔜 Planned |
-| Cargo | 🔜 Planned |
+## Build and try it
 
-## Usage
-
-```bash
-# Analyze a project
-rebaze analyze /path/to/project
-
-# Migrate to Bazel (dry run)
-rebaze migrate /path/to/project --dry-run
-
-# Migrate to Bazel
-rebaze migrate /path/to/project
-
-# Use CMake File API data from an existing build dir
-rebaze migrate /path/to/project --from cmake --cmake-build-dir /path/to/build
-
-# Select a configuration and require File API data
-rebaze migrate /path/to/project --from cmake --cmake-build-dir /path/to/build --cmake-config Debug --cmake-file-api-only
-
-# Use bazelle (gazelle) for BUILD file generation (preferred default)
-rebaze migrate /path/to/project --from cmake --build-generator bazelle --bazelle-root /path/to/bazelle
-
-# Choose the generator explicitly (auto|native|bazelle)
-rebaze migrate /path/to/project --from cmake --build-generator native
-
-# Skip pre/post build validation
-rebaze migrate /path/to/project --from cmake --unsafe-mode
-
-# Validate generated files
-rebaze validate /path/to/project
-
-# Skip Bazel build validation
-rebaze validate /path/to/project --unsafe-mode
-```
-
-`rebaze validate` runs `bazel build //...` and enforces Bazel 9 unless `--unsafe-mode` is set.
-
-## Building
-
-### With Bazel (primary)
+Use Bazelisk, or the Bazel version in [.bazelversion](.bazelversion), with a native
+C/C++ toolchain. Bazel provisions the repository's Rust toolchain.
 
 ```bash
+git clone https://github.com/albertocavalcante/rebaze.git
+cd rebaze
 bazel build //crates/rebaze-cli:rebaze
+bazel run //crates/rebaze-cli:rebaze -- --help
 ```
 
-### With Cargo (for IDE support)
+Run these commands from the rebaze checkout, replacing `/path/to/project` with
+an existing project directory:
 
 ```bash
-cargo build --release
+bazel run //crates/rebaze-cli:rebaze -- analyze /path/to/project
+bazel run //crates/rebaze-cli:rebaze -- migrate /path/to/project --build-generator native --dry-run
 ```
 
-## Development
+The dry run prints proposed files without writing them or running CMake/Bazel
+build validation. After reviewing the proposal, run:
 
 ```bash
-# Run tests
-bazel test //...
-
-# Build release binary
-bazel build --config=release //crates/rebaze-cli:rebaze
-
-# Format code
-cargo fmt
-
-# Run clippy
-cargo clippy --workspace --all-targets --locked -- -D warnings
+bazel run //crates/rebaze-cli:rebaze -- migrate /path/to/project --build-generator native
 ```
 
-## Starlark generation
+Migration can replace existing generated files. Use a clean branch or a copy of
+the input project so you can inspect and revert the diff. CMake migration normally
+configures and builds the original project first; both migrations then run
+`bazel build //...`. These checks do not run the project's test suite. Use `rebaze validate` to repeat
+the Bazel build after editing generated files.
 
-`rebaze-starlark` owns typed rule models and file assembly. Generators serialize
-project values, paths, labels, dictionaries, and lists through Serde; they do not
-interpolate them into Starlark source. `Identifier`, `Reference`, and `Call` keep
-variable bindings, references, and call names separate from string values.
+`auto`, the default generator, prefers bazelle for CMake when available. Use
+`--build-generator native` for the path shown above. `--unsafe-mode` skips build
+validation; it does not establish migration correctness.
 
-`File` hoists and combines loads when documents are composed. Fixed helper
-programs live in `crates/rebaze-bazel/src/templates/*.bzl`; dynamic configuration
-is assigned through serialized tables. Generation returns `Result`, and the CLI
-finishes generating the whole file set before writing it.
+For a Cargo build, install the toolchain in [rust-toolchain.toml](rust-toolchain.toml)
+and run `cargo build --release --locked -p rebaze-cli`.
 
-Tests parse complete generated files with `starlark_syntax`, including quotes,
-backslashes, Unicode, control characters, and attempted statement injection.
-These checks establish syntax and data preservation; they do not prove that every
-migration builds against every dependency or platform.
+## Documentation and development
 
-The [engineering roadmap](docs/engineering-roadmap.md) records remaining
-correctness and integration gates.
-
-## CI runners
-
-Linux CI uses the `CI_LINUX_RUNNER` repository variable, defaulting to
-`ubuntu-24.04`. To onboard runmux, add `albertocavalcante/rebaze` to the runmux App's
-selected repositories and the Air's `air-ci` pool scopes and allowlist, then run
-the manually dispatched **Runmux Canary** workflow. It checks Linux ARM64,
-non-root execution, and an `rmx-air-` runner identity without checking out code.
-
-Only after that canary succeeds, set `CI_LINUX_RUNNER` to `air-ci` and run the
-complete CI workflow. Remove the variable to return to hosted Linux runners.
-The Air must be online and its runner policy must allow pull requests. ARM64
-results do not establish x86-64 compatibility; release platform jobs remain on
-their native hosted runners.
+- [User documentation](https://albertocavalcante.github.io/rebaze/): installation,
+  tutorials, task guides, and CLI/configuration reference.
+- [Contributing](CONTRIBUTING.md): setup, checks, tests, and pull requests.
+- [Review guide](REVIEW.md): required review evidence and failure cases.
+- [Architecture](docs/architecture.md): crate responsibilities and generation boundaries.
+- [Engineering roadmap](docs/engineering-roadmap.md): ordered work and completion gates.
+- [Documentation guide](docs/README.md): where each kind of documentation belongs.
+- [CI runner operations](docs/operations/ci-runners.md): runmux activation and rollback.
 
 ## License
 
-Apache-2.0
+The workspace declares Apache-2.0 in [Cargo.toml](Cargo.toml).

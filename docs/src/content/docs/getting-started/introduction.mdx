@@ -1,89 +1,48 @@
 ---
 title: Introduction
-description: What is rebaze and why use it
+description: Understand rebaze's current migration paths and their limits
 ---
 
-import { Aside, Card, CardGrid, Badge, LinkCard } from '@astrojs/starlight/components';
+rebaze reads supported CMake or Gradle project information and generates Bazel
+files for review and build validation. It targets Bazel 9 and is in early development.
 
-**rebaze** analyzes your CMake or Gradle project and generates Bazel build files automatically.
+## Current migration paths
 
-```bash
-rebaze migrate /path/to/project
-```
+| Source | Current behavior |
+|---|---|
+| CMake | Parse supported source forms or read configured CMake File API data; generate with the native backend or optional bazelle integration |
+| Gradle | Extract supported Groovy/Kotlin build forms and generate JVM targets with the native backend |
+| Maven | Detect `pom.xml`; migration is not implemented |
+| Makefile, Cargo | Report their presence in `analyze`; migration is not implemented |
 
-Output:
-- `MODULE.bazel` — Dependencies and module definition
-- `BUILD.bazel` — Build targets for your code
-- `.bazelversion` — Pins Bazel 9.x
-- `.bazelrc` — Sensible defaults
+These parsers do not execute the full semantics of CMake or Gradle. Projects with
+custom build logic can need manual migration. Native CMake test generation and
+some dependency-strategy behavior remain incomplete.
 
-## What rebaze does
+## Generated output
 
-<CardGrid>
-  <Card title="1. Analyze" icon="magnifier">
-    Detects your build system and parses build files
-  </Card>
-  <Card title="2. Transform" icon="random">
-    Maps dependencies to Bazel targets
-  </Card>
-  <Card title="3. Generate" icon="document">
-    Writes MODULE.bazel and BUILD.bazel files
-  </Card>
-  <Card title="4. Validate" icon="approve-check-circle">
-    Verifies the migration builds successfully
-  </Card>
-</CardGrid>
+Native generation produces `MODULE.bazel`, `BUILD.bazel`, and `.bazelversion`.
+Gradle can also produce subproject BUILD files. CMake adds `.bazelrc` and can add
+third-party dependency helpers.
 
-## Why migrate to Bazel?
+Starlark values use typed serialization. Syntax tests establish that values stay
+data and generated files parse; they do not establish valid labels or successful
+builds for every project, dependency, or platform.
 
-If you're considering Bazel, you probably already know why. For the record:
+## Validation and effects
 
-| Benefit | What it means |
-|---------|---------------|
-| **Fast incremental builds** | Only rebuilds what changed |
-| **Hermetic builds** | Same inputs → same outputs, always |
-| **Remote caching** | Share build artifacts across your team |
-| **Remote execution** | Distribute builds across machines |
-| **Multi-language** | C++, Java, Go, Python in one repo |
+A native dry run previews files without writing or build validation. Normal CMake
+migration first configures/builds the original project. After writing files,
+normal CMake and Gradle migration run `bazel build //...`. A failed build leaves
+generated files for inspection, and a successful build does not run project tests.
 
-## Why use rebaze?
+Bazel supports caching and controlled build inputs. A generated project that uses
+host system libraries still depends on the host; migration alone does not make
+that project hermetic.
 
-Manual migration is tedious:
+## Start with a preview
 
-1. Learning Starlark syntax
-2. Writing BUILD files for every directory
-3. Mapping every dependency to Bazel targets
-4. Handling platform-specific configurations
-
-rebaze handles all of this. You focus on your code.
-
-## Supported build systems
-
-| Source | Status | Notes |
-|--------|--------|-------|
-| **CMake** | <Badge text="Supported" variant="success" /> | Full parser + cmake-file-api |
-| **Gradle** | <Badge text="Supported" variant="success" /> | Groovy and Kotlin DSL |
-| Maven | <Badge text="Planned" variant="note" /> | Detection only |
-
-<Aside type="caution" title="Early development">
-rebaze is under active development. It works well for standard project structures but may need manual adjustments for complex builds.
-</Aside>
-
-## Limitations
-
-Be aware of current limitations:
-
-- **CMake**: Generator expressions partially supported
-- **Gradle**: Android projects not yet supported
-- **General**: Custom build logic may need manual migration
-
-## Next steps
-
-Ready? Pick your path:
-
-<CardGrid>
-  <LinkCard title="Quick Start" description="Migrate your first project in 60 seconds" href="/rebaze/getting-started/quickstart/" />
-  <LinkCard title="Installation" description="Install via Homebrew or build from source" href="/rebaze/getting-started/installation/" />
-  <LinkCard title="CMake Tutorial" description="Detailed CMake migration walkthrough" href="/rebaze/tutorials/cmake/" />
-  <LinkCard title="Gradle Tutorial" description="Detailed Gradle migration walkthrough" href="/rebaze/tutorials/gradle/" />
-</CardGrid>
+Follow the [installation guide](/rebaze/getting-started/installation/) and
+[quick start](/rebaze/getting-started/quickstart/). The
+[engineering roadmap](https://github.com/albertocavalcante/rebaze/blob/main/docs/engineering-roadmap.md)
+records the evidence required for broader support claims.

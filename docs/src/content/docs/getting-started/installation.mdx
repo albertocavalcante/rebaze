@@ -1,149 +1,68 @@
 ---
 title: Installation
-description: How to install rebaze
+description: Build rebaze from a checkout and install the CLI for your user account
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+Build rebaze from the repository, then verify the CLI before migrating a project.
+The source paths below follow the repository's Cargo and Bazel configuration.
 
-## Homebrew (macOS/Linux)
+## Requirements
 
-The easiest way to install rebaze is via Homebrew using the `albertocavalcante/tap`:
+- Git and a native C/C++ toolchain for linking.
+- For Bazel builds: Bazelisk, or the version recorded in `.bazelversion`.
+  Bazel provisions the configured Rust toolchain.
+- For Cargo builds: rustup and the toolchain in `rust-toolchain.toml`.
+- For normal migration validation: Bazel 9 and the input project's build dependencies.
+  CMake migration also configures/builds the original project with CMake.
 
-```bash
-# Add the tap
-brew tap albertocavalcante/tap
-```
-
-### Stable (Builds from Source)
-
-```bash
-brew install albertocavalcante/tap/rebaze
-```
-
-<Aside type="note">
-The stable version builds from source, which requires Rust. Homebrew will automatically install Rust as a build dependency. Build time is approximately 5-10 minutes.
-</Aside>
-
-### Nightly (Prebuilt Binaries)
-
-The nightly version uses prebuilt binaries and installs instantly. Since rebaze is currently a private repository, you need to authenticate with a GitHub token:
-
-<Tabs>
-  <TabItem label="Using GitHub CLI (recommended)">
-    ```bash
-    # If you have gh installed and authenticated
-    export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"
-    brew install albertocavalcante/tap/rebaze-nightly
-    ```
-  </TabItem>
-  <TabItem label="Using Personal Access Token">
-    ```bash
-    # Generate a PAT at https://github.com/settings/tokens
-    # Required scope: repo (for private repository access)
-    export HOMEBREW_GITHUB_API_TOKEN="ghp_your_token_here"
-    brew install albertocavalcante/tap/rebaze-nightly
-    ```
-  </TabItem>
-</Tabs>
-
-<Aside type="tip">
-Add the export to your shell profile (`~/.zshrc` or `~/.bashrc`) for persistence:
-```bash
-echo 'export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"' >> ~/.zshrc
-```
-</Aside>
-
-<Aside type="caution">
-The stable and nightly versions conflict—uninstall one before installing the other:
-```bash
-brew uninstall rebaze
-brew install albertocavalcante/tap/rebaze-nightly
-```
-</Aside>
-
-### Update & Uninstall
-
-```bash
-# Update to latest version
-brew upgrade rebaze   # or rebaze-nightly
-
-# Uninstall
-brew uninstall rebaze
-
-# Remove the tap entirely
-brew untap albertocavalcante/tap
-```
-
-## Build from Source
-
-rebaze is built with Bazel. Clone the repository and build:
+## Build with Bazel
 
 ```bash
 git clone https://github.com/albertocavalcante/rebaze.git
 cd rebaze
 bazel build //crates/rebaze-cli:rebaze
+bazel run //crates/rebaze-cli:rebaze -- --help
 ```
 
-The binary will be at:
-```
-bazel-bin/crates/rebaze-cli/rebaze
-```
+The binary is `bazel-bin/crates/rebaze-cli/rebaze` (`rebaze.exe` on Windows).
+You can run it by that path, use `bazel run` from the checkout, or copy it to a
+user-owned directory on `PATH`.
 
-## Add to PATH
-
-<Tabs>
-  <TabItem label="macOS/Linux">
-    ```bash
-    # Option 1: Symlink to a directory in PATH
-    sudo ln -s $(pwd)/bazel-bin/crates/rebaze-cli/rebaze /usr/local/bin/rebaze
-
-    # Option 2: Add to PATH in your shell profile
-    echo 'export PATH="$PATH:/path/to/rebaze/bazel-bin/crates/rebaze-cli"' >> ~/.zshrc
-    source ~/.zshrc
-    ```
-  </TabItem>
-  <TabItem label="Windows">
-    ```powershell
-    # Add to user PATH
-    $env:PATH += ";C:\path\to\rebaze\bazel-bin\crates\rebaze-cli"
-    ```
-  </TabItem>
-</Tabs>
-
-## Verify Installation
+On macOS/Linux, install the built binary for your user account:
 
 ```bash
+install -d "$HOME/.local/bin"
+install -m 755 bazel-bin/crates/rebaze-cli/rebaze "$HOME/.local/bin/rebaze"
+export PATH="$HOME/.local/bin:$PATH"
 rebaze --version
 ```
 
-## Requirements
+The export affects the current shell. Add that PATH entry to your shell's
+configuration if you want it in future sessions.
 
-- **Bazel 9.x** - Required for building rebaze and for migrated projects
-- **CMake 3.14+** - Optional, for cmake-file-api integration
-- **Rust toolchain** - Only needed if building from source with Cargo
+## Build with Cargo
 
-<Aside type="note">
-rebaze generates Bazel 9 compatible output. Ensure you have Bazel 9.x installed for running the migrated projects.
-</Aside>
-
-## Development Setup
-
-If you want to contribute or modify rebaze:
+From the rebaze checkout:
 
 ```bash
-# Clone with submodules
-git clone --recursive https://github.com/albertocavalcante/rebaze.git
-cd rebaze
-
-# Build all targets
-bazel build //...
-
-# Run tests
-bazel test //...
-
-# Format code
-cargo fmt
-
-# Run linter
-cargo clippy
+rustup toolchain install --no-self-update
+cargo build --release --locked -p rebaze-cli
+cargo run --release --locked -p rebaze-cli -- --help
 ```
+
+The release binary is `target/release/rebaze` (`rebaze.exe` on Windows). To install
+through Cargo into its user bin directory instead:
+
+```bash
+cargo install --locked --path crates/rebaze-cli
+rebaze --version
+```
+
+Ensure your Cargo bin directory is on `PATH`. On Windows, you can also run either
+built `.exe` by its full path without changing the system PATH.
+
+## Next steps
+
+Follow the [quick start](/rebaze/getting-started/quickstart/) to preview a migration.
+Use [CONTRIBUTING.md](https://github.com/albertocavalcante/rebaze/blob/main/CONTRIBUTING.md)
+for development setup, complete checks, and pull request requirements.

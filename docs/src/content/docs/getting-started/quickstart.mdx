@@ -1,115 +1,89 @@
 ---
-title: Quick Start
-description: Migrate your first project in 60 seconds
+title: Quick start
+description: Preview generated Bazel files and validate a supported native migration
 ---
 
-import { Steps, Aside, Tabs, TabItem, FileTree } from '@astrojs/starlight/components';
+Preview a native CMake or Gradle migration, review its proposed files, and then
+run build validation. Custom build logic and dependency handling can need manual
+changes.
 
-Migrate any CMake or Gradle project to Bazel in three commands.
+## Prepare the project
 
-<Steps>
+[Install rebaze](/rebaze/getting-started/installation/) and put its executable on
+`PATH`. Use a clean branch or a copy of an existing project, and move into that
+project's root directory. Normal validation needs Bazel 9 and the original
+project's build dependencies; CMake inputs also need CMake.
 
-1. **Analyze** — See what rebaze detects
+Migration can replace existing generated files. Keep the original state so you
+can inspect and revert the resulting diff.
 
-   ```bash
-   rebaze analyze .
-   ```
-   ```
-   Detected build systems: cmake
-   ```
-
-2. **Migrate** — Generate Bazel files
-
-   ```bash
-   rebaze migrate .
-   ```
-
-   <FileTree>
-   - MODULE.bazel
-   - BUILD.bazel
-   - .bazelversion
-   - .bazelrc
-   </FileTree>
-
-3. **Build** — Verify it works
-
-   ```bash
-   bazel build //...
-   ```
-
-</Steps>
-
-Done. Your project now builds with Bazel.
-
----
-
-## Preview before writing
-
-Use `--dry-run` to see what would be generated:
+## Analyze and preview
 
 ```bash
-rebaze migrate . --dry-run
+rebaze analyze .
+rebaze migrate . --build-generator native --dry-run
 ```
 
-## Customize with config
+Analysis reports detected build files. A native dry run prints sections such as
+`MODULE.bazel` and `BUILD.bazel` without writing them or running build validation.
+Detection of Maven, Makefile, or Cargo does not mean those migrations are implemented.
 
-Create `rebaze.toml` for custom dependency mappings:
+`--build-generator native` makes this example independent of an installed bazelle
+binary. The default `auto` mode can choose bazelle for CMake.
+
+## Generate and validate
+
+After reviewing the preview:
+
+```bash
+rebaze migrate . --build-generator native
+```
+
+For CMake, this normally configures/builds the original project, writes generated
+files, and runs `bazel build //...`. Gradle uses its native generator and then runs
+the Bazel build. If validation fails, inspect the error and the generated diff;
+post-generation validation does not restore the original files.
+
+To repeat Bazel build validation after editing generated files:
+
+```bash
+rebaze validate .
+```
+
+A successful build is separate from a passing test suite. Review generated test
+targets before running the tests relevant to your project; native CMake test
+generation is currently incomplete.
+
+## Configure supported mappings
+
+Create `rebaze.toml` to map an otherwise unknown system library:
 
 ```toml
 [mappings.system_libraries]
 myvendorlib = "@myvendor//:lib"
-
-[strategy]
-default = "system"
 ```
 
-Then migrate:
+That target must exist in your Bazel dependency configuration. Preview the effect
+before writing:
 
 ```bash
-rebaze migrate . --config rebaze.toml
+rebaze migrate . --config rebaze.toml --build-generator native --dry-run
 ```
 
-<Aside type="tip" title="Common patterns">
-See [Configuration Reference](/rebaze/reference/config/) for all options, or jump to [Common Recipes](#common-recipes) below.
-</Aside>
+Strategy settings and their generated extensions/aliases are still being aligned.
+Setting `strategy.default = "source"` alone does not establish a working source
+build. See the [engineering roadmap](https://github.com/albertocavalcante/rebaze/blob/main/docs/engineering-roadmap.md)
+for that gate, and use the [configuration reference](/rebaze/reference/config/)
+for individual fields.
 
-## Common recipes
+## Troubleshoot a failed migration
 
-### Map an unknown library
+- Use `rebaze --verbose migrate . --build-generator native --dry-run` to inspect
+  detection and generation diagnostics.
+- Check sources, include paths, target names, and dependency mappings in the output.
+- Use [CMake File API data](/rebaze/guides/cmake-file-api/) when source parsing
+  cannot represent the configured project.
+- `--unsafe-mode` skips build validation. It does not prove that generated files work.
 
-```toml
-[mappings.system_libraries]
-customlib = "@customlib"
-```
-
-### Use hermetic builds
-
-```toml
-[strategy]
-default = "source"
-```
-
-### Pin dependency versions
-
-```toml
-[versions]
-rules_cc = "0.1.1"
-googletest = "1.15.2"
-```
-
-## Troubleshooting
-
-**"Unknown library 'xyz', skipping"**
-→ Add to `[mappings.system_libraries]` in `rebaze.toml`
-
-**Build fails after migration**
-→ Check include paths and verify all sources are captured
-
-**Missing dependencies**
-→ Run with `--verbose` to see what rebaze detected
-
-## Next steps
-
-- **[CMake Tutorial](/rebaze/tutorials/cmake/)** — Detailed walkthrough with examples
-- **[Gradle Tutorial](/rebaze/tutorials/gradle/)** — Java/Kotlin project migration
-- **[CLI Reference](/rebaze/reference/cli/)** — All command options
+Continue with the [CMake tutorial](/rebaze/tutorials/cmake/),
+[Gradle tutorial](/rebaze/tutorials/gradle/), or [CLI reference](/rebaze/reference/cli/).
