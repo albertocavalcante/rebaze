@@ -1,18 +1,14 @@
 # Agent Instructions for rebaze
 
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [REVIEW.md](REVIEW.md) before changing
+this repository. Use [docs/README.md](docs/README.md) for documentation placement.
+
 ## Project Overview
 
-rebaze is a CLI tool that migrates projects from other build systems (Gradle, Maven, CMake) to Bazel.
-
-## Architecture
-
-```
-crates/
-├── rebaze-cli/      # CLI entry point (clap-based)
-├── rebaze-core/     # Orchestration and shared models
-├── rebaze-gradle/   # Gradle build file parser
-├── rebaze-bazel/    # Bazel file generator
-```
+rebaze generates Bazel files from supported CMake and Gradle inputs. Maven is
+detected but migration is not implemented. The workspace also contains standalone
+BCR/Bzlmod libraries; see [docs/architecture.md](docs/architecture.md) for the full
+crate map and current data/effect boundaries.
 
 ## Build System
 
@@ -35,7 +31,7 @@ bazel run //crates/rebaze-cli:rebaze -- analyze .
 cargo fmt
 
 # Lint
-cargo clippy
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 ## Code Style
