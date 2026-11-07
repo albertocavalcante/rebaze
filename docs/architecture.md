@@ -148,6 +148,16 @@ Source repositories require a 64-character hexadecimal SHA-256 and use Bazel's
 checksum verification before extraction. Unknown packages need configuration;
 source metadata and extension activation do not constitute universal build support.
 
+Native preparation rejects unresolved required link dependencies before host
+discovery or generated output writes. Mapping APIs return `DependencyMapping`:
+mapped labels, explicit omissions with `OmissionReason`, or unresolved input.
+Unknown dependencies no longer become TODO comments that rendering drops.
+Configured comment strings are rejected as mappings. Empty mapping values are
+explicit omissions; configured ignores, implicit system libraries, and the
+existing built-in package policy remain supported. Diagnostics identify the
+source target and dependency. This does not yet validate the complete target/alias
+graph or establish that an explicitly mapped external repository is available.
+
 ## Gradle Java generation
 
 Gradle input now has one `GradleModule` per declared project, including implicit

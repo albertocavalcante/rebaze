@@ -12,6 +12,7 @@ pub use crate::third_party::deduplicate_modules;
 pub use cmake_tests::TestError;
 pub use dependency_plan::{DependencyStrategy, PlanError};
 pub use discovery::DiscoverySnapshot;
+pub use native_links::NativeLinkError;
 
 /// Failure to render a complete native output bundle.
 #[derive(Debug, thiserror::Error)]
@@ -26,6 +27,8 @@ pub enum GenerationError {
     Discovery(#[from] discovery::SnapshotError),
     #[error(transparent)]
     Test(#[from] TestError),
+    #[error(transparent)]
+    NativeLink(#[from] NativeLinkError),
 }
 
 pub type GenerationResult<T> = std::result::Result<T, GenerationError>;
@@ -43,6 +46,7 @@ pub mod filters;
 #[cfg(test)]
 mod generation_tests;
 mod generator;
+mod native_links;
 pub use rebaze_starlark as starlark;
 mod third_party;
 
@@ -84,11 +88,14 @@ pub fn plan_cmake<'a>(
     project: &'a rebaze_cmake::CMakeProject,
     config: &'a MigrationConfig,
 ) -> GenerationResult<CMakeGeneration<'a>> {
+    let tests = cmake_tests::plan(project)?;
+    let plan = dependency_plan::DependencyPlan::new(project, config)?;
+    native_links::validate(project, config, &plan)?;
     Ok(CMakeGeneration {
         project,
         config,
-        tests: cmake_tests::plan(project)?,
-        plan: dependency_plan::DependencyPlan::new(project, config)?,
+        plan,
+        tests,
     })
 }
 

@@ -391,16 +391,15 @@ fn normalize_and_filter_include(inc: &str) -> Option<String> {
     Some(result)
 }
 
-use crate::config::MigrationConfig;
+use crate::config::{DependencyMapping, MigrationConfig};
 
 /// Comprehensive CMake to Bazel dependency mapping using configuration.
 ///
 /// Maps common CMake package names and imported targets to their
-/// Bazel equivalents. Returns None for system libraries that don't
-/// need explicit deps (pthread, m, dl, etc.)
+/// Bazel equivalents, retaining explicit omission reasons and unresolved input.
 ///
 /// This is the config-driven version that should be preferred.
-pub fn map_dependency_with_config(cmake_name: &str, config: &MigrationConfig) -> Option<String> {
+pub fn map_dependency_with_config(cmake_name: &str, config: &MigrationConfig) -> DependencyMapping {
     config.map_dependency(cmake_name)
 }
 
@@ -408,7 +407,7 @@ pub fn map_dependency_with_config(cmake_name: &str, config: &MigrationConfig) ->
 ///
 /// This is a convenience wrapper that uses the default MigrationConfig.
 /// For customized mappings, use `map_dependency_with_config` instead.
-pub fn map_dependency(cmake_name: &str) -> Option<String> {
+pub fn map_dependency(cmake_name: &str) -> DependencyMapping {
     // Use a lazily-initialized default config for backward compatibility
     thread_local! {
         static DEFAULT_CONFIG: MigrationConfig = MigrationConfig::default();
@@ -484,21 +483,33 @@ mod tests {
 
     #[test]
     fn test_map_dependency() {
-        assert_eq!(map_dependency("pthread"), None);
-        assert_eq!(map_dependency("m"), None);
-        assert_eq!(map_dependency("-lz"), Some("@zlib".to_string()));
+        assert_eq!(
+            map_dependency("pthread"),
+            DependencyMapping::Omitted(crate::config::OmissionReason::ImplicitSystemLibrary)
+        );
+        assert_eq!(
+            map_dependency("m"),
+            DependencyMapping::Omitted(crate::config::OmissionReason::ImplicitSystemLibrary)
+        );
+        assert_eq!(
+            map_dependency("-lz"),
+            DependencyMapping::Mapped("@zlib".to_string())
+        );
         assert_eq!(
             map_dependency("Boost::system"),
-            Some("@boost//:system".to_string())
+            DependencyMapping::Mapped("@boost//:system".to_string())
         );
         assert_eq!(
             map_dependency("OpenSSL::SSL"),
-            Some("@openssl//:ssl".to_string())
+            DependencyMapping::Mapped("@openssl//:ssl".to_string())
         );
-        assert_eq!(map_dependency("Threads::Threads"), None);
+        assert_eq!(
+            map_dependency("Threads::Threads"),
+            DependencyMapping::Omitted(crate::config::OmissionReason::ConfiguredIgnore)
+        );
         assert_eq!(
             map_dependency("GTest::gtest"),
-            Some("@googletest//:gtest".to_string())
+            DependencyMapping::Mapped("@googletest//:gtest".to_string())
         );
     }
 

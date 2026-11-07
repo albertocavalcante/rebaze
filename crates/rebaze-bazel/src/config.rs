@@ -12,6 +12,33 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// A dependency decision; unresolved input must never be treated as an omission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DependencyMapping {
+    Mapped(String),
+    Omitted(OmissionReason),
+    Unresolved,
+}
+
+/// Why a mapping deliberately produces no explicit Bazel dependency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OmissionReason {
+    ConfiguredIgnore,
+    ImplicitSystemLibrary,
+    EmptyMapping,
+    BuiltinPackagePolicy,
+}
+
+impl DependencyMapping {
+    fn target(target: String) -> Self {
+        if target.is_empty() {
+            Self::Omitted(OmissionReason::EmptyMapping)
+        } else {
+            Self::Mapped(target)
+        }
+    }
+}
+
 /// Main configuration for CMake to Bazel migration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -67,13 +94,10 @@ impl MigrationConfig {
     }
 
     /// Get the Bazel target for a system library.
-    pub fn map_system_library(&self, lib: &str) -> Option<String> {
+    pub fn map_system_library(&self, lib: &str) -> DependencyMapping {
         // Check explicit mappings first
         if let Some(target) = self.mappings.system_libraries.get(lib) {
-            if target.is_empty() {
-                return None; // Empty string means "skip this library"
-            }
-            return Some(target.clone());
+            return DependencyMapping::target(target.clone());
         }
 
         // Check if it's an implicit system library (pthread, m, c, etc.)
@@ -82,29 +106,29 @@ impl MigrationConfig {
             .implicit_system_libs
             .contains(&lib.to_string())
         {
-            return None;
+            return DependencyMapping::Omitted(OmissionReason::ImplicitSystemLibrary);
         }
 
         // No mapping found
-        None
+        DependencyMapping::Unresolved
     }
 
     /// Get the Bazel target for a CMake imported target (e.g., Boost::filesystem).
-    pub fn map_imported_target(&self, package: &str, component: &str) -> Option<String> {
+    pub fn map_imported_target(&self, package: &str, component: &str) -> DependencyMapping {
         // Check package-specific mappings
         if let Some(pkg_config) = self.mappings.packages.get(package) {
             // Check component-specific mapping
             if let Some(target) = pkg_config.components.get(component) {
-                return Some(target.clone());
+                return DependencyMapping::target(target.clone());
             }
             // Use default target pattern with component substitution
-            return Some(
+            return DependencyMapping::target(
                 pkg_config
                     .target_pattern
                     .replace(COMPONENT_PLACEHOLDER, component),
             );
         }
-        None
+        DependencyMapping::Unresolved
     }
 
     /// Unified dependency mapping that handles all CMake dependency formats.
@@ -114,13 +138,12 @@ impl MigrationConfig {
     /// - Imported targets (e.g., "Package::Component")
     /// - Plain library names (e.g., "gtest")
     ///
-    /// Returns `None` for ignored libraries or implicit system libs.
-    /// Returns `Some(target)` for mapped dependencies.
-    /// Returns `Some("# TODO: ...")` for unknown dependencies.
-    pub fn map_dependency(&self, cmake_name: &str) -> Option<String> {
+    /// Preserves the distinction between mapped, intentionally omitted, and
+    /// unresolved dependencies. Unknown values are never encoded as comments.
+    pub fn map_dependency(&self, cmake_name: &str) -> DependencyMapping {
         // 1. Check if this library should be ignored
         if self.is_ignored_library(cmake_name) {
-            return None;
+            return DependencyMapping::Omitted(OmissionReason::ConfiguredIgnore);
         }
 
         // 2. Handle -l flags from pkg-config
@@ -160,18 +183,19 @@ impl MigrationConfig {
     }
 
     /// Map an imported target in full "Package::Component" format.
-    pub fn map_imported_target_full(&self, cmake_name: &str) -> Option<String> {
+    pub fn map_imported_target_full(&self, cmake_name: &str) -> DependencyMapping {
         let parts: Vec<&str> = cmake_name.split("::").collect();
-        if parts.len() != 2 {
-            return Some(format!("# TODO: Map {cmake_name} to Bazel"));
+        if parts.len() != 2 || parts.iter().any(|part| part.is_empty()) {
+            return DependencyMapping::Unresolved;
         }
 
         let package = parts[0];
         let component = parts[1];
 
         // Try exact package match first, then lowercase
-        if let Some(target) = self.map_imported_target(package, component) {
-            return Some(target);
+        let mapping = self.map_imported_target(package, component);
+        if mapping != DependencyMapping::Unresolved {
+            return mapping;
         }
 
         // Try case-insensitive matching for common packages
@@ -180,7 +204,7 @@ impl MigrationConfig {
 
         // Check if this is a commonly ignored package
         if matches!(package_lower.as_str(), "threads" | "fmt" | "spdlog") {
-            return None;
+            return DependencyMapping::Omitted(OmissionReason::BuiltinPackagePolicy);
         }
 
         // Try to find a matching package (case-insensitive)
@@ -189,11 +213,11 @@ impl MigrationConfig {
                 // Check component-specific mapping
                 for (comp_name, target) in &pkg_config.components {
                     if comp_name.to_lowercase() == component_lower {
-                        return Some(target.clone());
+                        return DependencyMapping::target(target.clone());
                     }
                 }
                 // Use default pattern
-                return Some(
+                return DependencyMapping::target(
                     pkg_config
                         .target_pattern
                         .replace(COMPONENT_PLACEHOLDER, &component_lower),
@@ -202,21 +226,21 @@ impl MigrationConfig {
         }
 
         // No mapping found
-        Some(format!("# TODO: Map {cmake_name} to Bazel"))
+        DependencyMapping::Unresolved
     }
 
     /// Map a plain library name to a Bazel target.
-    pub fn map_plain_library(&self, lib: &str) -> Option<String> {
+    pub fn map_plain_library(&self, lib: &str) -> DependencyMapping {
         // Check exact match in plain_libraries
         if let Some(target) = self.mappings.plain_libraries.get(lib) {
-            return Some(target.clone());
+            return DependencyMapping::target(target.clone());
         }
 
         // Check case-insensitive match
         let lib_lower = lib.to_lowercase();
         for (name, target) in &self.mappings.plain_libraries {
             if name.to_lowercase() == lib_lower {
-                return Some(target.clone());
+                return DependencyMapping::target(target.clone());
             }
         }
 
@@ -226,16 +250,10 @@ impl MigrationConfig {
             .implicit_system_libs
             .contains(&lib.to_string())
         {
-            return None;
+            return DependencyMapping::Omitted(OmissionReason::ImplicitSystemLibrary);
         }
 
-        // Check system libraries as fallback
-        if let Some(target) = self.map_system_library(lib) {
-            return Some(target);
-        }
-
-        // Unknown library - generate TODO comment
-        Some(format!("# TODO: Map '{lib}' to Bazel dependency"))
+        self.map_system_library(lib)
     }
 
     /// Get transitive dependencies for a package.
@@ -995,13 +1013,22 @@ mod tests {
         let config = MigrationConfig::default();
 
         // Known library
-        assert_eq!(config.map_system_library("zlib"), Some("@zlib".to_string()));
+        assert_eq!(
+            config.map_system_library("zlib"),
+            DependencyMapping::Mapped("@zlib".to_string())
+        );
 
         // Implicit system library
-        assert_eq!(config.map_system_library("pthread"), None);
+        assert_eq!(
+            config.map_system_library("pthread"),
+            DependencyMapping::Omitted(OmissionReason::ImplicitSystemLibrary)
+        );
 
         // Unknown library
-        assert_eq!(config.map_system_library("unknown_lib"), None);
+        assert_eq!(
+            config.map_system_library("unknown_lib"),
+            DependencyMapping::Unresolved
+        );
     }
 
     #[test]
@@ -1011,19 +1038,19 @@ mod tests {
         // OpenSSL with component
         assert_eq!(
             config.map_imported_target("OpenSSL", "SSL"),
-            Some("@openssl//:ssl".to_string())
+            DependencyMapping::Mapped("@openssl//:ssl".to_string())
         );
 
         // GTest
         assert_eq!(
             config.map_imported_target("GTest", "gtest"),
-            Some("@googletest//:gtest".to_string())
+            DependencyMapping::Mapped("@googletest//:gtest".to_string())
         );
 
         // Boost with dynamic component
         assert_eq!(
             config.map_imported_target("Boost", "filesystem"),
-            Some("@boost//:filesystem".to_string())
+            DependencyMapping::Mapped("@boost//:filesystem".to_string())
         );
     }
 
@@ -1055,27 +1082,76 @@ default = "source"
         let config = MigrationConfig::default();
 
         // -l flags
-        assert_eq!(config.map_dependency("-lz"), Some("@zlib".to_string()));
-        assert_eq!(config.map_dependency("-lpthread"), None);
+        assert_eq!(
+            config.map_dependency("-lz"),
+            DependencyMapping::Mapped("@zlib".to_string())
+        );
+        assert_eq!(
+            config.map_dependency("-lpthread"),
+            DependencyMapping::Omitted(OmissionReason::ImplicitSystemLibrary)
+        );
 
         // Imported targets (Package::Component)
         assert_eq!(
             config.map_dependency("OpenSSL::SSL"),
-            Some("@openssl//:ssl".to_string())
+            DependencyMapping::Mapped("@openssl//:ssl".to_string())
         );
         assert_eq!(
             config.map_dependency("Boost::filesystem"),
-            Some("@boost//:filesystem".to_string())
+            DependencyMapping::Mapped("@boost//:filesystem".to_string())
         );
 
         // Ignored libraries
-        assert_eq!(config.map_dependency("Threads::Threads"), None);
-        assert_eq!(config.map_dependency("fmt"), None);
+        assert_eq!(
+            config.map_dependency("Threads::Threads"),
+            DependencyMapping::Omitted(OmissionReason::ConfiguredIgnore)
+        );
+        assert_eq!(
+            config.map_dependency("fmt"),
+            DependencyMapping::Omitted(OmissionReason::ConfiguredIgnore)
+        );
 
         // Plain library names
         assert_eq!(
             config.map_dependency("gtest"),
-            Some("@googletest//:gtest".to_string())
+            DependencyMapping::Mapped("@googletest//:gtest".to_string())
+        );
+    }
+
+    #[test]
+    fn unknown_dependencies_and_omission_reasons_are_distinct() {
+        let mut config = MigrationConfig::default();
+        for dependency in [
+            "Unknown::Required",
+            "unknown_required",
+            "-lunknown_required",
+            "Bad::Target::Extra",
+        ] {
+            assert_eq!(
+                config.map_dependency(dependency),
+                DependencyMapping::Unresolved
+            );
+        }
+        config
+            .mappings
+            .system_libraries
+            .insert("empty".into(), String::new());
+        assert_eq!(
+            config.map_dependency("-lempty"),
+            DependencyMapping::Omitted(OmissionReason::EmptyMapping)
+        );
+        config.mappings.ignored_libraries.clear();
+        assert_eq!(
+            config.map_dependency("Threads::Threads"),
+            DependencyMapping::Omitted(OmissionReason::BuiltinPackagePolicy)
+        );
+        config
+            .mappings
+            .system_libraries
+            .insert("pthread".into(), "//deps:threads".into());
+        assert_eq!(
+            config.map_dependency("-lpthread"),
+            DependencyMapping::Mapped("//deps:threads".into())
         );
     }
 
@@ -1102,20 +1178,23 @@ default = "source"
         // Known libraries
         assert_eq!(
             config.map_plain_library("gtest"),
-            Some("@googletest//:gtest".to_string())
+            DependencyMapping::Mapped("@googletest//:gtest".to_string())
         );
         assert_eq!(
             config.map_plain_library("benchmark"),
-            Some("@google_benchmark//:benchmark".to_string())
+            DependencyMapping::Mapped("@google_benchmark//:benchmark".to_string())
         );
 
         // System library fallback
-        assert_eq!(config.map_plain_library("pthread"), None);
+        assert_eq!(
+            config.map_plain_library("pthread"),
+            DependencyMapping::Omitted(OmissionReason::ImplicitSystemLibrary)
+        );
 
-        // Unknown generates TODO
-        let result = config.map_plain_library("unknown_lib");
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("TODO"));
+        assert_eq!(
+            config.map_plain_library("unknown_lib"),
+            DependencyMapping::Unresolved
+        );
     }
 
     #[test]

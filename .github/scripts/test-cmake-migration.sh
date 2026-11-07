@@ -58,7 +58,7 @@ cp "$work/migrated/BUILD.bazel" "$work/generated-before.bazel"
 assert_rejected() {
   local diagnostic=$1
   if isolated "$cli" migrate "$work/migrated" --build-generator native --unsafe-mode >"$work/rejection.log" 2>&1; then
-    echo "Unsupported test intent was accepted: $diagnostic" >&2
+    echo "Unsupported migration intent was accepted: $diagnostic" >&2
     exit 1
   fi
   if ! grep -q "$diagnostic" "$work/rejection.log"; then
@@ -79,6 +79,12 @@ printf 'add_test(NAME inactive COMMAND probe)\n' >"$work/migrated/inactive/CMake
 printf '\nif(OFF)\nadd_subdirectory(inactive)\nendif()\n' >>"$work/migrated/CMakeLists.txt"
 assert_rejected 'conditional or scoped add_subdirectory'
 rm -r "$work/migrated/inactive"
+
+# Unknown required links must fail before replacing the existing generated BUILD.
+for dependency in Unknown::Required unknown_required -lunknown_required; do
+  printf '\ntarget_link_libraries(probe %s)\n' "$dependency" >>"$work/migrated/CMakeLists.txt"
+  assert_rejected 'target "probe" requires unresolved dependency'
+done
 
 # A successful build must not hide an actual assertion failure in either suite.
 for root in original migrated; do
