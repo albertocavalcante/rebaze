@@ -26,7 +26,7 @@ fn command(command: &mut Command) -> Output {
     output
 }
 
-pub(super) fn build_and_run(root: &Path, files: &std::collections::HashMap<String, String>) {
+pub fn build_and_run(root: &Path, files: &std::collections::HashMap<String, String>) {
     crate::write_files(root, files).unwrap();
     let cache = std::env::var_os("REBAZE_BAZEL_TEST_ROOT")
         .map_or_else(|| root.join("bazel-cache"), std::path::PathBuf::from);
