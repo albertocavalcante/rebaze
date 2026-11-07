@@ -264,6 +264,24 @@ fn nested_gradle_includes_retain_implicit_parent_builds() {
     assert!(files["app/core/BUILD.bazel"].contains("java_library("));
 }
 
+#[test]
+fn gradle_maven_lock_must_be_a_regular_file() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path().join("settings.gradle"),
+        "rootProject.name = 'example'",
+    )
+    .unwrap();
+    std::fs::write(temp.path().join("build.gradle"), "plugins { id 'java' }").unwrap();
+    std::fs::create_dir(temp.path().join("maven_install.json")).unwrap();
+    assert!(
+        rebaze_gradle::parse(temp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("regular project file")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn gradle_source_scan_rejects_symlinked_ancestor_directories() {

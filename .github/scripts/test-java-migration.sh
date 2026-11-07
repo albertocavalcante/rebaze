@@ -9,6 +9,7 @@ test -x "$cli"
 : "${JAVA_HOME:?Set JAVA_HOME to a JDK 21 installation}"
 test -x "$JAVA_HOME/bin/javac"
 for tool in bazel gradle; do command -v "$tool" >/dev/null; done
+command -v mkfifo >/dev/null
 real_bazel=$(command -v bazel)
 work=$(mktemp -d "${TMPDIR:-/tmp}/rebaze-java-migration.XXXXXXXX")
 cleanup() {
@@ -65,14 +66,6 @@ for file in "${files[@]}"; do cmp "$fixture/$file" "$work/migrated/$file"; done
   isolated bazel test //... --jobs=2 --test_output=errors
 )
 cp "$work/migrated/app/BUILD.bazel" "$work/app-before.bazel"
-mv "$work/migrated/maven_install.json" "$work/held-maven.json"
-if isolated "$cli" migrate "$work/migrated" --build-generator native >"$work/unpinned.log" 2>&1; then
-  echo 'Unpinned Maven dependencies were built without explicit preparation.' >&2
-  exit 1
-fi
-grep -q 'require a reviewed maven_install.json' "$work/unpinned.log"
-cmp "$work/app-before.bazel" "$work/migrated/app/BUILD.bazel"
-mv "$work/held-maven.json" "$work/migrated/maven_install.json"
 assert_rejected() {
   local diagnostic=$1
   if isolated "$cli" migrate "$work/migrated" --build-generator native --unsafe-mode >"$work/rejection.log" 2>&1; then
@@ -85,6 +78,18 @@ assert_rejected() {
   fi
   cmp "$work/app-before.bazel" "$work/migrated/app/BUILD.bazel"
 }
+mv "$work/migrated/maven_install.json" "$work/held-maven.json"
+if isolated "$cli" migrate "$work/migrated" --build-generator native >"$work/unpinned.log" 2>&1; then
+  echo 'Unpinned Maven dependencies were built without explicit preparation.' >&2
+  exit 1
+fi
+grep -q 'require a reviewed maven_install.json' "$work/unpinned.log"
+cmp "$work/app-before.bazel" "$work/migrated/app/BUILD.bazel"
+# Reject special files without opening them.
+mkfifo "$work/migrated/maven_install.json"
+assert_rejected 'Maven lock must be a regular project file'
+rm "$work/migrated/maven_install.json"
+mv "$work/held-maven.json" "$work/migrated/maven_install.json"
 printf '\ntest { useJUnitPlatform() }\n' >>"$work/migrated/app/build.gradle"
 assert_rejected 'unsupported Gradle block'
 cp "$fixture/app/build.gradle" "$work/migrated/app/build.gradle"

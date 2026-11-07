@@ -99,13 +99,11 @@ fn read_project(path: &Path) -> Result<GradleProject> {
         modules.push(module);
     }
     let lock = root.join("maven_install.json");
-    if lock.is_symlink() {
-        bail!("Maven lock must be a regular project file");
-    }
-    let maven_lock = if lock.exists() {
-        Some(std::fs::read_to_string(lock)?)
-    } else {
-        None
+    let maven_lock = match std::fs::symlink_metadata(&lock) {
+        Ok(metadata) if metadata.is_file() => Some(std::fs::read_to_string(&lock)?),
+        Ok(_) => bail!("Maven lock must be a regular project file"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
     };
     Ok(GradleProject {
         name,
