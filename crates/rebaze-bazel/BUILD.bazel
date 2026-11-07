@@ -3,7 +3,10 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 rust_library(
     name = "rebaze-bazel",
     srcs = glob(["src/**/*.rs"]),
-    compile_data = glob(["src/templates/*.bzl"]),
+    compile_data = ["//:rebaze.example.toml"] + glob([
+        "src/templates/*.bzl",
+        "tests/fixtures/managed_dependency/*",
+    ]),
     edition = "2024",
     visibility = ["//visibility:public"],
     deps = [

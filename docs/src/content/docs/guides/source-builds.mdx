@@ -1,29 +1,14 @@
 ---
 title: Build from Source
-description: How to configure hermetic builds using rules_foreign_cc
+description: Configure and validate active source dependencies with rules_foreign_cc
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+Select source builds in `rebaze.toml`, preview the output, then build in a
+disposable checkout. Fetching and building happen through Bazel after generation.
 
-By default, rebaze uses system libraries. For hermetic, reproducible builds, you can build dependencies from source using `rules_foreign_cc`.
+## Select a dependency
 
-## System vs Source Builds
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| System libraries | Fast, simple setup | Non-hermetic, version varies |
-| Source builds | Hermetic, reproducible | Slower first build |
-
-## Configure Source Strategy
-
-In `rebaze.toml`:
-
-```toml
-[strategy]
-default = "source"
-```
-
-Or for specific packages:
+The built-in catalog includes zlib metadata:
 
 ```toml
 [strategy]
@@ -31,12 +16,19 @@ default = "system"
 
 [strategy.overrides]
 zlib = "source"
-openssl = "source"
 ```
 
-## Define Package Metadata
+An arbitrary CMake prefix can refer to that package. For example,
+`pkg_check_modules(COMPRESSION REQUIRED zlib)` uses alias
+`//third_party:compression` and source target `//third_party:zlib_source`.
+A normalized prefix override takes precedence over a package override. See
+[Dependency Strategies](/rebaze/concepts/dependency-strategies/) for fallback and
+transitive selection.
 
-For packages built from source, define their metadata:
+## Configure an archive
+
+A catalog entry replaces the complete entry for that key. Supply all required
+fields when overriding one:
 
 ```toml
 [mappings.known_packages.zlib]
@@ -45,80 +37,66 @@ url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
 sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
 strip_prefix = "zlib-1.3.1"
 build_system = "cmake"
+pkg_config_packages = ["zlib"]
 out_static_libs = ["libz.a"]
-
-[mappings.known_packages.openssl]
-version = "3.2.0"
-url = "https://github.com/openssl/openssl/releases/download/openssl-3.2.0/openssl-3.2.0.tar.gz"
-sha256 = "..."
-strip_prefix = "openssl-3.2.0"
-build_system = "autotools"
-out_static_libs = ["libssl.a", "libcrypto.a"]
 deps = []
-build_options = ["no-shared"]
+build_options = ["-DBUILD_SHARED_LIBS=OFF"]
 ```
 
-## Supported Build Systems
+Use an HTTPS archive URL, or an absolute `file:///` URL for a local fixture, with
+a real 64-digit SHA-256. Bazel checks that digest before extraction. Verify any
+new archive independently before adding its checksum.
 
-| Value | Tool Used |
-|-------|-----------|
-| `cmake` | `cmake_external` from rules_foreign_cc |
-| `autotools` | `configure_make` from rules_foreign_cc |
-| `meson` | `meson` from rules_foreign_cc |
+Strip prefixes and outputs must be relative paths without traversal. At least
+one library output is required. Static outputs take precedence when both static
+and shared lists are present. Shared-only entries must list exact outputs for
+the intended platform; listing both `.so` and `.dylib` requires both files.
 
-## Generated Files
+## Build-system options
 
-When using source strategy, rebaze generates:
+| `build_system` | Generated rule   | `build_options` interpretation                                                        |
+| -------------- | ---------------- | ------------------------------------------------------------------------------------- |
+| `cmake`        | `cmake`          | Appended to `generate_args`, after the default `-GNinja`                              |
+| `meson`        | `meson`          | `-Dname=value` or `name=value` becomes an options-map entry; a bare name means `true` |
+| `autotools`    | `configure_make` | Passed as `configure_options`                                                         |
 
-### `third_party/source.bzl`
+Meson option names must be safe names; duplicate keys fail. Static GLib/GObject
+catalog entries explicitly request `default_library=static`. The generator does
+not infer the right options for every upstream build. These options reach build
+tools, so use configuration and archives you trust.
 
-```python
-load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+## Transitive dependencies
 
-def _zlib_impl():
-    cmake(
-        name = "zlib",
-        lib_source = "@zlib//:all_srcs",
-        out_static_libs = ["libz.a"],
-    )
-```
-
-### `MODULE.bazel`
-
-```python
-bazel_dep(name = "rules_foreign_cc", version = "0.14.0")
-
-http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-
-http_archive(
-    name = "zlib",
-    url = "https://...",
-    sha256 = "...",
-    strip_prefix = "zlib-1.3.1",
-)
-```
-
-## Troubleshooting
-
-### Build fails with missing headers
-
-Add transitive dependencies:
+`deps` and `mappings.transitive_deps` form the active source graph. Cycles fail
+with a planning error. Transitives inherit source strategy unless overridden:
 
 ```toml
-[mappings.transitive_deps]
-curl = ["zlib", "openssl"]
+[strategy]
+default = "source"
+
+[strategy.overrides]
+pcre2 = "system"
 ```
 
-### Wrong library output name
+For GLib, that selects the catalog's `libpcre2-8` pkg-config request. The generated
+source target depends on the corresponding system repository, and no PCRE2
+source archive is imported. This graph is host-dependent.
 
-Check the actual output name:
+## Preview and verify
 
-```toml
-out_static_libs = ["libz.a"]  # Linux
-# or
-out_static_libs = ["z.lib"]   # Windows
+```bash
+rebaze migrate . --build-generator native --dry-run
 ```
 
-<Aside type="tip">
-Source builds are recommended for CI and release builds where reproducibility matters.
-</Aside>
+Inspect the active `source_deps` extension and `use_repo` imports in
+`MODULE.bazel`, source rules in `third_party/BUILD.bazel`, and archive data in
+`third_party/source.bzl`. After preserving the original checkout, run migration
+and the generated build. Missing metadata fails before generated Bazel writes;
+normal migration may already have run the original CMake build.
+
+The repository has explicit system/source/BCR Bazel build oracles; their command
+and prerequisites are in
+[CONTRIBUTING.md](https://github.com/albertocavalcante/rebaze/blob/main/CONTRIBUTING.md).
+The small source oracle exercises a first-party CMake archive and an option that
+changes runtime behavior. It does not establish complete GLib, Meson, Autotools,
+or cross-platform build support.

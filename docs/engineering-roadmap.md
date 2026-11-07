@@ -2,8 +2,8 @@
 
 The next milestone is a reproducible native migration: small checked-in CMake
 and Gradle projects migrate, build, and run their tests with Bazel 9 from a clean
-checkout. The explicit discovery boundary is now implemented. Next align strategy
-semantics, then prove the whole path. Additional source formats follow
+checkout. Explicit discovery and the managed dependency strategy plan are now
+implemented. Next prove the complete CLI migration and test path. Additional source formats follow
 those correctness gates.
 
 This is the authoritative implementation sequence. The earlier
@@ -26,7 +26,7 @@ or input project passes.
 
 | Evidence axis              | Assessment | What remains                                                                                                                      |
 | -------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Contract/correctness       | Partial    | Typed rendering/error propagation exist; strategy selection and semantic labels still need consistent validation.                 |
+| Contract/correctness       | Partial    | Typed rendering and managed pkg-config plans exist; complete CMake mappings and target semantics still need fixtures.             |
 | Robustness/recovery        | Partial    | Path preflight and per-file atomic replacement exist; resource limits and complete-batch recovery are not established.            |
 | Compatibility/conformance  | Partial    | Bazel 9 is the target; parser/syntax tests do not prove all source/rule/platform semantics.                                       |
 | Consumer/integration proof | Partial    | Optional external CMake tests can return early when fixtures are absent; required native/JVM build-and-test fixtures are missing. |
@@ -34,9 +34,9 @@ or input project passes.
 | Documentation/usability    | Partial    | Contributor/review/architecture guides define the workflow; examples and support claims still need executable drift checks.       |
 
 See the [architecture](architecture.md) for current behavior and boundaries.
-Native rendering now consumes explicit discovery data. The next load-bearing
-gap is agreement between strategy configuration, imports, aliases, and generated
-dependency targets.
+Native rendering consumes explicit discovery data and one validated managed
+dependency plan. The next load-bearing gap is required complete CLI migrations
+that compare original and generated build/test behavior.
 
 ## Proposed implementation sequence
 
@@ -47,7 +47,7 @@ independent review of the final head.
 | Order                   | Outcome                                                                 | Completion gate                                                                                                                                            |
 | ----------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1                       | Completed: explicit discovery inputs and deterministic native rendering | Identical project/configuration/snapshot inputs produce identical path-content maps without running a process or accessing the network during generation.  |
-| 2                       | One validated dependency strategy plan                                  | System, source, and BCR aliases/imports agree; unsupported or incomplete choices fail before writing; existing valid configuration has migration coverage. |
+| 2                       | Completed managed pkg-config dependency strategy plan                   | System, source, and BCR aliases/imports agree; unsupported or incomplete choices fail before writing; existing valid configuration has migration coverage. |
 | 3                       | Required first-party migration fixtures                                 | Clean CI migrates native/JVM fixtures, builds them, runs their tests, and verifies expected behavior. Missing required inputs fail visibly.                |
 | 4                       | Bounded inputs and defined failure behavior                             | Hostile/oversized inputs fail within documented limits, preserve recoverable state, and produce actionable diagnostics.                                    |
 | Parallel delivery track | Repeatable contributor checks and verified runner/platform claims       | Local/CI checks agree; runner identity and head are recorded; native platform evidence matches every compatibility claim.                                  |
@@ -75,28 +75,27 @@ limits are per command/stream; whole-project budgets and descendant-process
 containment are separate contracts. Native CMake pre-validation can still create
 build state before discovery. See the [architecture](architecture.md) for details.
 
-### 2. Build one typed strategy plan
+### 2. Completed: managed dependency strategy plan
 
-[Generation](../crates/rebaze-bazel/src/lib.rs) currently creates a default
-`ThirdPartyConfig`, while `MigrationConfig` contains separate strategy settings.
-The MODULE, alias resolver, source targets, and system wrappers can disagree.
+`plan_cmake` prepares one borrowed project/configuration and validated dependency
+plan. Core probes only its selected system requests, then renders that same
+preparation. Defaults, prefix/package overrides, BCR fallback, active source
+transitives, aliases, and repository imports use this intent. Unsupported
+strategies, collisions, source cycles, incomplete metadata, and incompatible
+supported version predicates fail before generated output writes.
 
-1. Parse/validate strategy values once. Define precedence for defaults,
-   per-package overrides, BCR fallback, and explicit mappings. Preserve supported
-   TOML spellings and test old configuration before changing public types.
-2. Resolve normalized dependency identities, transitive edges, aliases, module
-   imports, and source metadata into one plan consumed by every generated file.
-   Detect unsupported selections and invalid source cycles explicitly.
-3. Separate Meson, CMake, and Autotools options by build system. Validate required
-   archive URL/checksum/output fields before emitting an active source target.
-   Keep checksum verification before extraction and keep its negative test.
-4. Start with system, source, and BCR cases. Treat other named strategies as
-   unsupported until an explicit implementation and fixture prove them.
+Source build-system options now reach their specific Meson/CMake/Autotools rule
+fields. The duplicate `ThirdPartyConfig` and generated dynamic strategy resolver
+are removed. Three explicit networked build oracles exercise system, first-party
+CMake-source, and BCR-zlib generated applications; ordinary unit tests do not run
+these tools or download archives. See [CONTRIBUTING.md](../CONTRIBUTING.md) for
+commands and platform limits.
 
-Tests must show that `strategy.default = "source"` is honored or rejected with an
-actionable error; silently substituting the system default is not acceptable.
-Generation failure must leave the original output untouched. Fetching/building
-external source remains an explicit integration operation, outside pure rendering.
+This completion applies to managed pkg-config dependencies and source transitives.
+It does not establish all imported-target mappings, complete per-target CMake
+linkage, arbitrary pkg-config compiler flags, or complete Meson/Autotools/GLib
+build compatibility. Preserve those gaps in the next fixture slice. Normal CMake
+prevalidation can precede planning; per-file write recovery is unchanged.
 
 ### 3. Prove real migrations with required fixtures
 
@@ -155,7 +154,7 @@ serializer or full AST requires an executable case the current Serde models
 cannot express; maintain one escaping implementation.
 
 Decisions to settle in the owning implementation PRs: discovery/API migration,
-strategy precedence, the first supported native/JVM fixture contracts, resource
+the first supported native/JVM fixture contracts, resource
 limits, and the desired complete-batch write recovery contract. Runner activation
 also needs working host credentials and infrastructure; workflow preparation
 alone does not establish readiness.

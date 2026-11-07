@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use rebaze_cmake::{CMakeProject, Executable, Library, LibraryKind};
 
 use crate::config::MigrationConfig;
+use crate::dependency_plan::DependencyPlan;
 use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources};
 use crate::starlark::{
     BazelDep, Call, CcBinary, CcLibrary, File, Glob, Identifier, Load, Module, Package, Reference,
@@ -44,6 +45,19 @@ fn detect_external_deps(project: &CMakeProject) -> DetectedDeps {
         );
 
     for lib in all_link_libs {
+        if project.pkg_config_modules.iter().any(|request| {
+            lib == &format!("PkgConfig::{}", request.prefix)
+                || request.packages.iter().any(|package| {
+                    let name = package
+                        .split(['<', '>', '='])
+                        .next()
+                        .unwrap_or_default()
+                        .trim();
+                    lib == &format!("-l{name}")
+                })
+        }) {
+            continue;
+        }
         let lib_lower = lib.to_lowercase();
         if lib_lower.contains("gtest")
             || lib_lower.contains("gmock")
@@ -85,55 +99,34 @@ fn push_module_header(
     })
 }
 
-fn push_rules_cc(parts: &mut File, config: &MigrationConfig) -> RenderResult<()> {
-    parts.comment("C/C++ toolchain");
-    parts.statement(&BazelDep {
-        name: "rules_cc".into(),
-        version: config.versions.rules_cc.clone(),
-    })
-}
-
-fn push_detected_frameworks(
-    parts: &mut File,
+pub fn base_dependencies(
     project: &CMakeProject,
     config: &MigrationConfig,
-) -> RenderResult<()> {
+) -> Vec<(String, String)> {
+    let mut deps = vec![("rules_cc".into(), config.versions.rules_cc.clone())];
     let detected = detect_external_deps(project);
-    for (enabled, name, version) in [
-        (
-            detected.googletest,
-            "googletest",
-            &config.versions.googletest,
-        ),
-        (
-            detected.benchmark,
-            "google_benchmark",
-            &config.versions.google_benchmark,
-        ),
-    ] {
-        if enabled {
-            parts.comment("Test/benchmark framework detected from CMake");
-            parts.statement(&BazelDep {
-                name: name.into(),
-                version: version.clone(),
-            })?;
-        }
+    if detected.googletest {
+        deps.push(("googletest".into(), config.versions.googletest.clone()));
     }
-    Ok(())
-}
-
-fn push_platforms(
-    parts: &mut File,
-    project: &CMakeProject,
-    config: &MigrationConfig,
-) -> RenderResult<()> {
+    if detected.benchmark {
+        deps.push((
+            "google_benchmark".into(),
+            config.versions.google_benchmark.clone(),
+        ));
+    }
     if !project.packages.is_empty() {
-        parts.statement(&BazelDep {
-            name: "platforms".into(),
-            version: config.versions.platforms.clone(),
-        })?;
+        deps.push(("platforms".into(), config.versions.platforms.clone()));
     }
-    Ok(())
+    // Explicit non-pkg CMake mappings retain their existing contract.
+    if config.strategy.default == "bcr" {
+        deps.extend(
+            resolve_bcr_deps(project, config)
+                .deps
+                .into_iter()
+                .map(|dep| (dep.name, dep.version)),
+        );
+    }
+    deps
 }
 
 /// Collect all package names from the CMake project that need resolution.
@@ -165,11 +158,6 @@ fn collect_all_packages(project: &CMakeProject) -> Vec<String> {
                 packages.insert(link_lib.clone());
             }
         }
-    }
-
-    // Add pkg-config module names
-    for pkg in &project.pkg_config_modules {
-        packages.insert(pkg.prefix.clone());
     }
 
     packages.into_iter().collect()
@@ -229,91 +217,48 @@ fn resolve_bcr_deps(project: &CMakeProject, config: &MigrationConfig) -> BcrReso
     resolution
 }
 
-fn push_bcr_dependencies(
-    parts: &mut File,
-    resolution: &BcrResolution,
-    config: &MigrationConfig,
-) -> RenderResult<()> {
-    if !resolution.deps.is_empty() {
-        parts.comment("Dependencies from Bazel Central Registry");
-        for dependency in &resolution.deps {
-            parts.statement(dependency)?;
-        }
-    }
-    for name in &resolution.unresolved {
-        let fallback = config.strategy.bcr_fallback.as_deref().unwrap_or("system");
-        parts.comment(&format!(
-            "{name} is not available in BCR (using {fallback} fallback)"
-        ));
-    }
-    Ok(())
-}
-
-fn push_pkg_config_extensions(
-    parts: &mut File,
-    project: &CMakeProject,
-    config: &MigrationConfig,
-) -> RenderResult<()> {
-    if project.pkg_config_modules.is_empty() {
-        return Ok(());
-    }
-    parts.statement(&BazelDep {
-        name: "rules_foreign_cc".into(),
-        version: config.versions.rules_foreign_cc.clone(),
-    })?;
-    let all_source_packages =
-        crate::third_party::source_packages(&project.pkg_config_modules, config);
-    let system_names = project
-        .pkg_config_modules
-        .iter()
-        .map(|package| format!("system_{}", crate::discovery::target_name(&package.prefix)))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    parts.comment(
-        "System library wrappers (non-hermetic; review paths in third_party/system_deps.bzl)",
-    );
-    parts.assign(
-        &Identifier::new("system_deps")?,
-        &UseExtension("//third_party:system_deps.bzl", "system_deps"),
-    )?;
-    parts.statement(&UseRepo {
-        extension: Reference::new("system_deps")?,
-        repositories: system_names,
-    })?;
-    parts.comment("Uncomment to enable source downloads and the source dependency strategy");
-    parts.commented_statement(&crate::starlark::serde_starlark::Assignment::new(
-        "source_deps",
-        UseExtension("//third_party:source.bzl", "source_deps"),
-    ))?;
-    parts.commented_statement(&UseRepo {
-        extension: Reference::new("source_deps")?,
-        repositories: all_source_packages
-            .iter()
-            .map(|name| format!("{name}_src"))
-            .collect(),
-    })?;
-    Ok(())
-}
-
-/// Generate a MODULE.bazel file for a CMake project.
+/// Generate MODULE.bazel from the same plan used by aliases and source targets.
 pub fn generate_module_bazel(
     project: &CMakeProject,
     config: &MigrationConfig,
+    plan: &DependencyPlan,
 ) -> RenderResult<String> {
     let mut file = File::new();
     push_module_header(&mut file, project, config)?;
-    push_rules_cc(&mut file, config)?;
-    push_detected_frameworks(&mut file, project, config)?;
-    push_platforms(&mut file, project, config)?;
-    if config.strategy.default == "bcr" {
-        let resolution = resolve_bcr_deps(project, config);
-        push_bcr_dependencies(&mut file, &resolution, config)?;
-        if !resolution.unresolved.is_empty() {
-            push_pkg_config_extensions(&mut file, project, config)?;
-        }
-    } else {
-        push_pkg_config_extensions(&mut file, project, config)?;
+    for (name, version) in &plan.modules {
+        file.statement(&BazelDep {
+            name: name.clone(),
+            version: version.clone(),
+        })?;
+    }
+    if !plan.systems.is_empty() {
+        file.comment("System wrappers use the observed host installation (non-hermetic).");
+        file.assign(
+            &Identifier::new("system_deps")?,
+            &UseExtension("//third_party:system_deps.bzl", "system_deps"),
+        )?;
+        file.statement(&UseRepo {
+            extension: Reference::new("system_deps")?,
+            repositories: plan
+                .systems
+                .iter()
+                .map(|package| format!("system_{}", crate::discovery::target_name(&package.prefix)))
+                .collect(),
+        })?;
+    }
+    if !plan.sources.is_empty() {
+        file.assign(
+            &Identifier::new("source_deps")?,
+            &UseExtension("//third_party:source.bzl", "source_deps"),
+        )?;
+        file.statement(&UseRepo {
+            extension: Reference::new("source_deps")?,
+            repositories: plan
+                .sources
+                .keys()
+                .map(|name| format!("{name}_src"))
+                .collect(),
+        })?;
     }
     file.render()
 }
@@ -322,6 +267,7 @@ pub fn generate_module_bazel(
 pub fn generate_root_build(
     project: &CMakeProject,
     config: &MigrationConfig,
+    plan: &DependencyPlan,
 ) -> RenderResult<String> {
     let mut file = File::new();
     file.comment(&format!(
@@ -341,7 +287,7 @@ pub fn generate_root_build(
     }
     for package in &project.pkg_config_modules {
         file.comment(&format!(
-            "//third_party:{} -> {} (system libraries are non-hermetic)",
+            "//third_party:{} -> {}",
             crate::discovery::target_name(&package.prefix),
             package.packages.join(", ")
         ));
@@ -352,7 +298,8 @@ pub fn generate_root_build(
     let mut seen_libraries = BTreeSet::new();
     for library in &project.libraries {
         if seen_libraries.insert(library.name.replace('-', "_")) {
-            let rule = build_cc_library(library, &project.libraries, &project.aliases, config);
+            let rule =
+                build_cc_library(library, &project.libraries, &project.aliases, config, plan);
             file.statement(&Call::new(&config.build.rules.library_rule, &rule)?)?;
         }
     }
@@ -360,9 +307,9 @@ pub fn generate_root_build(
         let rule = build_cc_binary(
             executable,
             &project.libraries,
-            &project.pkg_config_modules,
             &project.aliases,
             config,
+            plan,
         );
         file.statement(&Call::new(&config.build.rules.binary_rule, &rule)?)?;
     }
@@ -375,6 +322,7 @@ fn build_cc_library(
     all_libs: &[Library],
     aliases: &std::collections::HashMap<String, String>,
     config: &MigrationConfig,
+    plan: &DependencyPlan,
 ) -> CcLibrary {
     let target_name = lib.name.replace('-', "_");
 
@@ -417,7 +365,7 @@ fn build_cc_library(
 
     // Map link dependencies using config-driven mapper (filters out # TODO comments)
     // Deduplicate deps - CMake may report the same dependency multiple ways (e.g., fmt and fmt::fmt)
-    let deps: Vec<String> = {
+    let mut deps: Vec<String> = {
         let mut seen = std::collections::BTreeSet::new();
         lib.link_libraries
             .iter()
@@ -437,13 +385,21 @@ fn build_cc_library(
                 if internal_lib_names.contains(lib_name) {
                     Some(format!(":{}", lib_name.replace('-', "_")))
                 } else {
-                    config.map_dependency(resolved_name)
+                    plan.managed_link(resolved_name)
+                        .or_else(|| config.map_dependency(resolved_name))
                 }
             })
             .filter(|dep| !dep.starts_with('#'))
             .filter(|dep| seen.insert(dep.clone()))
             .collect()
     };
+
+    for name in plan.aliases.keys() {
+        let label = format!("//third_party:{name}");
+        if !deps.contains(&label) {
+            deps.push(label);
+        }
+    }
 
     CcLibrary {
         name: target_name,
@@ -467,9 +423,9 @@ fn build_cc_library(
 fn build_cc_binary(
     exe: &Executable,
     libs: &[Library],
-    pkg_config_modules: &[rebaze_cmake::PkgConfigModule],
     aliases: &std::collections::HashMap<String, String>,
     config: &MigrationConfig,
+    plan: &DependencyPlan,
 ) -> CcBinary {
     let target_name = exe.name.replace('-', "_");
 
@@ -535,17 +491,16 @@ fn build_cc_binary(
             if internal_lib_names.contains(lib_name) {
                 Some(format!(":{}", lib_name.replace('-', "_")))
             } else {
-                config.map_dependency(resolved_name)
+                plan.managed_link(resolved_name)
+                    .or_else(|| config.map_dependency(resolved_name))
             }
         })
         .filter(|dep| !dep.starts_with('#'))
         .filter(|dep| seen_deps.insert(dep.clone()))
         .collect();
 
-    // Add pkg-config dependencies from third_party/
-    for pkg in pkg_config_modules {
-        let dep_name = crate::discovery::target_name(&pkg.prefix);
-        let dep = format!("//third_party:{dep_name}");
+    for name in plan.aliases.keys() {
+        let dep = format!("//third_party:{name}");
         if seen_deps.insert(dep.clone()) {
             deps.push(dep);
         }
@@ -648,7 +603,12 @@ mod tests {
     fn test_generate_module_bazel() {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
-        let content = generate_module_bazel(&project, &config).unwrap();
+        let content = generate_module_bazel(
+            &project,
+            &config,
+            &DependencyPlan::new(&project, &config).unwrap(),
+        )
+        .unwrap();
 
         assert!(content.contains("module("));
         assert!(content.contains("test_project"));
@@ -660,7 +620,12 @@ mod tests {
     fn test_generate_root_build() {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
-        let content = generate_root_build(&project, &config).unwrap();
+        let content = generate_root_build(
+            &project,
+            &config,
+            &DependencyPlan::new(&project, &config).unwrap(),
+        )
+        .unwrap();
 
         assert!(content.contains("cc_library("));
         assert!(content.contains("cc_binary("));
@@ -683,7 +648,12 @@ mod tests {
     fn test_generate_module_bazel_format() {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
-        let content = generate_module_bazel(&project, &config).unwrap();
+        let content = generate_module_bazel(
+            &project,
+            &config,
+            &DependencyPlan::new(&project, &config).unwrap(),
+        )
+        .unwrap();
 
         // Check docstring is present
         assert!(content.contains("\"Bazel module for"));
@@ -701,7 +671,12 @@ mod tests {
     fn test_generate_root_build_format() {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
-        let content = generate_root_build(&project, &config).unwrap();
+        let content = generate_root_build(
+            &project,
+            &config,
+            &DependencyPlan::new(&project, &config).unwrap(),
+        )
+        .unwrap();
 
         // Check load statement
         assert!(content.contains("load("));
@@ -722,8 +697,18 @@ mod tests {
         let project = test_project();
         let config = crate::config::MigrationConfig::default();
 
-        let module = generate_module_bazel(&project, &config).unwrap();
-        let build = generate_root_build(&project, &config).unwrap();
+        let module = generate_module_bazel(
+            &project,
+            &config,
+            &DependencyPlan::new(&project, &config).unwrap(),
+        )
+        .unwrap();
+        let build = generate_root_build(
+            &project,
+            &config,
+            &DependencyPlan::new(&project, &config).unwrap(),
+        )
+        .unwrap();
 
         // This test verifies that the output is properly formatted Starlark
         // by checking the overall structure

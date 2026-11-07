@@ -126,20 +126,51 @@ fixtures for the supported subset. Detection alone is not migration support.
 
 ## Native generation API
 
-CMake rendering requires an explicit `DiscoverySnapshot`. Pass it to
-`generate_from_cmake(project, &snapshot)` or
-`generate_from_cmake_with_config(project, config, &snapshot)`. The former implicit
-probe functions in `rebaze-bazel::third_party` have been removed. Third-party
-render helpers also require a snapshot. `GenerationError` now distinguishes
-render failures from discovery/snapshot failures; `PackageInfo` and `SystemLibrary`
-replace the old probe-specific data types.
+Use `plan_cmake(project, config)` to prepare native CMake generation. The borrowed
+`CMakeGeneration` validates strategy intent once. Pass only `system_modules()` to
+`rebaze_core::discovery::discover_packages`, then call `render(&snapshot)` on the
+same preparation. This keeps discovery and output selection consistent.
 
-Application/core callers can obtain observations through
-`rebaze_core::discovery::discover_packages`. Generation tests construct snapshots
-explicitly; they must not depend on an installed pkg-config tool. Record
-unavailability deliberately for fallback cases. Missing or stale requests and
-failed probes must be tested as errors. The [architecture](docs/architecture.md)
-describes limits, capture semantics, and the separation between rendering and discovery.
+The convenience functions `generate_from_cmake(project, &snapshot)` and
+`generate_from_cmake_with_config(project, config, &snapshot)` still work; they
+prepare internally. Source-only/BCR-only plans accept an empty snapshot. System
+requests, including selected source transitives, need exact observations.
+`GenerationError` distinguishes planning, rendering, and discovery failures.
+
+`ThirdPartyConfig`, `DepsStrategy`, and direct third-party rendering helpers have
+been removed. They could disagree with `MigrationConfig` and the shared plan.
+Use `MigrationConfig.strategy` and the prepared API instead. Raw TOML spellings
+remain strings at the configuration boundary; the plan accepts only implemented
+`DependencyStrategy` values. Generated `config.bzl` is inspection data; change
+`rebaze.toml` and regenerate to change providers.
+
+Generation tests construct snapshots explicitly and must not rely on installed
+pkg-config tools. Record unavailability deliberately; test missing/stale requests
+and failed probes as errors. The [architecture](docs/architecture.md) describes
+capture semantics, limits, and remaining compiler-flag/mapping gaps.
+
+### Explicit generated dependency builds
+
+On Unix with Bazel 9, a C toolchain, CMake, Ninja, tar, shasum, and network access,
+run the three required cases for a dependency-strategy change:
+
+```bash
+cargo test -p rebaze-bazel --locked dependency_build_tests -- --ignored --test-threads=1
+```
+
+This command explicitly selects ignored networked oracles; ordinary Cargo/Bazel
+unit tests do not execute them. Missing tools, downloads, or fixture inputs fail
+the selected tests. The fixtures build/run system, first-party CMake-source, and
+BCR-zlib applications. The system case covers outside-prefix headers, joined
+compile definitions, spaced/quoted paths, and ordered linker flags. The source
+case verifies a CMake option changes the program's result. It computes a checksum
+for its own first-party archive rather than trusting an external artifact.
+
+`REBAZE_BAZEL_TEST_ROOT` can name an absolute cache directory for these tests.
+They ignore system/home Bazel rc files and pass only PATH/HOME to fixture
+processes. Their results establish the tested host's compatibility, not native
+Windows execution or complete Meson/Autotools/GLib support. Record which oracles
+actually ran, separately from standard CI and optional corpus tests.
 
 ## Test behavior and failures
 

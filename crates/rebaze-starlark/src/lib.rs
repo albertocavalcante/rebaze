@@ -97,9 +97,9 @@ pub struct CcLibrary {
 /// Bazel alias rule
 #[derive(Serialize)]
 #[serde(rename = "alias")]
-pub struct Alias {
+pub struct Alias<T = String> {
     pub name: String,
-    pub actual: FunctionCall,
+    pub actual: T,
 }
 
 /// A function call expression like resolve_dep("glib")

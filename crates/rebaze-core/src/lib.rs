@@ -121,13 +121,14 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                         .config
                         .as_ref()
                         .map_or_else(BazelConfig::default, Config::bazel_config);
+                    let generation = rebaze_bazel::plan_cmake(&project, &bazel_config)?;
                     let observations = discovery::discover_packages(
-                        &project.pkg_config_modules,
+                        generation.system_modules(),
                         &discovery::DiscoveryOptions::default(),
                     )?;
-                    for module in rebaze_bazel::deduplicate_modules(&project.pkg_config_modules) {
+                    for module in generation.system_modules() {
                         use rebaze_bazel::discovery::ProbeOutcome;
-                        match observations.outcome(&module)? {
+                        match observations.outcome(module)? {
                             ProbeOutcome::Unavailable(reason) => tracing::warn!(
                                 package = ?module.prefix, reason = %reason,
                                 "Using unavailable-package fallback"
@@ -142,11 +143,7 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                             ProbeOutcome::Available(_) | ProbeOutcome::Failed(_) => {}
                         }
                     }
-                    let bazel_files = rebaze_bazel::generate_from_cmake_with_config(
-                        &project,
-                        &bazel_config,
-                        &observations,
-                    )?;
+                    let bazel_files = generation.render(&observations)?;
 
                     tracing::info!("Generated {} Bazel files", bazel_files.len());
                     if options.dry_run {
