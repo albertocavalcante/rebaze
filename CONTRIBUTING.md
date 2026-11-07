@@ -80,16 +80,19 @@ Mixed changes select every relevant check. Manual CI dispatch selects everything
 
 `CI Result` checks the selected job outcomes, including intentional skips. Failed
 routing or cancelled/failed required jobs cannot produce a successful result.
-The routing regression suite is available locally without third-party packages:
+The routing suite includes Markdown checks using two small hash-pinned packages:
 
 ```bash
-python3 -m unittest discover -s .github/scripts -p 'test_ci_routing.py'
-python3 .github/scripts/ci_routing.py check-docs
+python3 -m venv .rebaze/ci-python
+.rebaze/ci-python/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-docs.txt
+.rebaze/ci-python/bin/python -m unittest discover -s .github/scripts -p 'test_ci_routing.py'
+.rebaze/ci-python/bin/python .github/scripts/ci_routing.py check-docs
 ```
 
-The Markdown check covers known repository docs, heading structure, and local
-inline destinations outside code fences. It does not replace full Markdown
-parsing, external URL checks, or Astro's MDX/site link validation.
+The Markdown check parses CommonMark with tables. It checks top-level heading
+structure and local link/image destinations, including reference links, while
+ignoring literal/code examples. External URLs, anchors, and Astro MDX/site links
+need their own checks.
 
 `cargo fmt` applies Rust formatting. `just --list` shows convenience recipes;
 the explicit CI commands above are the full check contract. In particular,

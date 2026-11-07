@@ -1,4 +1,4 @@
-"""Conservative CI routing and inexpensive repository-document checks (stdlib only)."""
+"""Conservative CI routing and inexpensive repository-document checks."""
 
 from __future__ import annotations
 
@@ -9,7 +9,11 @@ import sys
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
+
+if TYPE_CHECKING:
+    from markdown_it.token import Token
 
 REPOSITORY_DOCS = frozenset(
     {
@@ -42,7 +46,6 @@ ROUTING_FILES = frozenset(
     }
 )
 SHA = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\Z")
-INLINE_LINK = re.compile(r"!?\[[^\]\n]*\]\((<[^>\n]+>|[^\s)]+)(?:\s+[^)]+)?\)")
 
 
 @dataclass(frozen=True)
@@ -113,12 +116,36 @@ def route_revision(root: Path, event: str, base: str, head: str, force: str) -> 
         return Route(True, True, "comparison unavailable; full verification")
 
 
-def check_docs(root: Path) -> None:
-    """Check tracked repository Markdown structure and local inline destinations.
+def local_destinations(tokens: list[Token], line: int = 1) -> list[tuple[int, str]]:
+    destinations: list[tuple[int, str]] = []
+    for token in tokens:
+        location = token.map[0] + 1 if token.map else line
+        attribute = (
+            "href"
+            if token.type == "link_open"
+            else "src"
+            if token.type == "image"
+            else None
+        )
+        if attribute and (target := token.attrGet(attribute)) is not None:
+            if not isinstance(target, str):
+                raise ValueError("Markdown destination must be text")
+            destinations.append((location, target))
+        if token.children:
+            destinations.extend(local_destinations(token.children, location))
+    return destinations
 
-    Published MDX is checked by Astro. Code fences and external URLs are excluded;
-    this is deliberately not a full Markdown parser or a network link checker.
+
+def check_docs(root: Path) -> None:
+    """Check CommonMark/table links and top-level repository heading structure.
+
+    The parser distinguishes code/literal text from actual links and images.
+    Published MDX, URL reachability, and anchor validation remain separate checks.
     """
+    # Only the docs command/tests need these small, hash-pinned CI dependencies.
+    from markdown_it import MarkdownIt
+
+    parser = MarkdownIt("commonmark").enable("table")
     paths = git(root, "ls-files", "-z").split(b"\0")
     errors: list[str] = []
     for raw in paths:
@@ -131,41 +158,29 @@ def check_docs(root: Path) -> None:
                 f"{path}: repository documentation must not escape through symlinks"
             )
             continue
-        source = file.read_text(encoding="utf-8")
-        fence: str | None = None
-        headings: list[int] = []
-        for number, line in enumerate(source.splitlines(), 1):
-            marker = re.match(r"^\s*(`{3,}|~{3,})", line)
-            if marker:
-                current = marker[1]
-                if fence is None:
-                    fence = current
-                elif current[0] == fence[0] and len(current) >= len(fence):
-                    fence = None
+        tokens = parser.parse(file.read_text(encoding="utf-8"))
+        headings = [
+            int(token.tag[1:])
+            for token in tokens
+            if token.type == "heading_open" and token.level == 0
+        ]
+        for number, target in local_destinations(tokens):
+            parsed = urlsplit(target)
+            if parsed.scheme or parsed.netloc or not parsed.path:
                 continue
-            if fence is not None:
-                continue
-            heading = re.match(r"^(#{1,6})\s", line)
-            if heading:
-                headings.append(len(heading[1]))
-            for link in INLINE_LINK.finditer(line):
-                target = link[1].removeprefix("<").removesuffix(">")
-                parsed = urlsplit(target)
-                if parsed.scheme or parsed.netloc or not parsed.path:
-                    continue
-                destination = file.parent / unquote(parsed.path)
-                if (
-                    PurePosixPath(unquote(parsed.path)).is_absolute()
-                    or not destination.resolve().is_relative_to(root.resolve())
-                    or not destination.exists()
-                ):
-                    errors.append(
-                        f"{path}:{number}: missing or escaping local destination {target!r}"
-                    )
+            destination = file.parent / unquote(parsed.path)
+            if (
+                PurePosixPath(unquote(parsed.path)).is_absolute()
+                or not destination.resolve().is_relative_to(root.resolve())
+                or not destination.exists()
+            ):
+                errors.append(
+                    f"{path}:{number}: missing or escaping local destination {target!r}"
+                )
         if headings.count(1) != 1 or any(b > a + 1 for a, b in pairwise(headings)):
-            errors.append(f"{path}: require one H1 and no skipped heading levels")
-        if fence is not None:
-            errors.append(f"{path}: unclosed code fence")
+            errors.append(
+                f"{path}: require one top-level H1 and no skipped heading levels"
+            )
     if errors:
         raise ValueError("\n".join(errors))
 

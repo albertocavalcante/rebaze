@@ -174,6 +174,28 @@ class GitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "escaping"):
             routing.check_docs(self.root)
 
+    def test_literal_markdown_examples_are_not_links(self) -> None:
+        examples = [
+            "Write `[caption](missing.md)` to demonstrate link syntax.",
+            r"Write \[caption](missing.md) to demonstrate escaped text.",
+            "> ```md\n> [caption](missing.md)\n> ```",
+            "- Example:\n\n    ```md\n    [caption](missing.md)\n    ```",
+        ]
+        for example in examples:
+            with self.subTest(example=example):
+                self.commit("README.md", "# Example\n\n" + example + "\n")
+                routing.check_docs(self.root)
+
+    def test_reference_and_image_destinations_are_checked(self) -> None:
+        for source in [
+            "# Example\n\n[caption][target]\n\n[target]: missing.md\n",
+            "# Example\n\n![picture](missing.png)\n",
+        ]:
+            with self.subTest(source=source):
+                self.commit("README.md", source)
+                with self.assertRaisesRegex(ValueError, "missing or escaping"):
+                    routing.check_docs(self.root)
+
 
 class GateTests(unittest.TestCase):
     @staticmethod

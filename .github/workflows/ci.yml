@@ -36,6 +36,10 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 .github/scripts/ci_routing.py classify
+      - name: Install hash-pinned Markdown parser
+        run: |
+          python3 -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/markdown-check" -r .github/requirements-docs.txt
+          echo "PYTHONPATH=$RUNNER_TEMP/markdown-check" >> "$GITHUB_ENV"
       - name: Test conservative routing and job gates
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_routing.py'
       - name: Check repository Markdown
