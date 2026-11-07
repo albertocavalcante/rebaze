@@ -28,6 +28,11 @@ bzl = "@mycompany//build:rules.bzl"
 items = ["my_cc_library", "my_cc_binary", "my_cc_test"]
 ```
 
+The native CMake generator uses `library_rule` and `binary_rule` for emitted
+rule calls. `test_rule` is reserved configuration; CMake test targets are not
+currently generated. Custom rules must accept the generated `cc_library` or
+`cc_binary` attributes.
+
 ## Generated Output
 
 Instead of:

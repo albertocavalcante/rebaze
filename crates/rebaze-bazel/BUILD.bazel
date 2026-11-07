@@ -3,6 +3,7 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 rust_library(
     name = "rebaze-bazel",
     srcs = glob(["src/**/*.rs"]),
+    compile_data = glob(["src/templates/*.bzl"]),
     edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
@@ -22,4 +23,5 @@ rust_library(
 rust_test(
     name = "rebaze-bazel_test",
     crate = ":rebaze-bazel",
+    deps = ["@crates//:starlark_syntax"],
 )

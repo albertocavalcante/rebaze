@@ -1,0 +1,30 @@
+name: Runmux Canary
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: runmux-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    name: Runmux Linux ARM64 canary
+    runs-on: air-ci
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify platform, identity, and non-root execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = aarch64
+          test "$(id -u)" -ne 0
+          case "$RUNNER_NAME" in
+            rmx-air-*) ;;
+            *) echo "Unexpected runmux runner: $RUNNER_NAME" >&2; exit 1 ;;
+          esac
+          printf 'Verified runner: %s\n' "$RUNNER_NAME"
