@@ -67,6 +67,35 @@ pub struct CMakeProject {
     /// Target aliases (alias_name -> real_target_name).
     /// Created by add_library(alias_name ALIAS real_target) commands.
     pub aliases: HashMap<String, String>,
+    /// Explicit test registrations; native migration validates its supported subset.
+    pub testing: Testing,
+}
+
+/// Test intent from source files, independent of installed build tools.
+#[derive(Debug, Clone, Default)]
+pub struct Testing {
+    /// An unconditional `enable_testing()` in this directory.
+    pub enabled: bool,
+    pub tests: Vec<CMakeTest>,
+    /// Test semantics which extraction cannot faithfully represent.
+    pub unsupported: Vec<String>,
+    /// Settings requiring evaluation if this project or its children register tests.
+    pub requires_evaluation: Vec<TestEvaluation>,
+}
+
+/// Source settings whose effect on tests requires CMake evaluation.
+#[derive(Debug, Clone)]
+pub enum TestEvaluation {
+    Launcher,
+    ScopedSubdirectory,
+    DynamicProperty,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CMakeTest {
+    pub name: String,
+    pub executable: String,
+    pub args: Vec<String>,
 }
 
 /// An executable target.

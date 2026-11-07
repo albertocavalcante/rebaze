@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.20)
+project(rebaze_fixture C)
+enable_testing()
+add_library(dep STATIC dep.c)
+target_include_directories(dep PUBLIC include)
+add_executable(probe main.c)
+target_link_libraries(probe PRIVATE dep)
+add_subdirectory(tests)

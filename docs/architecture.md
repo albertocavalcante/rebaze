@@ -116,6 +116,24 @@ configuration is assigned through serialized tables. The system helper uses
 `json.encode` when it constructs a nested BUILD file from dynamic values.
 Keep the boundary between trusted helper code and project data explicit.
 
+Source-based CMake generation supports unconditional literal
+`add_test(NAME name COMMAND executable_target args...)` registrations, including
+subdirectories, with an unconditional root `enable_testing()`. It retains each
+binary and emits a separate `ctest_<name>` target using the configured test rule
+(default `cc_test`). Names normalize hyphens to underscores; invalid names,
+collisions, unknown/ambiguous executables, and unsupported registrations fail
+during planning before discovery or generated output writes. Arguments remain
+serialized data and are escaped for Bazel's Make expansion and argv tokenization.
+
+Conditional/scoped test declarations and directory inclusion, dynamic property
+selection, variables/generator expressions, legacy
+syntax, properties, configuration selection, explicit working directories, and
+list expansion, launchers and cross-compilation emulators are rejected. This subset targets self-contained tests: CTest's
+build-directory working environment and Bazel's sandbox/runfiles environment are
+different. Test data files and CMake File API test import are not implemented.
+The explicit first-party CLI oracle checks both successful and failing tests;
+normal CLI migration validation continues to build without running test suites.
+
 One configurable `KnownPackageInfo` catalog supplies source archive metadata and
 build targets. `SourceBuildSystem` distinguishes Meson, CMake, and Autotools.
 The plan unions catalog dependencies with configured transitive edges, rejects

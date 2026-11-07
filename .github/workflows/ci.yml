@@ -77,3 +77,11 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+
+      - name: Install verified fixture tools
+        run: |
+          bash .github/scripts/setup-bazel.sh
+          bash .github/scripts/setup-cmake.sh
+
+      - name: Required CMake CLI migration
+        run: bash .github/scripts/test-cmake-migration.sh target/debug/rebaze

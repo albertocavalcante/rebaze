@@ -119,6 +119,11 @@ pinned deployed image itself: the current image predates the launcher temp-dir
 fix present in newer runmux source. Setup publishes environment changes only
 after success.
 
+The required CMake CLI fixture additionally installs verified CMake/CTest 3.31.10
+archives and verified Bazel in the Cargo job. It uses the image's Make/C compiler,
+isolates fixture Bazel configuration/output, and explicitly exercises both test
+success and assertion failure. Its missing tools/fixture inputs are fatal.
+
 ## Public pull requests and failure recovery
 
 GitHub's effective fork approval policy is `all_external_contributors`. The pool

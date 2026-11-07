@@ -7,11 +7,13 @@ mod commands;
 mod extract;
 mod path_utils;
 mod target_props;
+mod testing;
 mod types;
 
 // Re-export public types
 pub use types::{
-    CMakeProject, Executable, ExtractError, Library, LibraryKind, Package, PkgConfigModule,
+    CMakeProject, CMakeTest, Executable, ExtractError, Library, LibraryKind, Package,
+    PkgConfigModule, TestEvaluation, Testing,
 };
 
 // Re-export main extraction functions

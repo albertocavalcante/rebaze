@@ -8,8 +8,8 @@ use crate::config::MigrationConfig;
 use crate::dependency_plan::DependencyPlan;
 use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources};
 use crate::starlark::{
-    BazelDep, Call, CcBinary, CcLibrary, File, Glob, Identifier, Load, Module, Package, Reference,
-    RenderResult, SrcsWithHdrs, UseExtension, UseRepo,
+    BazelDep, Call, CcBinary, CcLibrary, CcTest, File, Glob, Identifier, Load, Module, Package,
+    Reference, RenderResult, SrcsWithHdrs, UseExtension, UseRepo,
 };
 
 /// BCR resolution result for a project.
@@ -268,6 +268,7 @@ pub fn generate_root_build(
     project: &CMakeProject,
     config: &MigrationConfig,
     plan: &DependencyPlan,
+    tests: &[crate::cmake_tests::PlannedTest<'_>],
 ) -> RenderResult<String> {
     let mut file = File::new();
     file.comment(&format!(
@@ -277,7 +278,7 @@ pub fn generate_root_build(
     file.comment("Review generated include paths and glob patterns (allow_empty=True).");
     file.load(Load {
         bzl: "@rules_cc//cc:defs.bzl".into(),
-        items: ["cc_binary".into(), "cc_library".into()].into(),
+        items: ["cc_binary".into(), "cc_library".into(), "cc_test".into()].into(),
     })?;
     for load in &config.build.rules.extra_loads {
         file.load(Load {
@@ -312,6 +313,23 @@ pub fn generate_root_build(
             plan,
         );
         file.statement(&Call::new(&config.build.rules.binary_rule, &rule)?)?;
+    }
+    for test in tests {
+        let binary = build_cc_binary(
+            test.executable,
+            &project.libraries,
+            &project.aliases,
+            config,
+            plan,
+        );
+        file.statement(&Call::new(
+            &config.build.rules.test_rule,
+            &CcTest {
+                name: test.name.clone(),
+                binary: &binary,
+                args: &test.registration.args,
+            },
+        )?)?;
     }
     file.render()
 }
@@ -596,6 +614,7 @@ mod tests {
             cxx_standard: Some("17".to_string()),
             c_standard: None,
             aliases: std::collections::HashMap::new(),
+            testing: rebaze_cmake::Testing::default(),
         }
     }
 
@@ -624,6 +643,7 @@ mod tests {
             &project,
             &config,
             &DependencyPlan::new(&project, &config).unwrap(),
+            &[],
         )
         .unwrap();
 
@@ -675,6 +695,7 @@ mod tests {
             &project,
             &config,
             &DependencyPlan::new(&project, &config).unwrap(),
+            &[],
         )
         .unwrap();
 
@@ -707,6 +728,7 @@ mod tests {
             &project,
             &config,
             &DependencyPlan::new(&project, &config).unwrap(),
+            &[],
         )
         .unwrap();
 

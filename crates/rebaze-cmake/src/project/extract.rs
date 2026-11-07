@@ -26,6 +26,7 @@ pub fn extract_project_with_context(
     ctx: &mut EvalContext,
 ) -> CMakeProject {
     let mut project = CMakeProject {
+        testing: super::testing::extract(file),
         path,
         ..Default::default()
     };
@@ -209,6 +210,15 @@ fn extract_recursive(
                     project.libraries.push(lib);
                 }
                 project.packages.extend(subproject.packages);
+                project.testing.tests.extend(subproject.testing.tests);
+                project
+                    .testing
+                    .requires_evaluation
+                    .extend(subproject.testing.requires_evaluation);
+                project
+                    .testing
+                    .unsupported
+                    .extend(subproject.testing.unsupported);
                 project
                     .pkg_config_modules
                     .extend(subproject.pkg_config_modules);
