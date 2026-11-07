@@ -9,10 +9,22 @@ use std::path::Path;
 pub use crate::config::MigrationConfig;
 pub use crate::generator::BazelFile;
 pub use crate::third_party::{DepsStrategy, ThirdPartyConfig, deduplicate_modules};
-pub use rebaze_starlark::{Error as GenerationError, RenderResult as GenerationResult};
+pub use discovery::DiscoverySnapshot;
+
+/// Failure to render a complete native output bundle.
+#[derive(Debug, thiserror::Error)]
+pub enum GenerationError {
+    #[error(transparent)]
+    Render(#[from] rebaze_starlark::Error),
+    #[error(transparent)]
+    Discovery(#[from] discovery::SnapshotError),
+}
+
+pub type GenerationResult<T> = std::result::Result<T, GenerationError>;
 
 mod cmake_generator;
 pub mod config;
+pub mod discovery;
 pub mod filters;
 #[cfg(test)]
 mod generation_tests;
@@ -45,23 +57,27 @@ pub fn generate(
     // Generate .bazelversion
     files.insert(".bazelversion".to_string(), "9.0.0\n".to_string());
 
-    tracing::info!("Generated {} Bazel files", files.len());
-
     Ok(files)
 }
 
 /// Generate Bazel files from a parsed CMake project.
 pub fn generate_from_cmake(
     project: &rebaze_cmake::CMakeProject,
+    discovery: &DiscoverySnapshot,
 ) -> GenerationResult<HashMap<String, String>> {
-    generate_from_cmake_with_config(project, &MigrationConfig::default())
+    generate_from_cmake_with_config(project, &MigrationConfig::default(), discovery)
 }
 
 /// Generate Bazel files from a parsed CMake project with custom configuration.
 pub fn generate_from_cmake_with_config(
     project: &rebaze_cmake::CMakeProject,
     config: &MigrationConfig,
+    discovery: &DiscoverySnapshot,
 ) -> GenerationResult<HashMap<String, String>> {
+    // Validate every observation before rendering any output.
+    for module in deduplicate_modules(&project.pkg_config_modules) {
+        discovery.package(&module)?;
+    }
     let mut files = HashMap::new();
 
     // Generate MODULE.bazel
@@ -87,7 +103,7 @@ pub fn generate_from_cmake_with_config(
         let modules = deduplicate_modules(&project.pkg_config_modules);
 
         // Compose files structurally so every load remains ahead of rule calls.
-        let mut build = third_party::build_file(&modules, &third_party_config)?;
+        let mut build = third_party::build_file(&modules, &third_party_config, discovery)?;
         build.append(third_party::source_build_targets(&modules, config)?);
         files.insert("third_party/BUILD.bazel".into(), build.render()?);
 
@@ -100,11 +116,9 @@ pub fn generate_from_cmake_with_config(
         files.insert("third_party/source.bzl".to_string(), source_bzl);
 
         // Generate system_deps.bzl module extension for system libraries
-        let system_deps_bzl = third_party::generate_system_deps_bzl(&modules)?;
+        let system_deps_bzl = third_party::generate_system_deps_bzl(&modules, discovery)?;
         files.insert("third_party/system_deps.bzl".to_string(), system_deps_bzl);
     }
-
-    tracing::info!("Generated {} Bazel files for CMake project", files.len());
 
     Ok(files)
 }
@@ -170,9 +184,6 @@ fn generate_cpp_bazelrc(
                 if SUPPORTED_CXX_STANDARDS.contains(&std.as_str()) {
                     (std.clone(), None)
                 } else if EXPERIMENTAL_CXX_STANDARDS.contains(&std.as_str()) {
-                    tracing::warn!(
-                        "C++{std} detected - this is experimental and may have toolchain compatibility issues"
-                    );
                     (
                         std.clone(),
                         Some(format!(
@@ -180,11 +191,11 @@ fn generate_cpp_bazelrc(
                         )),
                     )
                 } else {
-                    tracing::warn!("Unknown C++ standard '{std}' detected, defaulting to C++17");
                     (
                         "17".to_string(),
                         Some(format!(
-                            "# WARNING: Unknown standard '{std}' was detected, using C++17"
+                            "# WARNING: Unknown standard '{}' was detected, using C++17",
+                            std.escape_debug()
                         )),
                     )
                 }
@@ -197,7 +208,11 @@ fn generate_cpp_bazelrc(
         }
         lines.push(format!(
             "# C++ standard (detected: {})",
-            project.cxx_standard.as_deref().unwrap_or("not specified")
+            project
+                .cxx_standard
+                .as_deref()
+                .unwrap_or("not specified")
+                .escape_debug()
         ));
         lines.push(format!("common --cxxopt=-std=c++{cxx_std}"));
         lines.push(format!("common --host_cxxopt=-std=c++{cxx_std}"));
@@ -216,7 +231,10 @@ fn generate_cpp_bazelrc(
                     "17" | "18" => "17",
                     "23" => "23",
                     _ => {
-                        tracing::warn!("Unknown C standard '{std}' detected, defaulting to C11");
+                        lines.push(format!(
+                            "# WARNING: Unknown C standard '{}' detected, using C11",
+                            std.escape_debug()
+                        ));
                         "11"
                     }
                 }
@@ -226,7 +244,11 @@ fn generate_cpp_bazelrc(
 
         lines.push(format!(
             "# C standard (detected: {})",
-            project.c_standard.as_deref().unwrap_or("not specified")
+            project
+                .c_standard
+                .as_deref()
+                .unwrap_or("not specified")
+                .escape_debug()
         ));
         lines.push(format!("common --copt=-std=c{c_std}"));
         lines.push(format!("common --host_copt=-std=c{c_std}"));

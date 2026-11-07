@@ -124,6 +124,23 @@ To add a parser, add its Cargo workspace member, crate `BUILD.bazel`, and manife
 entry in `MODULE.bazel`. Wire it into core detection/migration explicitly and add
 fixtures for the supported subset. Detection alone is not migration support.
 
+## Native generation API
+
+CMake rendering requires an explicit `DiscoverySnapshot`. Pass it to
+`generate_from_cmake(project, &snapshot)` or
+`generate_from_cmake_with_config(project, config, &snapshot)`. The former implicit
+probe functions in `rebaze-bazel::third_party` have been removed. Third-party
+render helpers also require a snapshot. `GenerationError` now distinguishes
+render failures from discovery/snapshot failures; `PackageInfo` and `SystemLibrary`
+replace the old probe-specific data types.
+
+Application/core callers can obtain observations through
+`rebaze_core::discovery::discover_packages`. Generation tests construct snapshots
+explicitly; they must not depend on an installed pkg-config tool. Record
+unavailability deliberately for fallback cases. Missing or stale requests and
+failed probes must be tested as errors. The [architecture](docs/architecture.md)
+describes limits, capture semantics, and the separation between rendering and discovery.
+
 ## Test behavior and failures
 
 For a bug fix, provide a focused regression that fails on the base and passes

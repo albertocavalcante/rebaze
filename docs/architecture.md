@@ -27,8 +27,10 @@ reserved, and several override/resolution modes return explicit errors.
 1. The CLI loads explicit or discovered configuration and calls `rebaze-core`.
 2. Core selects the source system and generator. CMake uses parsed source files
    or an existing File API reply; Gradle uses its parser/project model.
-3. `rebaze-bazel` constructs a map of output paths to contents. Its generation
-   APIs return `GenerationResult<HashMap<String, String>>`.
+3. For native CMake, core explicitly discovers declared pkg-config dependencies
+   through `rebaze_core::discovery` and passes a `DiscoverySnapshot` to generation.
+   Gradle does not need this host snapshot. Both native generators return a map through
+   `GenerationResult<HashMap<String, String>>`.
 4. A dry run prints the map in path order. A writing migration passes the complete
    map to `write_files` before normal post-generation Bazel validation.
 
@@ -47,14 +49,53 @@ not be assumed to apply to that separate path.
 
 ## Data and effect boundaries
 
-| Boundary           | Current contract and limit                                                                                                                                                          |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Parsing/extraction | Syntax functions consume source data; file-oriented entry points also read project files. CMake extraction supports a subset of CMake semantics.                                    |
-| Configuration      | `MigrationConfig` owns versions, mappings, filters, custom rules, strategy settings, and the known source-package catalog. Some strategy settings are not consistently honored yet. |
-| Host discovery     | Third-party generation still runs `pkg-config` inside `rebaze-bazel`. Host paths/flags therefore affect output. Making this an explicit snapshot is the next implementation slice.  |
-| Starlark rendering | Models serialize values through `serde_starlark`. Validated identifiers, references, and calls distinguish generator syntax from project data.                                      |
-| Output writing     | All paths are preflighted. Each file uses a temporary file and atomic replacement. This is not a transaction across the complete output set.                                        |
-| Build validation   | Core executes CMake/Bazel and reports unsuccessful status. A failed post-generation build leaves generated files available for inspection.                                          |
+| Boundary           | Current contract and limit                                                                                                                                                                                                        |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Parsing/extraction | Syntax functions consume source data; file-oriented entry points also read project files. CMake extraction supports a subset of CMake semantics.                                                                                  |
+| Configuration      | `MigrationConfig` owns versions, mappings, filters, custom rules, strategy settings, and the known source-package catalog. Some strategy settings are not consistently honored yet.                                               |
+| Host discovery     | Core runs pkg-config at an explicit boundary and supplies an owned snapshot. Rendering reads only that snapshot, project data, and configuration. Host discovery remains non-hermetic, but rendering no longer inspects the host. |
+| Starlark rendering | Models serialize values through `serde_starlark`. Validated identifiers, references, and calls distinguish generator syntax from project data.                                                                                    |
+| Output writing     | All paths are preflighted. Each file uses a temporary file and atomic replacement. This is not a transaction across the complete output set.                                                                                      |
+| Build validation   | Core executes CMake/Bazel and reports unsuccessful status. A failed post-generation build leaves generated files available for inspection.                                                                                        |
+
+## Discovery and rendering API
+
+CMake callers supply discovery explicitly to `generate_from_cmake(project,
+&snapshot)` or `generate_from_cmake_with_config(project, config, &snapshot)`.
+These functions do not execute probes or emit log events. Generation diagnostics
+such as unsupported language-standard warnings are returned in `.bazelrc`
+comments; core owns logging of discovery outcomes and output counts.
+
+`DiscoverySnapshot` is an owned, serializable map of exact package requests to
+available data, explicit unavailability, or typed failures. A missing/mismatched
+observation or a failed probe is a generation error. Callers can build snapshots
+without running a tool, serialize them, and replay the same rendering inputs.
+An empty snapshot is sufficient only when no pkg-config modules need observations.
+
+`rebaze_core::discovery::discover_packages` is the explicit host adapter. It probes
+each distinct request once per pass, preserving version constraints. The adapter
+uses argument vectors, shell-escaped flag parsing, concurrent capped stdout/stderr
+capture, and a deadline that includes process exit and pipe draining. Defaults are
+five seconds per command and 256 KiB per stream. Library callers can configure
+limits within the validated range: up to 300 seconds and 16 MiB per stream.
+Requests have a 64 KiB argument budget and reject option/control-character input.
+
+Missing tools and unsatisfied requests retain the fallback/stub behavior, with
+core warnings. Other unsuccessful queries, invalid UTF-8/flags/prefixes, timeout,
+and capture overflow are typed failures; generation rejects them before writing
+Bazel outputs. A normal CMake migration can already have run original-build
+validation before discovery, so this is not a no-filesystem-effects guarantee
+for the complete command.
+
+The synchronous adapter uses a dedicated runtime thread and works inside an
+existing async runtime. Cancellation closes capture handles and terminates/reaps
+the direct child. The executable and environment remain trusted host inputs;
+this is not a process sandbox or a guarantee of terminating descendant processes.
+Limits are per command/stream, not a whole-project work budget.
+
+Snapshot capture preserves paths with spaces and component boundaries. That does
+not prove all downstream Bazel `linkopts`/system-wrapper path semantics work;
+those remain part of strategy and real-build conformance checks.
 
 ## Starlark generation
 

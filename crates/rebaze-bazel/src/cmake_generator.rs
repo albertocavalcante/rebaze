@@ -266,7 +266,7 @@ fn push_pkg_config_extensions(
     let system_names = project
         .pkg_config_modules
         .iter()
-        .map(|package| format!("system_{}", package.prefix.to_lowercase().replace('-', "_")))
+        .map(|package| format!("system_{}", crate::discovery::target_name(&package.prefix)))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -342,7 +342,7 @@ pub fn generate_root_build(
     for package in &project.pkg_config_modules {
         file.comment(&format!(
             "//third_party:{} -> {} (system libraries are non-hermetic)",
-            package.prefix.to_lowercase().replace('-', "_"),
+            crate::discovery::target_name(&package.prefix),
             package.packages.join(", ")
         ));
     }
@@ -544,7 +544,7 @@ fn build_cc_binary(
 
     // Add pkg-config dependencies from third_party/
     for pkg in pkg_config_modules {
-        let dep_name = pkg.prefix.to_lowercase().replace('-', "_");
+        let dep_name = crate::discovery::target_name(&pkg.prefix);
         let dep = format!("//third_party:{dep_name}");
         if seen_deps.insert(dep.clone()) {
             deps.push(dep);
