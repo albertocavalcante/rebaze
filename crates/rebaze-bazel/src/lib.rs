@@ -39,6 +39,8 @@ mod cmake_generator;
 mod cmake_tests;
 pub mod config;
 #[cfg(test)]
+mod config_build_tests;
+#[cfg(test)]
 mod dependency_build_tests;
 mod dependency_plan;
 #[cfg(test)]

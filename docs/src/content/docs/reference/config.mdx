@@ -225,7 +225,7 @@ is separate. Other visibility policies need further implementation.
 Language defaults apply when that language is present and the source has no
 detected standard. Supported C++ values are `98`, `03`, `11`, `14`, `17`, `20`,
 `23`, and `26`; C values are `89`, `90`, `99`, `11`, `17`, `18`, and `23`.
-Source-detected standards take precedence. C flags use Bazel's
+Supported source-detected standards take precedence. C flags use Bazel's
 [C-only options](https://bazel.build/versions/9.0.0/docs/user-manual#flag--conlyopt)
 so they also work in mixed C/C++ projects without being applied to C++ compilation.
 Compiler support for a selected standard remains a separate compatibility check.

@@ -1,26 +1,9 @@
-//! Configuration system for rebaze migrations.
+//! Load native migration configuration without silently discarding invalid input.
 //!
-//! This module provides an extensible configuration system designed to support
-//! migrations between multiple build systems. Currently supports Bazel as a target,
-//! with architecture ready for future targets (Gradle, Buck2, etc.).
-//!
-//! # TOML Structure
-//!
-//! The configuration file (`rebaze.toml`) supports both flat and nested structures:
-//!
-//! ```toml
-//! # Flat structure (current, implies Bazel target)
-//! [versions]
-//! rules_cc = "0.2.27"
-//!
-//! # Nested structure (future-proof, explicit target)
-//! [bazel.versions]
-//! rules_cc = "0.2.27"
-//!
-//! # Future targets
-//! [gradle.versions]
-//! rules_jvm_external = "6.0"
-//! ```
+//! A file uses either flat sections such as `[build]` or a single `[bazel]` tree
+//! such as `[bazel.build]`. Mixed formats and unknown sections/fields are errors.
+//! Overrides currently apply to native CMake generation; Gradle Java and bazelle
+//! accept only default configuration. Generator support is checked before effects.
 
 use std::path::{Path, PathBuf};
 
@@ -51,18 +34,8 @@ type Result<T> = std::result::Result<T, ConfigError>;
 // Re-export target-specific configs for convenience
 pub use rebaze_bazel::config::MigrationConfig as BazelConfig;
 
-/// Top-level configuration for rebaze.
-///
-/// This struct holds configuration for all supported migration targets.
-/// Each target's config is optional - if not specified, defaults are used.
-///
-/// # Extensibility
-///
-/// To add a new target:
-/// 1. Create a `FooConfig` in the target crate (e.g., `rebaze-gradle-gen`)
-/// 2. Add `pub foo: Option<FooConfig>` field here
-/// 3. Update `load_from_file` to parse `[foo]` section
-/// 4. Update generators to accept the config
+/// Optional Bazel configuration loaded from the supported flat or nested form.
+/// An absent configuration selects the same effective defaults as an empty file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -70,9 +43,6 @@ pub struct Config {
     /// Controls Bazel dependency versions, mappings, filters, and build options.
     #[serde(default)]
     pub bazel: Option<BazelConfig>,
-    // Future targets:
-    // pub gradle: Option<GradleConfig>,
-    // pub buck2: Option<Buck2Config>,
 }
 
 impl Config {
