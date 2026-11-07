@@ -8,6 +8,7 @@ use crate::GenerationResult;
 use crate::config::MigrationConfig;
 use crate::dependency_plan::DependencyPlan;
 use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources};
+use crate::native_links::NativeLinkPlan;
 use crate::starlark::{
     BazelDep, Call, CcBinary, CcLibrary, CcTest, File, Glob, Identifier, Load, Module, Package,
     Reference, RenderResult, SrcsWithHdrs, UseExtension, UseRepo,
@@ -268,7 +269,7 @@ pub fn generate_module_bazel(
 pub fn generate_root_build(
     project: &CMakeProject,
     config: &MigrationConfig,
-    plan: &DependencyPlan,
+    links: &NativeLinkPlan,
     tests: &[crate::cmake_tests::PlannedTest<'_>],
 ) -> GenerationResult<String> {
     let mut file = File::new();
@@ -297,32 +298,16 @@ pub fn generate_root_build(
     file.statement(&Package {
         default_visibility: vec!["//visibility:public".into()],
     })?;
-    let mut seen_libraries = BTreeSet::new();
     for library in &project.libraries {
-        if seen_libraries.insert(library.name.replace('-', "_")) {
-            let rule =
-                build_cc_library(library, &project.libraries, &project.aliases, config, plan)?;
-            file.statement(&Call::new(&config.build.rules.library_rule, &rule)?)?;
-        }
+        let rule = build_cc_library(library, links)?;
+        file.statement(&Call::new(&config.build.rules.library_rule, &rule)?)?;
     }
     for executable in &project.executables {
-        let rule = build_cc_binary(
-            executable,
-            &project.libraries,
-            &project.aliases,
-            config,
-            plan,
-        )?;
+        let rule = build_cc_binary(executable, links)?;
         file.statement(&Call::new(&config.build.rules.binary_rule, &rule)?)?;
     }
     for test in tests {
-        let binary = build_cc_binary(
-            test.executable,
-            &project.libraries,
-            &project.aliases,
-            config,
-            plan,
-        )?;
+        let binary = build_cc_binary(test.executable, links)?;
         file.statement(&Call::new(
             &config.build.rules.test_rule,
             &CcTest {
@@ -336,14 +321,8 @@ pub fn generate_root_build(
 }
 
 /// Build a CcLibrary struct from a CMake Library.
-fn build_cc_library(
-    lib: &Library,
-    all_libs: &[Library],
-    aliases: &std::collections::HashMap<String, String>,
-    config: &MigrationConfig,
-    plan: &DependencyPlan,
-) -> GenerationResult<CcLibrary> {
-    let target_name = lib.name.replace('-', "_");
+fn build_cc_library(lib: &Library, links: &NativeLinkPlan) -> GenerationResult<CcLibrary> {
+    let target = links.target(&lib.name)?;
 
     // Determine if this is header-only
     let is_header_only = lib.kind == LibraryKind::Interface || lib.sources.is_empty();
@@ -378,21 +357,12 @@ fn build_cc_library(
         )
     };
 
-    let deps = crate::native_links::dependencies(
-        &lib.name,
-        &lib.link_libraries,
-        all_libs,
-        aliases,
-        config,
-        plan,
-    )?;
-
     Ok(CcLibrary {
-        name: target_name,
+        name: target.name.clone(),
         srcs,
         hdrs,
         includes,
-        deps,
+        deps: target.dependencies.clone(),
         defines: filter_defines(&lib.compile_definitions),
         copts: filter_copts(&lib.compile_options),
         linkopts: Vec::new(),
@@ -406,14 +376,8 @@ fn build_cc_library(
 }
 
 /// Build a CcBinary struct from a CMake Executable.
-fn build_cc_binary(
-    exe: &Executable,
-    libs: &[Library],
-    aliases: &std::collections::HashMap<String, String>,
-    config: &MigrationConfig,
-    plan: &DependencyPlan,
-) -> GenerationResult<CcBinary> {
-    let target_name = exe.name.replace('-', "_");
+fn build_cc_binary(exe: &Executable, links: &NativeLinkPlan) -> GenerationResult<CcBinary> {
+    let target = links.target(&exe.name)?;
 
     // Filter sources first
     let filtered_sources = filter_sources(&exe.sources);
@@ -449,17 +413,8 @@ fn build_cc_binary(
         .flat_map(|dir| vec![format!("{dir}/**/*.h"), format!("{dir}/**/*.hpp")])
         .collect();
 
-    let deps = crate::native_links::dependencies(
-        &exe.name,
-        &exe.link_libraries,
-        libs,
-        aliases,
-        config,
-        plan,
-    )?;
-
     Ok(CcBinary {
-        name: target_name,
+        name: target.name.clone(),
         srcs: SrcsWithHdrs {
             files: filtered_sources,
             hdrs_glob: if hdrs_glob.is_empty() {
@@ -469,7 +424,7 @@ fn build_cc_binary(
             },
         },
         includes,
-        deps,
+        deps: target.dependencies.clone(),
         defines: filter_defines(&exe.compile_definitions),
         copts: filter_copts(&exe.compile_options),
     })
@@ -547,7 +502,7 @@ mod tests {
             global_include_directories: vec![],
             cxx_standard: Some("17".to_string()),
             c_standard: None,
-            aliases: std::collections::HashMap::new(),
+            aliases: Vec::new(),
             testing: rebaze_cmake::Testing::default(),
         }
     }
@@ -576,7 +531,7 @@ mod tests {
         let content = generate_root_build(
             &project,
             &config,
-            &DependencyPlan::new(&project, &config).unwrap(),
+            &crate::plan_cmake(&project, &config).unwrap().links,
             &[],
         )
         .unwrap();
@@ -628,7 +583,7 @@ mod tests {
         let content = generate_root_build(
             &project,
             &config,
-            &DependencyPlan::new(&project, &config).unwrap(),
+            &crate::plan_cmake(&project, &config).unwrap().links,
             &[],
         )
         .unwrap();
@@ -661,7 +616,7 @@ mod tests {
         let build = generate_root_build(
             &project,
             &config,
-            &DependencyPlan::new(&project, &config).unwrap(),
+            &crate::plan_cmake(&project, &config).unwrap().links,
             &[],
         )
         .unwrap();

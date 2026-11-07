@@ -680,3 +680,172 @@ fn rendering_returns_diagnostics_as_data_without_logging_or_config_injection() {
         .unwrap();
     });
 }
+
+#[test]
+fn native_target_collisions_fail_before_discovery() {
+    for declarations in [
+        "add_library(foo-bar a.c)\nadd_library(foo_bar b.c)",
+        "add_library(same a.c)\nadd_executable(same b.c)",
+        "add_executable(app-x a.c)\nadd_executable(app_x b.c)",
+    ] {
+        let file =
+            rebaze_cmake::parse_source(&format!("project(example C)\n{declarations}")).unwrap();
+        let project = rebaze_cmake::extract_project(&file, ".".into());
+        assert!(
+            crate::plan_cmake(&project, &MigrationConfig::default()).is_err(),
+            "accepted colliding targets: {declarations}"
+        );
+    }
+}
+
+#[test]
+fn imported_names_must_not_match_an_unrelated_local_component() {
+    let file = rebaze_cmake::parse_source("project(example C)\nadd_library(core core.c)\nadd_executable(app main.c)\ntarget_link_libraries(app Unknown::core)").unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
+}
+
+#[test]
+fn managed_aliases_are_attached_only_to_their_consumers() {
+    let file = rebaze_cmake::parse_source("project(example C)\npkg_check_modules(A REQUIRED IMPORTED_TARGET zlib)\npkg_check_modules(B REQUIRED IMPORTED_TARGET expat)\nadd_executable(first first.c)\ntarget_link_libraries(first PkgConfig::A)\nadd_executable(second second.c)\ntarget_link_libraries(second PkgConfig::B)").unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    let files = generate_from_cmake_with_config(
+        &project,
+        &MigrationConfig::default(),
+        &unavailable(&project),
+    )
+    .unwrap();
+    let build = &files["BUILD.bazel"];
+    let first = build
+        .split("cc_binary(")
+        .nth(1)
+        .unwrap()
+        .split("cc_binary(")
+        .next()
+        .unwrap();
+    let second = build.split("cc_binary(").nth(2).unwrap();
+    assert!(first.contains("\"//third_party:a\""));
+    assert!(!first.contains("\"//third_party:b\""));
+    assert!(second.contains("\"//third_party:b\""));
+    assert!(!second.contains("\"//third_party:a\""));
+}
+
+#[test]
+fn native_alias_graph_is_validated_even_without_consumers() {
+    for aliases in [
+        vec![("Alias::one", "Alias::two"), ("Alias::two", "Alias::one")],
+        vec![("Alias::missing", "unknown_required")],
+        vec![("core", "other")],
+        vec![("Bad::", "core")],
+    ] {
+        let file =
+            rebaze_cmake::parse_source("project(example C)\nadd_library(core core.c)").unwrap();
+        let mut project = rebaze_cmake::extract_project(&file, ".".into());
+        project
+            .aliases
+            .extend(aliases.into_iter().map(|(a, b)| rebaze_cmake::TargetAlias {
+                name: a.into(),
+                target: b.into(),
+            }));
+        assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
+    }
+}
+
+#[test]
+fn native_alias_chains_resolve_exact_local_and_configured_targets() {
+    let file = rebaze_cmake::parse_source("project(example C)\nadd_library(core core.c)\nadd_executable(app main.c)\ntarget_link_libraries(app Alias::a0 Alias::ssl)").unwrap();
+    let mut project = rebaze_cmake::extract_project(&file, ".".into());
+    for index in 0..4096 {
+        project.aliases.push(rebaze_cmake::TargetAlias {
+            name: format!("Alias::a{index}"),
+            target: if index == 4095 {
+                "core".into()
+            } else {
+                format!("Alias::a{}", index + 1)
+            },
+        });
+    }
+    project.aliases.push(rebaze_cmake::TargetAlias {
+        name: "Alias::ssl".into(),
+        target: "OpenSSL::SSL".into(),
+    });
+    let files = generate_from_cmake_with_config(
+        &project,
+        &MigrationConfig::default(),
+        &DiscoverySnapshot::default(),
+    )
+    .unwrap();
+    assert_syntax(&files);
+    assert_eq!(files["BUILD.bazel"].matches("\":core\"").count(), 1);
+    assert_eq!(
+        files["BUILD.bazel"].matches("\"@openssl//:ssl\"").count(),
+        1
+    );
+}
+
+#[test]
+fn invalid_native_names_and_undeclared_pkg_aliases_fail_preparation() {
+    for name in ["", ".", "..", "bad/name", "name:part", "nonasciié"] {
+        let mut project = rebaze_cmake::CMakeProject::default();
+        project
+            .executables
+            .push(rebaze_cmake::Executable::new(name.into()));
+        assert!(
+            crate::plan_cmake(&project, &MigrationConfig::default()).is_err(),
+            "accepted {name:?}"
+        );
+    }
+    for dependency in ["PkgConfig::undeclared", "other"] {
+        let file = rebaze_cmake::parse_source(&format!("project(example C)\nadd_executable(app main.c)\nadd_executable(other other.c)\ntarget_link_libraries(app {dependency})")).unwrap();
+        let project = rebaze_cmake::extract_project(&file, ".".into());
+        assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
+    }
+}
+
+#[test]
+fn managed_identity_shadowing_and_namespace_case_bypasses_fail() {
+    for source in [
+        "pkg_check_modules(Z REQUIRED IMPORTED_TARGET zlib)\nadd_library(core core.c)\nadd_library(PkgConfig::Z ALIAS core)",
+        "add_executable(app main.c)\ntarget_link_libraries(app pkgconfig::undeclared)",
+        "add_executable(app main.c)\ntarget_link_libraries(app PKGCONFIG::undeclared)",
+    ] {
+        let file = rebaze_cmake::parse_source(&format!("project(example C)\n{source}")).unwrap();
+        let project = rebaze_cmake::extract_project(&file, ".".into());
+        assert!(
+            crate::plan_cmake(&project, &MigrationConfig::default()).is_err(),
+            "accepted {source}"
+        );
+    }
+}
+
+#[test]
+fn duplicate_source_alias_declarations_fail_preparation() {
+    let file = rebaze_cmake::parse_source("project(example C)\nadd_library(one one.c)\nadd_library(two two.c)\nadd_library(Alias::dup ALIAS one)\nadd_library(Alias::dup ALIAS two)").unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
+}
+
+#[test]
+fn child_alias_observations_are_preserved_and_conflicts_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("child")).unwrap();
+    let parent = "project(example C)\nadd_subdirectory(child)\nadd_executable(app main.c)\ntarget_link_libraries(app Alias::core)";
+    std::fs::write(root.path().join("CMakeLists.txt"), parent).unwrap();
+    std::fs::write(
+        root.path().join("child/CMakeLists.txt"),
+        "add_library(core core.c)\nadd_library(Alias::core ALIAS core)",
+    )
+    .unwrap();
+    let project = rebaze_cmake::extract_project_from_path(root.path()).unwrap();
+    assert!(
+        crate::plan_cmake(&project, &MigrationConfig::default()).is_ok(),
+        "lost child alias observations"
+    );
+    std::fs::write(
+        root.path().join("CMakeLists.txt"),
+        format!("{parent}\nadd_library(Alias::core ALIAS core)"),
+    )
+    .unwrap();
+    let project = rebaze_cmake::extract_project_from_path(root.path()).unwrap();
+    assert!(crate::plan_cmake(&project, &MigrationConfig::default()).is_err());
+}

@@ -1,7 +1,5 @@
 //! Validate test intent before discovery or output writes.
 
-use std::collections::BTreeSet;
-
 use rebaze_cmake::{CMakeProject, CMakeTest, Executable, TestEvaluation};
 
 #[derive(Debug, thiserror::Error)]
@@ -15,7 +13,10 @@ pub struct PlannedTest<'a> {
     pub executable: &'a Executable,
 }
 
-pub fn plan(project: &CMakeProject) -> Result<Vec<PlannedTest<'_>>, TestError> {
+pub fn plan<'a>(
+    project: &'a CMakeProject,
+    names: &mut crate::native_links::TargetNames,
+) -> Result<Vec<PlannedTest<'a>>, TestError> {
     if !project.testing.tests.is_empty()
         && let Some(reason) = project.testing.requires_evaluation.first()
     {
@@ -38,13 +39,6 @@ pub fn plan(project: &CMakeProject) -> Result<Vec<PlannedTest<'_>>, TestError> {
     if !project.testing.tests.is_empty() && !project.testing.enabled {
         return Err(TestError("tests require an unconditional root enable_testing(); include(CTest) and directory-only enabling need evaluation".into()));
     }
-    let mut names: BTreeSet<_> = project
-        .libraries
-        .iter()
-        .map(|target| &target.name)
-        .chain(project.executables.iter().map(|target| &target.name))
-        .map(|name| name.replace('-', "_"))
-        .collect();
     project
         .testing
         .tests
@@ -62,12 +56,9 @@ pub fn plan(project: &CMakeProject) -> Result<Vec<PlannedTest<'_>>, TestError> {
                 )));
             }
             let name = format!("ctest_{}", test.name.replace('-', "_"));
-            if !names.insert(name.clone()) {
-                return Err(TestError(format!(
-                    "test {:?} collides with generated target {name:?}",
-                    test.name
-                )));
-            }
+            names
+                .register(&name, format!("test {:?}", test.name))
+                .map_err(|error| TestError(error.to_string()))?;
             let mut executables = project
                 .executables
                 .iter()

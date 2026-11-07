@@ -155,8 +155,21 @@ Unknown dependencies no longer become TODO comments that rendering drops.
 Configured comment strings are rejected as mappings. Empty mapping values are
 explicit omissions; configured ignores, implicit system libraries, and the
 existing built-in package policy remain supported. Diagnostics identify the
-source target and dependency. This does not yet validate the complete target/alias
-graph or establish that an explicitly mapped external repository is available.
+source target and dependency. Preparation uses one output-name table for libraries, executables, and generated
+tests. Source extraction preserves alias declarations, including duplicates and child
+directories, in `Vec<TargetAlias>`; preparation derives the validated lookup map.
+Aliases cannot shadow prepared managed identities, and undeclared case variants
+of the pkg-config namespace cannot manufacture third-party labels. Production
+names accept ASCII letters, digits, underscores, hyphens, dots,
+and plus signs (except `.` and `..`); hyphens normalize to underscores, and
+collisions fail explicitly. Aliases resolve iteratively to exact local identities
+or configured external mappings; cycles, unmapped endpoints and attempts to link
+executables fail before discovery. Namespace suffixes never select unrelated
+local targets. `PkgConfig::` links require a matching prepared request. Each
+production target receives only its selected link dependencies, resolved once in
+the immutable preparation. Configured labels still need separate syntax and
+destination-availability validation; complete native link semantics remain R10
+work.
 
 ## Gradle Java generation
 

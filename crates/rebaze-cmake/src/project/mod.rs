@@ -13,7 +13,7 @@ mod types;
 // Re-export public types
 pub use types::{
     CMakeProject, CMakeTest, Executable, ExtractError, Library, LibraryKind, Package,
-    PkgConfigModule, TestEvaluation, Testing,
+    PkgConfigModule, TargetAlias, TestEvaluation, Testing,
 };
 
 // Re-export main extraction functions
@@ -172,8 +172,11 @@ mod tests {
         // Verify alias was tracked
         assert_eq!(project.aliases.len(), 1);
         assert_eq!(
-            project.aliases.get("alias_lib"),
-            Some(&"real_lib".to_string())
+            project.aliases[0],
+            TargetAlias {
+                name: "alias_lib".into(),
+                target: "real_lib".into()
+            }
         );
     }
 
@@ -191,8 +194,11 @@ mod tests {
 
         // Verify alias was tracked with namespace
         assert_eq!(
-            project.aliases.get("my::lib"),
-            Some(&"mylib_impl".to_string())
+            project.aliases[0],
+            TargetAlias {
+                name: "my::lib".into(),
+                target: "mylib_impl".into()
+            }
         );
         // Verify executable has the alias in its link_libraries
         let exe = &project.executables[0];

@@ -3,7 +3,6 @@
 //! Contains the core types representing CMake projects, targets,
 //! and their properties extracted from CMakeLists.txt files.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Error type for project extraction.
@@ -64,11 +63,18 @@ pub struct CMakeProject {
     pub cxx_standard: Option<String>,
     /// C standard version detected (e.g., "99", "11", "17", "23").
     pub c_standard: Option<String>,
-    /// Target aliases (alias_name -> real_target_name).
+    /// Observed alias declarations, retaining duplicates for validation.
     /// Created by add_library(alias_name ALIAS real_target) commands.
-    pub aliases: HashMap<String, String>,
+    pub aliases: Vec<TargetAlias>,
     /// Explicit test registrations; native migration validates its supported subset.
     pub testing: Testing,
+}
+
+/// An observed alias declaration, before identity/graph validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetAlias {
+    pub name: String,
+    pub target: String,
 }
 
 /// Test intent from source files, independent of installed build tools.

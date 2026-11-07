@@ -167,6 +167,13 @@ really needs no generated edge. Mapping methods and the `filters` convenience
 wrappers now return `DependencyMapping` rather than `Option<String>`; match
 `Mapped`, `Omitted(reason)`, and `Unresolved` explicitly. Unknown links are never
 successful TODO comments. Empty configured mapping values remain explicit omissions.
+Preparation also rejects output-name collisions and invalid/cyclic aliases.
+Namespace-qualified links need an exact alias, a prepared pkg-config request,
+or a configured mapping; they never match a local library by suffix. Only a
+target's selected dependencies become generated edges. `CMakeProject.aliases`
+is now a `Vec<TargetAlias>` of observed declarations rather than a map; retain
+all declarations so preparation can reject duplicates. Recursive source extraction
+preserves child-directory aliases.
 
 `ThirdPartyConfig`, `DepsStrategy`, and direct third-party rendering helpers have
 been removed. They could disagree with `MigrationConfig` and the shared plan.
@@ -217,7 +224,8 @@ verified Bazel and CMake 3.31.10 archives on the minimal Linux runner. Ordinary
 library tests never download these tools or execute the oracle implicitly.
 
 The checked-in first-party fixture contains a library, public header, executable,
-and a test registered in a subdirectory. The harness copies it into disposable
+and a test registered in a subdirectory. An alias declared in that child directory
+is linked by the parent executable. The harness copies it into disposable
 original/migration directories, checks preview behavior, invokes the real CLI
 with normal build validation, and compares CTest/Bazel test and executable results.
 It then changes a library result: both builds must succeed and both test suites
