@@ -22,8 +22,8 @@ all generated dependency strategies build successfully.
   depends on the host and is not a declared reproducible input.
 - CMake custom library and binary rules are emitted. Custom test rules remain
   reserved configuration; native CMake test generation is incomplete.
-- Runmux routing and a manual canary are prepared. App access, pool changes,
-  and an actual runner execution remain unverified while the Air is offline.
+- Runmux routing and a manual canary are prepared. Activation requires verified App access, a healthy Air/container engine,
+  pool configuration, and evidence from an actual runner execution.
 
 ## Dependency order and completion gates
 
