@@ -173,11 +173,18 @@ fn java_generation_retains_project_api_runtime_and_test_scopes() {
     let app = &files["app/BUILD.bazel"];
     let production = app.split("java_test(").next().unwrap();
     assert!(production.contains("//core:lib"));
+    assert!(production.contains("deps = [\"//core:lib\"]"));
     assert!(
         production
             .contains("runtime_deps = [\"@rebaze_maven//:org_apache_commons_commons_lang3\"]")
     );
     assert!(!production.contains("junit_junit"));
+    assert!(
+        app.split("java_test(")
+            .nth(1)
+            .unwrap()
+            .contains("@rebaze_maven//:junit_junit")
+    );
     assert!(app.contains("test_class = \"example.Behavior\""));
     assert!(!app.contains("TODO"));
     assert!(
