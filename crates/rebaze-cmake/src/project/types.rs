@@ -79,8 +79,16 @@ pub struct Testing {
     pub tests: Vec<CMakeTest>,
     /// Test semantics which extraction cannot faithfully represent.
     pub unsupported: Vec<String>,
-    /// Launcher/emulator settings may be inherited by tests in subdirectories.
-    pub has_launcher: bool,
+    /// Settings requiring evaluation if this project or its children register tests.
+    pub requires_evaluation: Vec<TestEvaluation>,
+}
+
+/// Source settings whose effect on tests requires CMake evaluation.
+#[derive(Debug, Clone)]
+pub enum TestEvaluation {
+    Launcher,
+    ScopedSubdirectory,
+    DynamicProperty,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

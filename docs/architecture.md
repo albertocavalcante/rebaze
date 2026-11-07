@@ -125,7 +125,8 @@ collisions, unknown/ambiguous executables, and unsupported registrations fail
 during planning before discovery or generated output writes. Arguments remain
 serialized data and are escaped for Bazel's Make expansion and argv tokenization.
 
-Conditional/scoped test declarations, variables/generator expressions, legacy
+Conditional/scoped test declarations and directory inclusion, dynamic property
+selection, variables/generator expressions, legacy
 syntax, properties, configuration selection, explicit working directories, and
 list expansion, launchers and cross-compilation emulators are rejected. This subset targets self-contained tests: CTest's
 build-directory working environment and Bazel's sandbox/runfiles environment are

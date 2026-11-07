@@ -53,16 +53,32 @@ for file in "${files[@]}"; do cmp "$fixture/$file" "$work/migrated/$file"; done
 migrated_output=$("$work/migrated/bazel-bin/probe" "two words'\$" 42 "")
 test "$migrated_output" = "$original_output"
 
-# Launcher state in a parent directory must not disappear when tests are merged.
+# Unsupported planning must preserve an existing generated BUILD.
 cp "$work/migrated/BUILD.bazel" "$work/generated-before.bazel"
+assert_rejected() {
+  local diagnostic=$1
+  if isolated "$cli" migrate "$work/migrated" --build-generator native --unsafe-mode >"$work/rejection.log" 2>&1; then
+    echo "Unsupported test intent was accepted: $diagnostic" >&2
+    exit 1
+  fi
+  if ! grep -q "$diagnostic" "$work/rejection.log"; then
+    cat "$work/rejection.log" >&2
+    exit 1
+  fi
+  cmp "$work/generated-before.bazel" "$work/migrated/BUILD.bazel"
+  cp "$fixture/CMakeLists.txt" "$work/migrated/CMakeLists.txt"
+}
+# Launcher state must survive merging tests registered in a child directory.
 printf '\nset_property(TARGET probe PROPERTY TEST_LAUNCHER some_launcher)\n' >>"$work/migrated/CMakeLists.txt"
-if isolated "$cli" migrate "$work/migrated" --build-generator native --unsafe-mode >"$work/unsupported.log" 2>&1; then
-  echo 'Unsupported test launcher was silently accepted.' >&2
-  exit 1
-fi
-grep -q 'launchers/emulators' "$work/unsupported.log"
-cmp "$work/generated-before.bazel" "$work/migrated/BUILD.bazel"
-cp "$fixture/CMakeLists.txt" "$work/migrated/CMakeLists.txt"
+assert_rejected 'launchers/emulators'
+# shellcheck disable=SC2016 # Preserve CMake's variable reference for the regression.
+printf '\nset(PROP TEST_LAUNCHER)\nset_property(TARGET probe PROPERTY ${PROP} some_launcher)\n' >>"$work/migrated/CMakeLists.txt"
+assert_rejected 'dynamic property'
+mkdir "$work/migrated/inactive"
+printf 'add_test(NAME inactive COMMAND probe)\n' >"$work/migrated/inactive/CMakeLists.txt"
+printf '\nif(OFF)\nadd_subdirectory(inactive)\nendif()\n' >>"$work/migrated/CMakeLists.txt"
+assert_rejected 'conditional or scoped add_subdirectory'
+rm -r "$work/migrated/inactive"
 
 # A successful build must not hide an actual assertion failure in either suite.
 for root in original migrated; do

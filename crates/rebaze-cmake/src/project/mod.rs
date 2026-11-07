@@ -13,7 +13,7 @@ mod types;
 // Re-export public types
 pub use types::{
     CMakeProject, CMakeTest, Executable, ExtractError, Library, LibraryKind, Package,
-    PkgConfigModule, Testing,
+    PkgConfigModule, TestEvaluation, Testing,
 };
 
 // Re-export main extraction functions

@@ -98,6 +98,14 @@ fn unsupported_or_conflicting_cmake_tests_fail_during_planning() {
             "enable_testing()\nset(CMAKE_TEST_LAUNCHER tool)\nadd_test(NAME x COMMAND probe)",
             "initializers",
         ),
+        (
+            "enable_testing()\nset(PROP TEST_LAUNCHER)\nset_property(TARGET probe PROPERTY ${PROP} /usr/bin/false)\nadd_test(NAME x COMMAND probe)",
+            "dynamic property",
+        ),
+        (
+            "enable_testing()\nif(OFF)\nadd_subdirectory(tests)\nendif()\nadd_test(NAME x COMMAND probe)",
+            "conditional or scoped add_subdirectory",
+        ),
     ] {
         let file = rebaze_cmake::parse_source(&format!(
             "project(example C)\nadd_executable(probe main.c)\n{source}"

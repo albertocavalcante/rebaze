@@ -2,7 +2,7 @@
 
 use crate::ast::{Argument, CMakeFile};
 
-use super::types::{CMakeTest, Testing};
+use super::types::{CMakeTest, TestEvaluation, Testing};
 
 pub(super) fn extract(file: &CMakeFile) -> Testing {
     let mut testing = Testing::default();
@@ -14,6 +14,9 @@ pub(super) fn extract(file: &CMakeFile) -> Testing {
             }
             "if" | "foreach" | "while" | "function" | "macro" | "block" => depth += 1,
             "enable_testing" if depth == 0 => testing.enabled = true,
+            "add_subdirectory" if depth > 0 => testing
+                .requires_evaluation
+                .push(TestEvaluation::ScopedSubdirectory),
             "add_test" if depth == 0 => match registration(&command.arguments) {
                 Ok(test) => testing.tests.push(test),
                 Err(reason) => testing.unsupported.push(reason.into()),
@@ -40,10 +43,32 @@ pub(super) fn extract(file: &CMakeFile) -> Testing {
         ) && command
             .arguments
             .iter()
+            .any(|arg| arg.as_literal().is_none())
+        {
+            testing
+                .requires_evaluation
+                .push(TestEvaluation::DynamicProperty);
+        }
+        if command.name == "set"
+            && command
+                .arguments
+                .first()
+                .is_some_and(|arg| arg.as_literal().is_none())
+        {
+            testing
+                .requires_evaluation
+                .push(TestEvaluation::DynamicProperty);
+        }
+        if matches!(
+            command.name.as_str(),
+            "set_property" | "set_target_properties"
+        ) && command
+            .arguments
+            .iter()
             .filter_map(Argument::as_literal)
             .any(|arg| matches!(arg, "TEST_LAUNCHER" | "CROSSCOMPILING_EMULATOR"))
         {
-            testing.has_launcher = true;
+            testing.requires_evaluation.push(TestEvaluation::Launcher);
         }
         if command.name == "set"
             && matches!(
@@ -51,7 +76,7 @@ pub(super) fn extract(file: &CMakeFile) -> Testing {
                 Some("CMAKE_TEST_LAUNCHER" | "CMAKE_CROSSCOMPILING_EMULATOR")
             )
         {
-            testing.has_launcher = true;
+            testing.requires_evaluation.push(TestEvaluation::Launcher);
         }
     }
     testing

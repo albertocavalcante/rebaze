@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use rebaze_cmake::{CMakeProject, CMakeTest, Executable};
+use rebaze_cmake::{CMakeProject, CMakeTest, Executable, TestEvaluation};
 
 #[derive(Debug, thiserror::Error)]
 #[error("cannot migrate CMake tests: {0}")]
@@ -16,10 +16,21 @@ pub struct PlannedTest<'a> {
 }
 
 pub fn plan(project: &CMakeProject) -> Result<Vec<PlannedTest<'_>>, TestError> {
-    if !project.testing.tests.is_empty() && project.testing.has_launcher {
-        return Err(TestError(
-            "test launchers/emulators and their initializers require CMake evaluation".into(),
-        ));
+    if !project.testing.tests.is_empty()
+        && let Some(reason) = project.testing.requires_evaluation.first()
+    {
+        let message = match reason {
+            TestEvaluation::Launcher => {
+                "test launchers/emulators and their initializers require CMake evaluation"
+            }
+            TestEvaluation::ScopedSubdirectory => {
+                "conditional or scoped add_subdirectory requires CMake evaluation before migrating tests"
+            }
+            TestEvaluation::DynamicProperty => {
+                "dynamic property/target selection requires CMake evaluation before migrating tests"
+            }
+        };
+        return Err(TestError(message.into()));
     }
     if !project.testing.unsupported.is_empty() {
         return Err(TestError(project.testing.unsupported.join("; ")));

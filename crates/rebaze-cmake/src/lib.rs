@@ -18,7 +18,7 @@ pub use ast::{Argument, ArgumentPart, ArgumentValue, CMakeFile, Command};
 pub use eval::EvalContext;
 pub use project::{
     CMakeProject, CMakeTest, Executable, ExtractError, Library, LibraryKind, Package,
-    PkgConfigModule, Testing, extract_project, extract_project_from_path,
+    PkgConfigModule, TestEvaluation, Testing, extract_project, extract_project_from_path,
     extract_project_with_context,
 };
 

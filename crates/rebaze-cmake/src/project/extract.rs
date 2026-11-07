@@ -211,7 +211,10 @@ fn extract_recursive(
                 }
                 project.packages.extend(subproject.packages);
                 project.testing.tests.extend(subproject.testing.tests);
-                project.testing.has_launcher |= subproject.testing.has_launcher;
+                project
+                    .testing
+                    .requires_evaluation
+                    .extend(subproject.testing.requires_evaluation);
                 project
                     .testing
                     .unsupported
