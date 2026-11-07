@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use rebaze_cmake::{CMakeProject, Executable, Library, LibraryKind};
 
+use crate::GenerationResult;
 use crate::config::MigrationConfig;
 use crate::dependency_plan::DependencyPlan;
 use crate::filters::{filter_copts, filter_defines, filter_includes, filter_sources};
@@ -269,7 +270,7 @@ pub fn generate_root_build(
     config: &MigrationConfig,
     plan: &DependencyPlan,
     tests: &[crate::cmake_tests::PlannedTest<'_>],
-) -> RenderResult<String> {
+) -> GenerationResult<String> {
     let mut file = File::new();
     file.comment(&format!(
         "BUILD file for {} - migrated from CMake by rebaze",
@@ -300,7 +301,7 @@ pub fn generate_root_build(
     for library in &project.libraries {
         if seen_libraries.insert(library.name.replace('-', "_")) {
             let rule =
-                build_cc_library(library, &project.libraries, &project.aliases, config, plan);
+                build_cc_library(library, &project.libraries, &project.aliases, config, plan)?;
             file.statement(&Call::new(&config.build.rules.library_rule, &rule)?)?;
         }
     }
@@ -311,7 +312,7 @@ pub fn generate_root_build(
             &project.aliases,
             config,
             plan,
-        );
+        )?;
         file.statement(&Call::new(&config.build.rules.binary_rule, &rule)?)?;
     }
     for test in tests {
@@ -321,7 +322,7 @@ pub fn generate_root_build(
             &project.aliases,
             config,
             plan,
-        );
+        )?;
         file.statement(&Call::new(
             &config.build.rules.test_rule,
             &CcTest {
@@ -331,7 +332,7 @@ pub fn generate_root_build(
             },
         )?)?;
     }
-    file.render()
+    Ok(file.render()?)
 }
 
 /// Build a CcLibrary struct from a CMake Library.
@@ -341,12 +342,8 @@ fn build_cc_library(
     aliases: &std::collections::HashMap<String, String>,
     config: &MigrationConfig,
     plan: &DependencyPlan,
-) -> CcLibrary {
+) -> GenerationResult<CcLibrary> {
     let target_name = lib.name.replace('-', "_");
-
-    // Build a set of internal library names for O(1) lookups
-    let internal_lib_names: std::collections::BTreeSet<&str> =
-        all_libs.iter().map(|l| l.name.as_str()).collect();
 
     // Determine if this is header-only
     let is_header_only = lib.kind == LibraryKind::Interface || lib.sources.is_empty();
@@ -381,45 +378,16 @@ fn build_cc_library(
         )
     };
 
-    // Map link dependencies using config-driven mapper (filters out # TODO comments)
-    // Deduplicate deps - CMake may report the same dependency multiple ways (e.g., fmt and fmt::fmt)
-    let mut deps: Vec<String> = {
-        let mut seen = std::collections::BTreeSet::new();
-        lib.link_libraries
-            .iter()
-            .filter_map(|link_lib| {
-                // First, resolve any alias to its real target name
-                let resolved_name = aliases
-                    .get(link_lib)
-                    .map_or(link_lib.as_str(), |s| s.as_str());
+    let deps = crate::native_links::dependencies(
+        &lib.name,
+        &lib.link_libraries,
+        all_libs,
+        aliases,
+        config,
+        plan,
+    )?;
 
-                // Check if it's an internal library
-                let lib_name = if resolved_name.contains("::") {
-                    resolved_name.split("::").last().unwrap_or(resolved_name)
-                } else {
-                    resolved_name
-                };
-
-                if internal_lib_names.contains(lib_name) {
-                    Some(format!(":{}", lib_name.replace('-', "_")))
-                } else {
-                    plan.managed_link(resolved_name)
-                        .or_else(|| config.map_dependency(resolved_name))
-                }
-            })
-            .filter(|dep| !dep.starts_with('#'))
-            .filter(|dep| seen.insert(dep.clone()))
-            .collect()
-    };
-
-    for name in plan.aliases.keys() {
-        let label = format!("//third_party:{name}");
-        if !deps.contains(&label) {
-            deps.push(label);
-        }
-    }
-
-    CcLibrary {
+    Ok(CcLibrary {
         name: target_name,
         srcs,
         hdrs,
@@ -434,7 +402,7 @@ fn build_cc_library(
         } else {
             None
         },
-    }
+    })
 }
 
 /// Build a CcBinary struct from a CMake Executable.
@@ -444,15 +412,11 @@ fn build_cc_binary(
     aliases: &std::collections::HashMap<String, String>,
     config: &MigrationConfig,
     plan: &DependencyPlan,
-) -> CcBinary {
+) -> GenerationResult<CcBinary> {
     let target_name = exe.name.replace('-', "_");
 
     // Filter sources first
     let filtered_sources = filter_sources(&exe.sources);
-
-    // Build a set of internal library names for O(1) lookups (avoid O(n²))
-    let internal_lib_names: std::collections::BTreeSet<&str> =
-        libs.iter().map(|l| l.name.as_str()).collect();
 
     // Start with explicit include directories (filtered)
     let mut includes_set: std::collections::BTreeSet<String> =
@@ -485,46 +449,16 @@ fn build_cc_binary(
         .flat_map(|dir| vec![format!("{dir}/**/*.h"), format!("{dir}/**/*.hpp")])
         .collect();
 
-    // Collect dependencies from link_libraries using config-driven mapper
-    // Deduplicate deps deterministically with BTreeSet
-    let mut seen_deps = std::collections::BTreeSet::new();
-    let mut deps: Vec<String> = exe
-        .link_libraries
-        .iter()
-        .filter_map(|link_lib| {
-            // First, resolve any alias to its real target name
-            let resolved_name = aliases
-                .get(link_lib)
-                .map_or(link_lib.as_str(), |s| s.as_str());
+    let deps = crate::native_links::dependencies(
+        &exe.name,
+        &exe.link_libraries,
+        libs,
+        aliases,
+        config,
+        plan,
+    )?;
 
-            // Check if it's an internal library (handle both "spdlog" and "spdlog::spdlog" formats)
-            let lib_name = if resolved_name.contains("::") {
-                // Extract the component name (e.g., "spdlog::spdlog_header_only" -> "spdlog_header_only")
-                resolved_name.split("::").last().unwrap_or(resolved_name)
-            } else {
-                resolved_name
-            };
-
-            // O(log n) lookup instead of O(n)
-            if internal_lib_names.contains(lib_name) {
-                Some(format!(":{}", lib_name.replace('-', "_")))
-            } else {
-                plan.managed_link(resolved_name)
-                    .or_else(|| config.map_dependency(resolved_name))
-            }
-        })
-        .filter(|dep| !dep.starts_with('#'))
-        .filter(|dep| seen_deps.insert(dep.clone()))
-        .collect();
-
-    for name in plan.aliases.keys() {
-        let dep = format!("//third_party:{name}");
-        if seen_deps.insert(dep.clone()) {
-            deps.push(dep);
-        }
-    }
-
-    CcBinary {
+    Ok(CcBinary {
         name: target_name,
         srcs: SrcsWithHdrs {
             files: filtered_sources,
@@ -538,7 +472,7 @@ fn build_cc_binary(
         deps,
         defines: filter_defines(&exe.compile_definitions),
         copts: filter_copts(&exe.compile_options),
-    }
+    })
 }
 
 /// Find the minimal set of root directories that cover all paths.

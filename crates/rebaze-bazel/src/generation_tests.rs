@@ -44,6 +44,80 @@ fn assert_syntax(files: &std::collections::HashMap<String, String>) {
 }
 
 #[test]
+fn unresolved_native_links_fail_before_discovery() {
+    for declaration in [
+        "add_library(consumer consumer.c)",
+        "add_executable(consumer consumer.c)",
+    ] {
+        for dependency in [
+            "Unknown::Required",
+            "unknown_required",
+            "-lunknown_required",
+        ] {
+            let file = rebaze_cmake::parse_source(&format!(
+                "project(example C)\n{declaration}\ntarget_link_libraries(consumer {dependency})"
+            ))
+            .unwrap();
+            let project = rebaze_cmake::extract_project(&file, ".".into());
+            let config = MigrationConfig::default();
+            assert!(
+                crate::plan_cmake(&project, &config).is_err(),
+                "planning silently accepted {dependency:?} for {declaration}"
+            );
+            let error = crate::plan_cmake(&project, &config).unwrap_err();
+            assert!(matches!(
+                error,
+                crate::GenerationError::NativeLink(crate::NativeLinkError::Unresolved {
+                    target,
+                    dependency: failed,
+                }) if target == "consumer" && failed == dependency
+            ));
+        }
+    }
+}
+
+#[test]
+fn configured_native_links_and_explicit_omissions_remain_supported() {
+    let file = rebaze_cmake::parse_source(
+        "project(example C)\nadd_executable(consumer consumer.c)\ntarget_link_libraries(consumer custom -lcustom_system ignored empty pthread Threads::Threads fmt)",
+    ).unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    let mut config = MigrationConfig::default();
+    config
+        .mappings
+        .plain_libraries
+        .insert("custom".into(), "//deps:custom".into());
+    config
+        .mappings
+        .system_libraries
+        .insert("custom_system".into(), "//deps:system".into());
+    config
+        .mappings
+        .plain_libraries
+        .insert("empty".into(), String::new());
+    config.mappings.ignored_libraries.push("ignored".into());
+    let files =
+        generate_from_cmake_with_config(&project, &config, &DiscoverySnapshot::default()).unwrap();
+    assert_syntax(&files);
+    let build = &files["BUILD.bazel"];
+    assert!(build.contains("\"//deps:custom\""));
+    assert!(build.contains("\"//deps:system\""));
+    for omitted in ["ignored", "empty", "pthread", "Threads::Threads", "fmt"] {
+        assert!(!build.contains(&format!("\"{omitted}\"")));
+    }
+    config
+        .mappings
+        .plain_libraries
+        .insert("custom".into(), "# TODO: map custom".into());
+    assert!(matches!(
+        crate::plan_cmake(&project, &config),
+        Err(crate::GenerationError::NativeLink(
+            crate::NativeLinkError::CommentMapping { .. }
+        ))
+    ));
+}
+
+#[test]
 fn cmake_tests_render_typed_rules_and_preserve_executables() {
     let file = rebaze_cmake::parse_source(
         "project(example C)\nenable_testing()\nadd_executable(probe main.c)\nadd_test(NAME value COMMAND probe [=[two words'$]=] 42)",

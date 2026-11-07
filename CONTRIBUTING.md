@@ -160,6 +160,14 @@ prepare internally. Source-only/BCR-only plans accept an empty snapshot. System
 requests, including selected source transitives, need exact observations.
 `GenerationError` distinguishes planning, rendering, and discovery failures.
 
+Native preparation also returns `GenerationError::NativeLink` for unresolved
+required dependencies, identifying the source target and link. Add the appropriate
+mapping in `rebaze.toml`, or use an intentional ignore only when that dependency
+really needs no generated edge. Mapping methods and the `filters` convenience
+wrappers now return `DependencyMapping` rather than `Option<String>`; match
+`Mapped`, `Omitted(reason)`, and `Unresolved` explicitly. Unknown links are never
+successful TODO comments. Empty configured mapping values remain explicit omissions.
+
 `ThirdPartyConfig`, `DepsStrategy`, and direct third-party rendering helpers have
 been removed. They could disagree with `MigrationConfig` and the shared plan.
 Use `MigrationConfig.strategy` and the prepared API instead. Raw TOML spellings
