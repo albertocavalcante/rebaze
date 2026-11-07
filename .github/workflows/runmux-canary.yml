@@ -12,7 +12,7 @@ concurrency:
 jobs:
   canary:
     name: Runmux Linux ARM64 canary
-    runs-on: air-ci
+    runs-on: air-rebaze
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -24,7 +24,23 @@ jobs:
           test "$(uname -m)" = aarch64
           test "$(id -u)" -ne 0
           case "$RUNNER_NAME" in
-            rmx-air-*) ;;
-            *) echo "Unexpected runmux runner: $RUNNER_NAME" >&2; exit 1 ;;
+          rmx-air-*) ;;
+          *)
+            echo "Unexpected runmux runner: $RUNNER_NAME" >&2
+            exit 1
+            ;;
           esac
           printf 'Verified runner: %s\n' "$RUNNER_NAME"
+          {
+            printf 'Runner: %s\n\n' "$RUNNER_NAME"
+            printf 'Commit: %s\n\n' "$GITHUB_SHA"
+            printf 'Platform: %s/%s, UID %s\n' "$(uname -s)" "$(uname -m)" "$(id -u)"
+          } >>"$GITHUB_STEP_SUMMARY"
+          # Exercise the default temp selection used by compilers and doctests.
+          export TMPDIR="$RUNNER_TEMP"
+          probe=$(mktemp)
+          trap 'rm "$probe"' EXIT
+          cp /usr/bin/true "$probe"
+          chmod 0700 "$probe"
+          "$probe"
+          df -h "$RUNNER_TEMP"
