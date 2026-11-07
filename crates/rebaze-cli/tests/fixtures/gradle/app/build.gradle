@@ -1,0 +1,11 @@
+plugins {
+    id 'java'
+}
+repositories {
+    mavenCentral()
+}
+dependencies {
+    implementation project(':core')
+    runtimeOnly 'org.apache.commons:commons-lang3:3.17.0'
+    testImplementation 'junit:junit:4.13.2'
+}

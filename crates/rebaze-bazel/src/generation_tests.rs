@@ -5,6 +5,17 @@ use starlark_syntax::syntax::{AstModule, Dialect};
 use crate::discovery::{ProbeOutcome, UnavailableReason};
 use crate::{DiscoverySnapshot, MigrationConfig, generate, generate_from_cmake_with_config};
 
+fn java_module(path: &str) -> rebaze_gradle::GradleModule {
+    rebaze_gradle::GradleModule {
+        path: path.into(),
+        plugins: vec![rebaze_gradle::GradlePlugin {
+            id: "java".into(),
+            version: None,
+        }],
+        ..rebaze_gradle::GradleModule::default()
+    }
+}
+
 fn unavailable(project: &rebaze_cmake::CMakeProject) -> DiscoverySnapshot {
     let mut snapshot = DiscoverySnapshot::default();
     for module in &project.pkg_config_modules {
@@ -126,13 +137,173 @@ fn gradle_project_and_target_strings_cannot_inject_source() {
     let project = rebaze_gradle::GradleProject {
         name: "example\"\"\"\nfail('injected')\r\0🦀".into(),
         path: ".".into(),
-        subprojects: vec!["app\"\nfail('injected')\r".into()],
-        plugins: vec![],
-        dependencies: vec![],
+        modules: vec![java_module("app")],
+        maven_lock: None,
     };
     let files = generate(&project).unwrap();
     assert_syntax(&files);
     assert_eq!(files["MODULE.bazel"].matches("module(").count(), 1);
+    let mut invalid = project;
+    invalid.modules[0].path = "../outside".into();
+    assert!(generate(&invalid).is_err());
+}
+
+fn java_project() -> rebaze_gradle::GradleProject {
+    let mut core = rebaze_gradle::parse_build_source("plugins { id 'java-library' } repositories { mavenCentral() } dependencies { api 'org.hamcrest:hamcrest-core:1.3' }").unwrap();
+    core.path = ":core".into();
+    core.sources = vec!["src/main/java/example/Core.java".into()];
+    let mut app = rebaze_gradle::parse_build_source("plugins { id 'java' } repositories { mavenCentral() } dependencies { implementation project(':core') runtimeOnly 'org.apache.commons:commons-lang3:3.17.0' testImplementation 'junit:junit:4.13.2' }").unwrap();
+    app.path = ":app".into();
+    app.sources = vec!["src/main/java/example/App.java".into()];
+    app.test_sources = vec!["src/test/java/example/Behavior.java".into()];
+    app.test_classes = vec!["example.Behavior".into()];
+    rebaze_gradle::GradleProject {
+        name: "example".into(),
+        path: ".".into(),
+        modules: vec![core, app],
+        maven_lock: None,
+    }
+}
+
+#[test]
+fn java_generation_retains_project_api_runtime_and_test_scopes() {
+    let project = java_project();
+    let files = generate(&project).unwrap();
+    assert_syntax(&files);
+    let app = &files["app/BUILD.bazel"];
+    let production = app.split("java_test(").next().unwrap();
+    assert!(production.contains("//core:lib"));
+    assert!(production.contains("deps = [\"//core:lib\"]"));
+    assert!(
+        production
+            .contains("runtime_deps = [\"@rebaze_maven//:org_apache_commons_commons_lang3\"]")
+    );
+    assert!(!production.contains("junit_junit"));
+    assert!(
+        app.split("java_test(")
+            .nth(1)
+            .unwrap()
+            .contains("@rebaze_maven//:junit_junit")
+    );
+    assert!(app.contains("test_class = \"example.Behavior\""));
+    assert!(!app.contains("TODO"));
+    assert!(
+        files["core/BUILD.bazel"]
+            .contains("exports = [\"@rebaze_maven//:org_hamcrest_hamcrest_core\"]")
+    );
+    assert!(!files["core/BUILD.bazel"].contains("java_test("));
+}
+
+#[test]
+fn uncertain_java_dependency_choices_fail_before_output_bundle() {
+    let mut unsupported = java_project();
+    unsupported.modules[1].plugins[0].id = "org.jetbrains.kotlin.jvm".into();
+    assert!(
+        generate(&unsupported)
+            .unwrap_err()
+            .to_string()
+            .contains("plugins")
+    );
+    for source in [
+        "dependencies { implementation project(':missing') }",
+        "dependencies { implementation project('core') }",
+        "dependencies { compileOnly 'junit:junit:4.13.2' }",
+        "dependencies { testImplementation 'junit:junit:4.+' }",
+        "dependencies { testImplementation 'junit:junit' }",
+        "dependencies { implementation 'junit:junit:4.12' }",
+    ] {
+        let mut project = java_project();
+        project.modules[1].dependencies.extend(
+            rebaze_gradle::parse_build_source(source)
+                .unwrap()
+                .dependencies,
+        );
+        assert!(generate(&project).is_err(), "{source}");
+    }
+    let mut project = java_project();
+    project.modules[0]
+        .dependencies
+        .push(rebaze_gradle::Dependency::Project {
+            configuration: "implementation".into(),
+            path: ":app".into(),
+        });
+    assert!(
+        generate(&project)
+            .unwrap_err()
+            .to_string()
+            .contains("cyclic")
+    );
+}
+
+#[test]
+fn nested_gradle_includes_retain_implicit_parent_builds() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("app/core")).unwrap();
+    std::fs::write(temp.path().join("settings.gradle"), "include('app:core')").unwrap();
+    std::fs::write(
+        temp.path().join("app/build.gradle"),
+        "plugins { id 'java' }",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("app/core/build.gradle"),
+        "plugins { id 'java-library' }",
+    )
+    .unwrap();
+    let project = rebaze_gradle::parse(temp.path()).unwrap();
+    assert_eq!(
+        project
+            .modules
+            .iter()
+            .map(|m| m.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["", ":app", ":app:core"]
+    );
+    let files = generate(&project).unwrap();
+    assert!(files["app/BUILD.bazel"].contains("java_library("));
+    assert!(files["app/core/BUILD.bazel"].contains("java_library("));
+}
+
+#[test]
+fn gradle_maven_lock_must_be_a_regular_file() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path().join("settings.gradle"),
+        "rootProject.name = 'example'",
+    )
+    .unwrap();
+    std::fs::write(temp.path().join("build.gradle"), "plugins { id 'java' }").unwrap();
+    std::fs::create_dir(temp.path().join("maven_install.json")).unwrap();
+    assert!(
+        rebaze_gradle::parse(temp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("regular project file")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn gradle_source_scan_rejects_symlinked_ancestor_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(outside.join("main/java")).unwrap();
+    std::fs::write(root.join("settings.gradle"), "rootProject.name = 'example'").unwrap();
+    std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+    std::fs::write(
+        outside.join("main/java/Outside.java"),
+        "public class Outside {}",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("src")).unwrap();
+    assert!(
+        rebaze_gradle::parse(&root)
+            .unwrap_err()
+            .to_string()
+            .contains("source symlinks")
+    );
 }
 
 #[test]
@@ -429,9 +600,8 @@ fn rendering_returns_diagnostics_as_data_without_logging_or_config_injection() {
         generate(&rebaze_gradle::GradleProject {
             name: "example".into(),
             path: ".".into(),
-            subprojects: vec![],
-            plugins: vec![],
-            dependencies: vec![],
+            modules: vec![java_module("")],
+            maven_lock: None,
         })
         .unwrap();
     });

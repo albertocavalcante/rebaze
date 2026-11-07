@@ -124,6 +124,14 @@ archives and verified Bazel in the Cargo job. It uses the image's Make/C compile
 isolates fixture Bazel configuration/output, and explicitly exercises both test
 success and assertion failure. Its missing tools/fixture inputs are fatal.
 
+The required Java fixture installs verified Temurin 21.0.13+9 and Gradle 9.8.2 in
+separate steps, so the published JAVA_HOME/PATH is available before Gradle starts.
+Both JDK architectures and the universal Gradle ZIP have committed SHA-256 pins.
+Bootstrap regressions check corrupt/failed downloads before extraction, execution
+or environment publication. The fixture uses an isolated Gradle home, strict
+artifact verification and a reviewed Maven lock. Its original/generated builds
+and tests run sequentially with two workers/jobs; assertions must fail visibly.
+
 ## Public pull requests and failure recovery
 
 GitHub's effective fork approval policy is `all_external_contributors`. The pool

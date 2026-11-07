@@ -9,12 +9,12 @@ an arbitrary project builds correctly.
 
 ## Current scope
 
-| Input           | Current behavior                                                                        |
-| --------------- | --------------------------------------------------------------------------------------- |
-| CMake           | Native generation from parsed files or CMake File API data; optional bazelle generation |
-| Gradle          | Native JVM generation from a subset of Groovy and Kotlin build files                    |
-| Maven           | Detection only; migration is unimplemented                                              |
-| Makefile, Cargo | Reported by `analyze`; migration is unimplemented                                       |
+| Input           | Current behavior                                                                              |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| CMake           | Native generation from parsed files or CMake File API data; optional bazelle generation       |
+| Gradle          | Java/JUnit 4 generation from literal Groovy/Kotlin metadata; unsupported DSL fails explicitly |
+| Maven           | Detection only; migration is unimplemented                                                    |
+| Makefile, Cargo | Reported by `analyze`; migration is unimplemented                                             |
 
 CMake test generation supports a small literal executable-backed subset. Custom
 build logic, broader test semantics, dependency strategies, and platform

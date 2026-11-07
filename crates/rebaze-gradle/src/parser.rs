@@ -1,172 +1,198 @@
-//! Gradle build file parsing.
+//! Literal Gradle build metadata. Arbitrary DSL evaluation is deliberately unsupported.
+use crate::model::{Dependency, GradleDependency, GradleModule, GradlePlugin};
+use crate::syntax::Cursor;
+use anyhow::{Result, bail};
 
-use anyhow::Result;
-use std::path::{Path, PathBuf};
-
-/// Represents a parsed Gradle project.
-#[derive(Debug, Clone)]
-pub struct GradleProject {
-    pub name: String,
-    pub path: PathBuf,
-    pub subprojects: Vec<String>,
-    pub plugins: Vec<GradlePlugin>,
-    pub dependencies: Vec<GradleDependency>,
+fn plugin(cursor: &mut Cursor) -> Result<GradlePlugin> {
+    let kind = cursor.word()?;
+    let id = match kind.as_str() {
+        "id" | "kotlin" => {
+            let parentheses = cursor.symbol('(');
+            let id = cursor.literal()?;
+            if parentheses {
+                cursor.expect(')')?;
+            }
+            if kind == "kotlin" {
+                format!("org.jetbrains.kotlin.{id}")
+            } else {
+                id
+            }
+        }
+        "java" | "base" => kind,
+        _ => bail!("unsupported plugin declaration {kind:?}"),
+    };
+    let version = if cursor.word_is("version") {
+        Some(cursor.literal()?)
+    } else {
+        None
+    };
+    Ok(GradlePlugin { id, version })
 }
 
-#[derive(Debug, Clone)]
-pub struct GradlePlugin {
-    pub id: String,
-    pub version: Option<String>,
+fn dependency(cursor: &mut Cursor) -> Result<Dependency> {
+    let configuration = cursor.word()?;
+    if !matches!(
+        configuration.as_str(),
+        "implementation"
+            | "api"
+            | "compileOnly"
+            | "runtimeOnly"
+            | "testImplementation"
+            | "testRuntimeOnly"
+    ) {
+        bail!("unsupported dependency configuration {configuration:?}");
+    }
+    let parentheses = cursor.symbol('(');
+    let dependency = if cursor.word_is("project") {
+        cursor.expect('(')?;
+        let path = cursor.literal()?;
+        cursor.expect(')')?;
+        Dependency::Project {
+            configuration,
+            path,
+        }
+    } else {
+        let coordinate = cursor.literal()?;
+        let parts: Vec<_> = coordinate.split(':').collect();
+        if !(2..=3).contains(&parts.len()) {
+            bail!("unsupported Maven coordinate {coordinate:?}");
+        }
+        Dependency::Maven(GradleDependency {
+            configuration,
+            group: parts[0].into(),
+            artifact: parts[1].into(),
+            version: parts.get(2).copied().unwrap_or_default().into(),
+        })
+    };
+    if parentheses {
+        cursor.expect(')')?;
+    }
+    Ok(dependency)
 }
 
-#[derive(Debug, Clone)]
-pub struct GradleDependency {
-    pub configuration: String, // implementation, api, testImplementation, etc.
-    pub group: String,
-    pub artifact: String,
-    pub version: String,
-}
-
-/// Parse a build.gradle or build.gradle.kts file.
-pub fn parse_build_file(path: &Path, project: &mut GradleProject) -> Result<()> {
-    let content = std::fs::read_to_string(path)?;
-    let is_kts = path.extension().is_some_and(|e| e == "kts");
-
-    parse_plugins(&content, is_kts, &mut project.plugins);
-    parse_dependencies(&content, is_kts, &mut project.dependencies);
-
-    Ok(())
-}
-
-fn parse_plugins(content: &str, _is_kts: bool, plugins: &mut Vec<GradlePlugin>) {
-    // Simple line-by-line parsing for plugins
-    let mut in_plugins_block = false;
-
-    for line in content.lines() {
-        let line = line.trim();
-
-        if line.starts_with("plugins") && line.contains('{') {
-            in_plugins_block = true;
+pub fn parse_build_source(source: &str) -> Result<GradleModule> {
+    let mut cursor = Cursor::new(source)?;
+    let mut module = GradleModule::default();
+    while !cursor.done() {
+        if cursor.symbol(';') {
             continue;
         }
-
-        if in_plugins_block {
-            if line == "}" {
-                in_plugins_block = false;
+        let block = cursor.word()?;
+        if !matches!(block.as_str(), "plugins" | "dependencies" | "repositories") {
+            bail!("unsupported Gradle block {block:?}");
+        }
+        cursor.expect('{')?;
+        while !cursor.symbol('}') {
+            if cursor.symbol(';') {
                 continue;
             }
-
-            // Parse: id("com.example.plugin") version "1.0"
-            // or: kotlin("jvm") version "1.9.0"
-            if let Some(plugin) = parse_plugin_line(line) {
-                plugins.push(plugin);
+            match block.as_str() {
+                "plugins" => module.plugins.push(plugin(&mut cursor)?),
+                "dependencies" => module.dependencies.push(dependency(&mut cursor)?),
+                "repositories" => {
+                    if !cursor.word_is("mavenCentral") {
+                        bail!("only mavenCentral() repositories are supported");
+                    }
+                    cursor.expect('(')?;
+                    cursor.expect(')')?;
+                    module.maven_central = true;
+                }
+                _ => bail!(
+                    "unsupported Gradle block {block:?}; native migration accepts literal Java metadata only"
+                ),
             }
         }
     }
+    Ok(module)
 }
 
-fn parse_plugin_line(line: &str) -> Option<GradlePlugin> {
-    let line = line.trim();
-
-    let (prefix, kotlin) = if let Some(rest) = line.strip_prefix("id") {
-        (rest, false)
-    } else {
-        (line.strip_prefix("kotlin")?, true)
-    };
-    if !prefix.starts_with('(') && !prefix.starts_with(char::is_whitespace) {
-        return None;
-    }
-    let (id, rest) = quoted_value(prefix)?;
-    let id = if kotlin {
-        format!("org.jetbrains.kotlin.{id}")
-    } else {
-        id.to_owned()
-    };
-    let version = rest
-        .trim_start_matches(|c: char| c == ')' || c.is_whitespace())
-        .strip_prefix("version")
-        .and_then(extract_quoted_string);
-    Some(GradlePlugin { id, version })
-}
-
-fn parse_dependencies(content: &str, _is_kts: bool, deps: &mut Vec<GradleDependency>) {
-    let mut in_deps_block = false;
-
-    for line in content.lines() {
-        let line = line.trim();
-
-        if line.starts_with("dependencies") && line.contains('{') {
-            in_deps_block = true;
+pub fn settings(source: &str) -> Result<(Option<String>, Vec<String>)> {
+    let mut cursor = Cursor::new(source)?;
+    let mut name = None;
+    let mut includes = Vec::new();
+    while !cursor.done() {
+        if cursor.symbol(';') {
             continue;
         }
-
-        if in_deps_block {
-            if line == "}" {
-                in_deps_block = false;
-                continue;
+        match cursor.word()?.as_str() {
+            "rootProject" => {
+                cursor.expect('.')?;
+                if !cursor.word_is("name") {
+                    bail!("unsupported rootProject setting");
+                }
+                cursor.expect('=')?;
+                name = Some(cursor.literal()?);
             }
-
-            if let Some(dep) = parse_dependency_line(line) {
-                deps.push(dep);
+            "include" => {
+                let parentheses = cursor.symbol('(');
+                loop {
+                    includes.push(cursor.literal()?);
+                    if !cursor.symbol(',') {
+                        break;
+                    }
+                }
+                if parentheses {
+                    cursor.expect(')')?;
+                }
             }
+            other => bail!(
+                "unsupported settings declaration {other:?}; custom project directories/build logic require Gradle evaluation"
+            ),
         }
     }
+    Ok((name, includes))
 }
-
-fn parse_dependency_line(line: &str) -> Option<GradleDependency> {
-    let configs = [
-        "implementation",
-        "api",
-        "compileOnly",
-        "runtimeOnly",
-        "testImplementation",
-        "testRuntimeOnly",
-    ];
-
-    for config in configs {
-        if line.starts_with(config) {
-            let rest = line.strip_prefix(config)?;
-            if !rest.starts_with('(') && !rest.starts_with(char::is_whitespace) {
-                continue;
-            }
-            let rest = rest.trim();
-
-            // Parse "group:artifact:version" format
-            let coords = extract_quoted_string(rest)?;
-            let parts: Vec<&str> = coords.split(':').collect();
-
-            if parts.len() >= 2 {
-                return Some(GradleDependency {
-                    configuration: config.to_string(),
-                    group: parts[0].to_string(),
-                    artifact: parts[1].to_string(),
-                    version: parts.get(2).copied().unwrap_or("").to_string(),
-                });
-            }
-        }
-    }
-
-    None
-}
-
-fn extract_quoted_string(value: &str) -> Option<String> {
-    quoted_value(value).map(|(quoted, _)| quoted.to_owned())
-}
-
-/// Return the first literal and the suffix after its matching closing quote.
-fn quoted_value(value: &str) -> Option<(&str, &str)> {
-    let (start, quote) = value
-        .char_indices()
-        .find(|(_, c)| matches!(c, '\'' | '"'))?;
-    let suffix = &value[start + quote.len_utf8()..];
-    let end = suffix.find(quote)?;
-    Some((&suffix[..end], &suffix[end + quote.len_utf8()..]))
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::syntax::{Token, lex};
+
+    #[test]
+    fn literal_subset_rejects_uninterpreted_build_and_settings_logic() {
+        for source in [
+            "if (false) { dependencies { implementation 'x:y:1' } }",
+            "sourceSets {}",
+            "test { useJUnitPlatform() }",
+            "unknown {}",
+            "dependencies { implementation libs.example }",
+            "dependencies { implementation 'x:y:1' { exclude group: 'z' } }",
+        ] {
+            assert!(parse_build_source(source).is_err(), "{source}");
+        }
+        assert!(settings("if (false) { include('app') }").is_err());
+        assert!(settings("project(':app').projectDir = file('../outside')").is_err());
+    }
+    fn parse_plugin_line(source: &str) -> Option<GradlePlugin> {
+        plugin(&mut Cursor::new(source).ok()?).ok()
+    }
+    fn parse_dependency_line(source: &str) -> Option<GradleDependency> {
+        match dependency(&mut Cursor::new(source).ok()?).ok()? {
+            Dependency::Maven(dep) => Some(dep),
+            Dependency::Project { .. } => None,
+        }
+    }
+    fn parse_plugins(source: &str, _kts: bool, output: &mut Vec<GradlePlugin>) {
+        output.extend(parse_build_source(source).unwrap().plugins);
+    }
+    fn parse_dependencies(source: &str, _kts: bool, output: &mut Vec<GradleDependency>) {
+        output.extend(
+            parse_build_source(source)
+                .unwrap()
+                .dependencies
+                .into_iter()
+                .filter_map(|dep| match dep {
+                    Dependency::Maven(dep) => Some(dep),
+                    Dependency::Project { .. } => None,
+                }),
+        );
+    }
+    fn extract_quoted_string(source: &str) -> Option<String> {
+        lex(source).ok()?.into_iter().find_map(|token| match token {
+            Token::Literal(value) => Some(value),
+            _ => None,
+        })
+    }
 
     #[test]
     fn plugin_ids_containing_version_do_not_confuse_the_version_clause() {

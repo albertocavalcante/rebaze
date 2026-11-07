@@ -85,3 +85,12 @@ jobs:
 
       - name: Required CMake CLI migration
         run: bash .github/scripts/test-cmake-migration.sh target/debug/rebaze
+
+      - name: Install verified JDK 21
+        run: bash .github/scripts/setup-jdk.sh
+
+      - name: Install verified Gradle
+        run: bash .github/scripts/setup-gradle.sh
+
+      - name: Required Java CLI migration
+        run: bash .github/scripts/test-java-migration.sh target/debug/rebaze

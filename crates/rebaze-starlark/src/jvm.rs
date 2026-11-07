@@ -3,7 +3,7 @@
 use serde::ser::SerializeTupleStruct;
 use serde::{Serialize, Serializer};
 
-use crate::{Glob, Reference};
+use crate::Reference;
 
 #[derive(Serialize)]
 #[serde(rename = "use_extension")]
@@ -29,8 +29,12 @@ impl Serialize for UseRepo {
 #[derive(Serialize)]
 #[serde(rename = "maven.install")]
 pub struct MavenInstall {
+    pub name: String,
     pub artifacts: Vec<String>,
     pub repositories: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lock_file: Option<String>,
+    pub aar_import_bzl_label: String,
 }
 
 #[derive(Serialize)]
@@ -41,17 +45,21 @@ pub struct ExportsFiles(pub Vec<String>);
 #[serde(rename = "java_library")]
 pub struct JavaLibrary {
     pub name: String,
-    pub srcs: Glob,
-    pub resources: Glob,
+    pub srcs: Vec<String>,
+    pub resources: Vec<String>,
     pub visibility: Vec<String>,
     pub deps: Vec<String>,
+    pub exports: Vec<String>,
+    pub runtime_deps: Vec<String>,
 }
 
 #[derive(Serialize)]
 #[serde(rename = "java_test")]
 pub struct JavaTest {
     pub name: String,
-    pub srcs: Glob,
+    pub srcs: Vec<String>,
+    pub resources: Vec<String>,
     pub test_class: String,
     pub deps: Vec<String>,
+    pub runtime_deps: Vec<String>,
 }

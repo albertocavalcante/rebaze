@@ -184,6 +184,19 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
             match generator {
                 BuildGenerator::Native => {
                     let bazel_files = rebaze_bazel::generate(&project)?;
+                    if !options.dry_run
+                        && !options.unsafe_mode
+                        && project.maven_lock.is_none()
+                        && project
+                            .modules
+                            .iter()
+                            .flat_map(|module| &module.dependencies)
+                            .any(|dep| matches!(dep, rebaze_gradle::Dependency::Maven(_)))
+                    {
+                        anyhow::bail!(
+                            "Maven dependencies require a reviewed maven_install.json before build validation; use --dry-run to inspect, or --unsafe-mode to prepare files without executing builds, then explicitly resolve/review/pin @rebaze_maven before normal migration"
+                        );
+                    }
 
                     tracing::info!("Generated {} Bazel files", bazel_files.len());
                     if options.dry_run {
@@ -545,6 +558,42 @@ fn run_command(mut cmd: Command, label: &str) -> Result<()> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unpinned_java_migration_requires_explicit_build_free_preparation() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("settings.gradle"),
+            "rootProject.name = 'example'",
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("build.gradle"), "plugins { id 'java' } repositories { mavenCentral() } dependencies { implementation 'junit:junit:4.13.2' }").unwrap();
+        let mut options = MigrateOptions {
+            path: temp.path().to_str().unwrap(),
+            from: Some("gradle"),
+            dry_run: false,
+            cmake_build_dir: None,
+            cmake_config: None,
+            cmake_file_api_only: false,
+            build_generator: BuildGenerator::Native,
+            bazelle_root: None,
+            bazelle_bin: None,
+            unsafe_mode: false,
+            config: None,
+        };
+        assert!(
+            migrate(&options)
+                .unwrap_err()
+                .to_string()
+                .contains("reviewed maven_install.json")
+        );
+        assert!(!temp.path().join("BUILD.bazel").exists());
+        assert!(!temp.path().join("MODULE.bazel").exists());
+        options.unsafe_mode = true;
+        migrate(&options).unwrap();
+        assert!(temp.path().join("MODULE.bazel").is_file());
+        assert!(!temp.path().join("maven_install.json").exists());
+    }
 
     #[test]
     fn native_cmake_dry_run_does_not_create_build_or_output_files() {
