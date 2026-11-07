@@ -35,8 +35,9 @@ lefthook install
 ```
 
 Hooks check selected files; they do not replace the complete checks below.
-Bun, just, and Lefthook versions are not currently pinned by this repository.
-When reporting a failure, include their versions if relevant.
+CI pins and verifies Bun in `.github/scripts/setup-bun.sh`. Local Bun, just,
+and Lefthook versions are not enforced. Include their versions when reporting
+relevant local failures.
 
 ## Build and run
 
