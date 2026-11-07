@@ -63,8 +63,10 @@ not be assumed to apply to that separate path.
 
 Configuration loading distinguishes an absent file from read/parse failures.
 Both project convenience loaders return typed errors; a malformed file never
-silently selects defaults. TOML accepts either flat native settings or one
-`[bazel]` tree, rejects unknown fields recursively, and rejects mixed formats.
+silently selects defaults. Core's loader accepts either flat native settings or
+one `[bazel]` tree, rejects unknown fields recursively, and rejects mixed formats.
+The target-specific `MigrationConfig` loader accepts flat settings only; a nested
+envelope is an error there rather than an ignored section.
 
 `ConfigProfile` identifies native CMake, native Gradle Java, or bazelle. Native
 configuration support is checked before the original CMake build and again at the

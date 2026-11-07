@@ -178,7 +178,9 @@ preserves child-directory aliases.
 Configuration project loaders now return `Result`; only an absent file selects
 defaults. Malformed/unreadable files, broken symlinks, unknown keys and mixed
 flat/nested sections are errors. Handle `Config::load_from_project(path)?` and
-`MigrationConfig::load_from_project(path)?` explicitly. Native CMake honors root
+`MigrationConfig::load_from_project(path)?` explicitly. Core's `Config` loader
+accepts flat or nested files; the target-specific `MigrationConfig` loader accepts
+flat native settings only and rejects a `[bazel]` envelope. Native CMake honors root
 visibility and language defaults; currently reserved overrides fail preparation.
 Gradle Java and bazelle accept only default configuration. See the
 [configuration reference](docs/src/content/docs/reference/config.mdx) for field

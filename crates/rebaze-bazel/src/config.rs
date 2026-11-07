@@ -108,7 +108,8 @@ pub struct MigrationConfig {
 const COMPONENT_PLACEHOLDER: &str = "{component}";
 
 impl MigrationConfig {
-    /// Load configuration from a TOML file, merging with defaults.
+    /// Load flat native settings from TOML, filling omitted fields with defaults.
+    /// The `[bazel]` envelope belongs to `rebaze_core::Config`, not this loader.
     pub fn load_from_file(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
             path: path.into(),
@@ -120,7 +121,8 @@ impl MigrationConfig {
         })
     }
 
-    /// Discover configuration; only a genuinely absent file selects defaults.
+    /// Discover flat native settings; only an absent file selects defaults.
+    /// Use `rebaze_core::Config` when a file may contain the `[bazel]` envelope.
     pub fn load_from_project(project_dir: &Path) -> Result<Self, ConfigError> {
         let path = project_dir.join("rebaze.toml");
         match std::fs::symlink_metadata(&path) {
