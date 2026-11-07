@@ -40,8 +40,10 @@ sha256sum() {
 }
 export -f curl uname sha256sum
 
-for tool in rust bazel cmake jdk gradle; do
-  if PATH="$fixture/bin" bash "$script_dir/setup-$tool.sh" >"$fixture/bad-digest.log" 2>&1; then
+for tool in rust bazel cmake jdk gradle bun; do
+  test_arch=aarch64
+  if [[ "$tool" == bun ]]; then test_arch=x86_64; fi
+  if REBAZE_BOOTSTRAP_ARCH="$test_arch" PATH="$fixture/bin" bash "$script_dir/setup-$tool.sh" >"$fixture/bad-digest.log" 2>&1; then
     echo 'An invalid installer digest was accepted.' >&2
     exit 1
   fi
@@ -53,7 +55,7 @@ for tool in rust bazel cmake jdk gradle; do
     exit 1
   fi
 
-  if REBAZE_BOOTSTRAP_DOWNLOAD_FAIL=1 PATH="$fixture/bin" bash "$script_dir/setup-$tool.sh" >"$fixture/download.log" 2>&1; then
+  if REBAZE_BOOTSTRAP_DOWNLOAD_FAIL=1 REBAZE_BOOTSTRAP_ARCH="$test_arch" PATH="$fixture/bin" bash "$script_dir/setup-$tool.sh" >"$fixture/download.log" 2>&1; then
     echo 'A failed download was accepted.' >&2
     exit 1
   fi

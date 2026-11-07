@@ -1,0 +1,221 @@
+"""Conservative CI routing and inexpensive repository-document checks (stdlib only)."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from itertools import pairwise
+from pathlib import Path, PurePosixPath
+from urllib.parse import unquote, urlsplit
+
+REPOSITORY_DOCS = frozenset(
+    {
+        "README.md",
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "REVIEW.md",
+        "docs/README.md",
+        "docs/architecture.md",
+        "docs/engineering-roadmap.md",
+        "docs/refactoring-plan.md",
+    }
+)
+SITE_FILES = frozenset(
+    {
+        "docs/astro.config.mjs",
+        "docs/tsconfig.json",
+        "docs/package.json",
+        "docs/bun.lock",
+    }
+)
+ROUTING_FILES = frozenset(
+    {
+        ".github/scripts/ci_routing.py",
+        ".github/scripts/test_ci_routing.py",
+        ".github/scripts/setup-bun.sh",
+        ".github/scripts/download-tool.sh",
+        ".github/workflows/ci.yml",
+        ".github/workflows/docs.yml",
+    }
+)
+SHA = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\Z")
+INLINE_LINK = re.compile(r"!?\[[^\]\n]*\]\((<[^>\n]+>|[^\s)]+)(?:\s+[^)]+)?\)")
+
+
+@dataclass(frozen=True)
+class Route:
+    build: bool
+    site: bool
+    reason: str
+
+
+def repository_doc(path: str) -> bool:
+    return path in REPOSITORY_DOCS or (
+        path.startswith("docs/operations/") and path.endswith(".md")
+    )
+
+
+def classify(paths: list[str]) -> Route:
+    build = False
+    site = False
+    for path in paths:
+        if repository_doc(path):
+            continue
+        if path in SITE_FILES or path.startswith(("docs/src/", "docs/public/")):
+            site = True
+            continue
+        # Unknown paths are build inputs until explicitly reviewed otherwise.
+        build = True
+        if path in ROUTING_FILES or path.startswith("docs/"):
+            site = True
+    return Route(build, site, f"classified {len(paths)} changed paths")
+
+
+def git(root: Path, *args: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    ).stdout
+
+
+def route_revision(root: Path, event: str, base: str, head: str, force: str) -> Route:
+    if force == "true" or event == "workflow_dispatch":
+        return Route(True, True, "explicit full run")
+    if force != "false" or event not in {"push", "pull_request", "nightly"}:
+        return Route(True, True, "unknown event or force value; full verification")
+    if not SHA.fullmatch(base) or not SHA.fullmatch(head) or set(base) == {"0"}:
+        return Route(True, True, "missing comparison revision; full verification")
+    try:
+        if event == "pull_request":
+            base = git(root, "merge-base", base, head).decode("ascii").strip()
+        paths = git(
+            root,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            base,
+            head,
+            "--",
+        )
+        # No rename detection: both the deleted old and added new path participate.
+        return classify(
+            [p.decode("utf-8", "surrogateescape") for p in paths.split(b"\0") if p]
+        )
+    except (subprocess.SubprocessError, UnicodeError):
+        return Route(True, True, "comparison unavailable; full verification")
+
+
+def check_docs(root: Path) -> None:
+    """Check tracked repository Markdown structure and local inline destinations.
+
+    Published MDX is checked by Astro. Code fences and external URLs are excluded;
+    this is deliberately not a full Markdown parser or a network link checker.
+    """
+    paths = git(root, "ls-files", "-z").split(b"\0")
+    errors: list[str] = []
+    for raw in paths:
+        path = raw.decode("utf-8", "surrogateescape")
+        if not repository_doc(path):
+            continue
+        file = root / path
+        if file.is_symlink() or not file.resolve().is_relative_to(root.resolve()):
+            errors.append(
+                f"{path}: repository documentation must not escape through symlinks"
+            )
+            continue
+        source = file.read_text(encoding="utf-8")
+        fence: str | None = None
+        headings: list[int] = []
+        for number, line in enumerate(source.splitlines(), 1):
+            marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+            if marker:
+                current = marker[1]
+                if fence is None:
+                    fence = current
+                elif current[0] == fence[0] and len(current) >= len(fence):
+                    fence = None
+                continue
+            if fence is not None:
+                continue
+            heading = re.match(r"^(#{1,6})\s", line)
+            if heading:
+                headings.append(len(heading[1]))
+            for link in INLINE_LINK.finditer(line):
+                target = link[1].removeprefix("<").removesuffix(">")
+                parsed = urlsplit(target)
+                if parsed.scheme or parsed.netloc or not parsed.path:
+                    continue
+                destination = file.parent / unquote(parsed.path)
+                if (
+                    PurePosixPath(unquote(parsed.path)).is_absolute()
+                    or not destination.resolve().is_relative_to(root.resolve())
+                    or not destination.exists()
+                ):
+                    errors.append(
+                        f"{path}:{number}: missing or escaping local destination {target!r}"
+                    )
+        if headings.count(1) != 1 or any(b > a + 1 for a, b in pairwise(headings)):
+            errors.append(f"{path}: require one H1 and no skipped heading levels")
+        if fence is not None:
+            errors.append(f"{path}: unclosed code fence")
+    if errors:
+        raise ValueError("\n".join(errors))
+
+
+def check_gate(env: dict[str, str]) -> None:
+    if env.get("ROUTING_EVENT") not in {"push", "pull_request", "workflow_dispatch"}:
+        raise ValueError("unknown gate event")
+    if env.get("ROUTING_RESULT") != "success":
+        raise ValueError("change routing or lightweight checks failed/cancelled")
+    build = env.get("BUILD_REQUIRED")
+    site = env.get("SITE_REQUIRED")
+    if build not in {"true", "false"} or site not in {"true", "false"}:
+        raise ValueError("missing or invalid routing outputs")
+    expected = {
+        "CARGO_RESULT": "success" if build == "true" else "skipped",
+        "BAZEL_RESULT": "success" if build == "true" else "skipped",
+        "SITE_RESULT": "success"
+        if site == "true" and env.get("ROUTING_EVENT") != "push"
+        else "skipped",
+    }
+    for job, result in expected.items():
+        if env.get(job) != result:
+            raise ValueError(f"{job}: expected {result}, got {env.get(job)!r}")
+
+
+def main() -> None:
+    root = Path.cwd()
+    command = sys.argv[1]
+    if command == "classify":
+        route = route_revision(
+            root,
+            os.environ.get("ROUTING_EVENT", ""),
+            os.environ.get("BASE_SHA", ""),
+            os.environ.get("HEAD_SHA", ""),
+            os.environ.get("FORCE_FULL", "false"),
+        )
+        output = f"build={str(route.build).lower()}\nsite={str(route.site).lower()}\n"
+        if destination := os.environ.get("GITHUB_OUTPUT"):
+            with Path(destination).open("a", encoding="utf-8") as stream:
+                stream.write(output)
+        print(output + route.reason)
+    elif command == "check-docs":
+        check_docs(root)
+        print("Repository Markdown structure and local inline destinations passed.")
+    elif command == "gate":
+        check_gate(dict(os.environ))
+        print("All selected checks passed; irrelevant jobs were deliberately skipped.")
+    else:
+        raise ValueError(f"unknown command: {command}")
+
+
+if __name__ == "__main__":
+    main()

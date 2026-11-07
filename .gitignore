@@ -36,3 +36,6 @@ tools/cmake_corpus/reports/*.json
 tools/cmake_corpus/reports/*.md
 .playwright-mcp/
 docs-audit-reports/
+
+# Python CI helper bytecode
+.github/scripts/__pycache__/

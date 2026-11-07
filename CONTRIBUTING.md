@@ -72,6 +72,25 @@ bazel build //...
 bazel test //... --test_output=errors
 ```
 
+CI runs the full Rust/Bazel and migration commands for code, build inputs, CI
+scripts, and unrecognized paths. Known repository-only Markdown changes run
+lightweight routing, structure, and local inline-link checks instead. Published
+site inputs run the site build on PRs and the deployment workflow on main.
+Mixed changes select every relevant check. Manual CI dispatch selects everything.
+
+`CI Result` checks the selected job outcomes, including intentional skips. Failed
+routing or cancelled/failed required jobs cannot produce a successful result.
+The routing regression suite is available locally without third-party packages:
+
+```bash
+python3 -m unittest discover -s .github/scripts -p 'test_ci_routing.py'
+python3 .github/scripts/ci_routing.py check-docs
+```
+
+The Markdown check covers known repository docs, heading structure, and local
+inline destinations outside code fences. It does not replace full Markdown
+parsing, external URL checks, or Astro's MDX/site link validation.
+
 `cargo fmt` applies Rust formatting. `just --list` shows convenience recipes;
 the explicit CI commands above are the full check contract. In particular,
 `just lint` currently has a narrower command than CI.

@@ -6,6 +6,14 @@ on:
       - main
     paths:
       - "docs/**"
+      - "!docs/README.md"
+      - "!docs/architecture.md"
+      - "!docs/engineering-roadmap.md"
+      - "!docs/refactoring-plan.md"
+      - "!docs/operations/*.md"
+      - "!docs/operations/**/*.md"
+      - ".github/scripts/setup-bun.sh"
+      - ".github/scripts/download-tool.sh"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -30,10 +38,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2.1.2
-        with:
-          bun-version: latest
+      - name: Install verified Bun
+        run: bash .github/scripts/setup-bun.sh
 
       - name: Install dependencies
         working-directory: docs
