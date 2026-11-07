@@ -24,15 +24,18 @@ jobs:
           test "$(uname -m)" = aarch64
           test "$(id -u)" -ne 0
           case "$RUNNER_NAME" in
-            rmx-air-*) ;;
-            *) echo "Unexpected runmux runner: $RUNNER_NAME" >&2; exit 1 ;;
+          rmx-air-*) ;;
+          *)
+            echo "Unexpected runmux runner: $RUNNER_NAME" >&2
+            exit 1
+            ;;
           esac
           printf 'Verified runner: %s\n' "$RUNNER_NAME"
           {
             printf 'Runner: %s\n\n' "$RUNNER_NAME"
             printf 'Commit: %s\n\n' "$GITHUB_SHA"
             printf 'Platform: %s/%s, UID %s\n' "$(uname -s)" "$(uname -m)" "$(id -u)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >>"$GITHUB_STEP_SUMMARY"
           probe=$(mktemp "$RUNNER_TEMP/rebaze-exec.XXXXXXXX")
           trap 'rm "$probe"' EXIT
           cp /usr/bin/true "$probe"

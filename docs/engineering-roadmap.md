@@ -30,7 +30,7 @@ or input project passes.
 | Robustness/recovery        | Partial    | Path preflight and per-file atomic replacement exist; resource limits and complete-batch recovery are not established.            |
 | Compatibility/conformance  | Partial    | Bazel 9 is the target; parser/syntax tests do not prove all source/rule/platform semantics.                                       |
 | Consumer/integration proof | Partial    | Optional external CMake tests can return early when fixtures are absent; required native/JVM build-and-test fixtures are missing. |
-| Delivery/repeatability     | Partial    | Hosted Cargo/Bazel CI exists; local shortcuts differ, docs checks are not PR-wide, and runmux activation lacks recorded proof.    |
+| Delivery/repeatability     | Partial    | Hosted/runmux routing has documented recovery; local shortcuts and PR-wide docs checks still need alignment.                      |
 | Documentation/usability    | Partial    | Contributor/review/architecture guides define the workflow; examples and support claims still need executable drift checks.       |
 
 See the [architecture](architecture.md) for current behavior and boundaries.
@@ -157,6 +157,5 @@ cannot express; maintain one escaping implementation.
 
 Decisions to settle in the owning implementation PRs: discovery/API migration,
 the first supported native/JVM fixture contracts, resource
-limits, and the desired complete-batch write recovery contract. Runner activation
-also needs working host credentials and infrastructure; workflow preparation
-alone does not establish readiness.
+limits, and the desired complete-batch write recovery contract. Runner availability depends on host credentials, engine health, and disk capacity;
+workflow preparation alone does not establish readiness.
