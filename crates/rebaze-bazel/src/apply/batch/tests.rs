@@ -109,7 +109,11 @@ fn complete_staging_precedes_every_move_and_receipt_retains_originals() {
 fn every_stage_failure_leaves_destinations_unchanged() {
     let _spawn_guard = PROCESS_SPAWN.read().unwrap();
     for index in 0..3 {
-        for phase in [Phase::StageStarted, Phase::StageSync] {
+        for phase in [
+            Phase::StageStarted,
+            Phase::StageSync,
+            Phase::StageDirectorySync,
+        ] {
             let root = fixture();
             assert!(
                 plan(root.path())
@@ -250,6 +254,31 @@ fn changed_later_file_does_not_leave_an_unverified_successful_prefix() {
         fs::read_to_string(receipt.retained.join("entries/0000/before")).unwrap(),
         "old-a"
     );
+}
+
+#[test]
+fn final_verification_rechecks_earlier_installed_output() {
+    let _spawn_guard = PROCESS_SPAWN.read().unwrap();
+    let root = fixture();
+    let receipt = plan(root.path())
+        .apply_with(&mut |seen| {
+            if seen == point(Some(2), Phase::Installed) {
+                fs::write(root.path().join("a.bzl"), "later save")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(receipt.outcome, BatchOutcome::Conflict);
+    assert_eq!(
+        receipt.outputs[0].disposition,
+        OutputDisposition::Conflict(ConflictReason::DestinationChanged)
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("a.bzl")).unwrap(),
+        "later save"
+    );
+    assert_eq!(receipt.outputs[1].disposition, OutputDisposition::Applied);
+    assert_eq!(receipt.outputs[2].disposition, OutputDisposition::Applied);
 }
 
 #[test]
@@ -809,13 +838,18 @@ fn review_recovery_sync_failure_keeps_installation_and_restore_pending() {
 fn real_process_exit_and_fresh_process_recovery_cover_batch_transitions() {
     let _spawn_guard = PROCESS_SPAWN.write().unwrap();
     for selected in [
+        "preparation",
         "stage",
+        "stage-directory",
         "intent-record",
         "intent",
         "moved",
         "installed",
+        "install-sync",
         "done",
         "restore",
+        "restore-intent",
+        "stop",
         "archive",
     ] {
         let root = fixture();
@@ -830,6 +864,20 @@ fn real_process_exit_and_fresh_process_recovery_cover_batch_transitions() {
             .status()
             .unwrap();
         assert_eq!(status.code(), Some(81), "{selected}");
+        if selected == "install-sync" {
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "apply::batch::tests::batch_process_helper",
+                ])
+                .env("REBAZE_BATCH_TEST_ROOT", root.path())
+                .env("REBAZE_BATCH_TEST_POINT", "interrupt-recovery")
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(82));
+            assert!(root.path().join(".rebaze-apply/active").is_dir());
+        }
         let status = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
@@ -841,9 +889,12 @@ fn real_process_exit_and_fresh_process_recovery_cover_batch_transitions() {
             .status()
             .unwrap();
         assert!(status.success(), "{selected}");
-        if matches!(selected, "stage" | "intent-record") {
+        if matches!(
+            selected,
+            "preparation" | "stage" | "stage-directory" | "intent-record"
+        ) {
             baseline(root.path());
-        } else if selected == "restore" {
+        } else if matches!(selected, "restore" | "restore-intent" | "stop") {
             assert_eq!(
                 fs::read_to_string(root.path().join("a.bzl")).unwrap(),
                 "saved"
@@ -859,15 +910,32 @@ fn real_process_exit_and_fresh_process_recovery_cover_batch_transitions() {
 fn batch_process_helper() {
     let root = PathBuf::from(std::env::var_os("REBAZE_BATCH_TEST_ROOT").unwrap());
     let selected = std::env::var("REBAZE_BATCH_TEST_POINT").unwrap();
+    if selected == "interrupt-recovery" {
+        let _receipt = recover_with(&root, &mut |seen| {
+            if seen == point(Some(0), Phase::ReconcileSync) {
+                std::process::exit(82);
+            }
+            Ok(())
+        })
+        .unwrap();
+        panic!("recovery interruption point was not reached");
+    }
     if selected.starts_with("recover-") {
         let receipt = recover_bundle(&root).unwrap();
         if selected == "recover-archive" {
             assert!(receipt.is_none());
         } else {
-            let expected = if matches!(selected.as_str(), "recover-stage" | "recover-intent-record")
-            {
+            let expected = if selected == "recover-preparation" {
+                BatchOutcome::Unprepared
+            } else if matches!(
+                selected.as_str(),
+                "recover-stage" | "recover-stage-directory" | "recover-intent-record"
+            ) {
                 BatchOutcome::BaselineVerified
-            } else if selected == "recover-restore" {
+            } else if matches!(
+                selected.as_str(),
+                "recover-restore" | "recover-restore-intent" | "recover-stop"
+            ) {
                 BatchOutcome::Conflict
             } else {
                 BatchOutcome::Applied
@@ -879,17 +947,24 @@ fn batch_process_helper() {
     }
     let _receipt = plan(&root)
         .apply_with(&mut |seen| {
-            if selected == "restore" && seen == point(Some(0), Phase::BaselineChecked) {
+            if matches!(selected.as_str(), "restore" | "restore-intent" | "stop")
+                && seen == point(Some(0), Phase::BaselineChecked)
+            {
                 fs::write(root.join("a.bzl"), "saved")?;
             }
             let chosen = match selected.as_str() {
+                "preparation" => point(None, Phase::PreparationRecord(RecordPoint::Written)),
                 "stage" => point(Some(1), Phase::StageSync),
+                "stage-directory" => point(Some(1), Phase::StageDirectorySync),
                 "intent-record" => point(None, Phase::IntentRecord(RecordPoint::Written)),
                 "intent" => point(None, Phase::IntentDurable),
                 "moved" => point(Some(0), Phase::Moved),
                 "installed" => point(Some(0), Phase::Installed),
+                "install-sync" => point(Some(0), Phase::InstallSync),
                 "done" => point(Some(0), Phase::DoneRecord(RecordPoint::Written)),
                 "restore" => point(Some(0), Phase::RestoreSync),
+                "restore-intent" => point(Some(0), Phase::RestoreRecord(RecordPoint::Published)),
+                "stop" => point(None, Phase::StopRecord(RecordPoint::Synced)),
                 "archive" => Point::ArchiveSync,
                 _ => panic!("unknown process case"),
             };

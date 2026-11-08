@@ -109,6 +109,7 @@ pub(super) enum Phase {
     PreparationRecord(super::fs::RecordPoint),
     StageStarted,
     StageSync,
+    StageDirectorySync,
     IntentRecord(super::fs::RecordPoint),
     IntentDurable,
     BaselineChecked,
@@ -251,6 +252,8 @@ impl BatchEditPlan {
                     file.content.as_bytes(),
                     &mut file_hook(index, hook),
                 )?;
+                emit(&guard, hook, Some(index), Phase::StageDirectorySync)?;
+                guard.io(directory.sync())?;
                 Ok(Journal {
                     plan_identity: manifest_digest(&file.manifest)?,
                     plan: file.manifest,
