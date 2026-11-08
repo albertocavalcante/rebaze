@@ -47,8 +47,8 @@ editing requirement exceeds it.
 
 Buildport is a separate Go research prototype with configured capture, ordered
 compiler interpretation, explicit verification claims and pilot CMake/Bazel
-lowering. The owner's `cmake-file-api-go` SDK supplies lossless configured
-observations; CMake/Starlark CST libraries supply syntax and rewrite operations.
+lowering. The owner's `cmake-file-api-go` SDK preserves captured raw JSON alongside
+typed configured observations; CMake/Starlark CST libraries supply syntax and rewrite operations.
 Those libraries are not Rust runtime dependencies. The SDK's successful capture
 or matching query identity is not a successful configure, build or test result.
 

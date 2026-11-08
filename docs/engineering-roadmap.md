@@ -102,6 +102,27 @@ third-party suites out of ordinary library tests; explicitly selected integratio
 runs fail on missing inputs/tools and retain failed logs. Required existing CLI
 fixtures remain required.
 
+### First native trial, November 8, 2026
+
+The first trial used native macOS ARM64, CMake 4.4.5, AppleClang 21.0.0 and
+checksum-verified Bazel 9.0.0. TinyXML2, fmt and zlib were pinned as above. This is
+one platform/configuration, not a completed compatibility matrix.
+
+| Project / Debug profile | Observed result | Remaining evidence |
+| --- | --- | --- |
+| TinyXML2, static | Source-only preview refuses evaluation. Original build and one CTest pass. Baseline generated build fails because sorted flags break `-arch arm64`; the patched capture builds successfully. Its generated xmltest reports 517 passes/0 failures when run manually, and a small downstream program builds/runs against original and generated libraries. | File API does not import test registrations; manual execution is not a Bazel-test or hermetic-runtime proof. Release and stricter semantic comparison remain open. |
+| fmt, compiled library; tests/docs/install disabled | Original library builds; configured preview renders output. Full generated `//...` analysis encounters the upstream `support/bazel` package and its unresolved `@platforms` reference. | Keep this failure visible. Diagnose selected generated targets separately; no full migration or test pass is established. |
+| zlib, policy floor 3.5 | Original build and one CTest pass. The baseline preview omitted build-directory inputs; patched capture refuses the required build include and preserves an existing output sentinel. | Generated-header/build-input lowering remains unsupported. CMake configure itself renames the upstream source `zconf.h`; that input change is recorded separately from CLI output writes. |
+
+Buildport's current SDK-backed reader captures all three profiles. For zlib it
+leaves 30 multiply-owned compile entries unassigned rather than guessing a target.
+That successful capture is not a verified migration. The pinned any2bazel
+extractor also captures all three. Its TinyXML2 diff requires explicit executable
+identity mapping; after that mapping it still reports link-flag differences and
+extra macro warnings. No ignores or agent repairs were used. Comparison warnings,
+exclusions and missing test semantics remain evidence to investigate, not noise
+to suppress for convergence. These observations motivate the R10/R11 gates below.
+
 ### Learn from failures
 
 For each choke point, record the first failed boundary, the observed behavior,
