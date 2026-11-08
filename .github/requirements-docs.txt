@@ -1,3 +1,4 @@
-# CI-only CommonMark parser. Universal wheels only; verify all downloaded bytes.
+# CI-only Markdown/workflow parsers. Universal wheels; verify downloaded bytes.
 markdown-it-py==4.2.0 --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
 mdurl==0.1.2 --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8
+ruamel.yaml==0.19.1 --hash=sha256:27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93

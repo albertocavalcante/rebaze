@@ -23,6 +23,7 @@ REPOSITORY_DOCS = frozenset(
         "REVIEW.md",
         "docs/README.md",
         "docs/architecture.md",
+        "docs/guarded-application.md",
         "docs/engineering-roadmap.md",
         "docs/refactoring-plan.md",
     }
@@ -35,6 +36,8 @@ SITE_FILES = frozenset(
         "docs/bun.lock",
     }
 )
+# This published MDX is also include_str!/compile_data for Rust config tests.
+BUILD_AND_SITE_FILES = frozenset({"docs/src/content/docs/reference/config.mdx"})
 ROUTING_FILES = frozenset(
     {
         ".github/scripts/ci_routing.py",
@@ -66,6 +69,10 @@ def classify(paths: list[str]) -> Route:
     site = False
     for path in paths:
         if repository_doc(path):
+            continue
+        if path in BUILD_AND_SITE_FILES:
+            build = True
+            site = True
             continue
         if path in SITE_FILES or path.startswith(("docs/src/", "docs/public/")):
             site = True
@@ -220,7 +227,7 @@ def main() -> None:
         output = f"build={str(route.build).lower()}\nsite={str(route.site).lower()}\n"
         if destination := os.environ.get("GITHUB_OUTPUT"):
             with Path(destination).open("a", encoding="utf-8") as stream:
-                stream.write(output)
+                _ = stream.write(output)
         print(output + route.reason)
     elif command == "check-docs":
         check_docs(root)

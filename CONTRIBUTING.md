@@ -24,6 +24,7 @@ Install the tools required for the area you change:
 | Documentation site         | Bun; dependencies are locked in `docs/bun.lock`                                  |
 | CMake migration validation | CMake and the input project's build dependencies                                 |
 | Optional corpus tools      | Python/uv and the tools described in `tools/cmake_corpus/README.md`              |
+| Routing/Markdown checks    | Python 3.12 or newer; parser packages are pinned in `.github/requirements-docs.txt` |
 
 Bazel is the primary build. Cargo is also checked in CI and supports local Rust
 iteration. Bazel downloads its configured Rust toolchain; Cargo uses rustup.
@@ -78,10 +79,13 @@ scripts, and unrecognized paths. Known repository-only Markdown changes run
 lightweight routing, structure, and local inline-link checks instead. Published
 site inputs run the site build on PRs and the deployment workflow on main.
 Mixed changes select every relevant check. Manual CI dispatch selects everything.
+The configuration reference is also a compiled Rust test fixture, so changes to
+its TOML examples select Rust/Bazel checks alongside the site build.
 
 `CI Result` checks the selected job outcomes, including intentional skips. Failed
 routing or cancelled/failed required jobs cannot produce a successful result.
-The routing suite includes Markdown checks using two small hash-pinned packages:
+The routing suite checks Markdown and deployment-filter consistency with small
+hash-pinned parser packages:
 
 ```bash
 python3 -m venv .rebaze/ci-python

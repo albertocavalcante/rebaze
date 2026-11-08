@@ -6,9 +6,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Protocol, cast, override
 from unittest.mock import patch
 
 import ci_routing as routing
+from ruamel.yaml import YAML
 
 
 class ClassificationTests(unittest.TestCase):
@@ -20,6 +22,7 @@ class ClassificationTests(unittest.TestCase):
             "AGENTS.md",
             "docs/engineering-roadmap.md",
             "docs/architecture.md",
+            "docs/guarded-application.md",
             "docs/operations/ci-runners.md",
         ]:
             with self.subTest(path=path):
@@ -42,6 +45,11 @@ class ClassificationTests(unittest.TestCase):
                 route = routing.classify([path])
                 self.assertFalse(route.build)
                 self.assertTrue(route.site)
+
+    def test_config_reference_also_checks_its_compiled_examples(self) -> None:
+        route = routing.classify(["docs/src/content/docs/reference/config.mdx"])
+        self.assertTrue(route.build)
+        self.assertTrue(route.site)
 
     def test_build_inputs_and_unknown_files_never_skip_builds(self) -> None:
         for path in [
@@ -73,16 +81,30 @@ class ClassificationTests(unittest.TestCase):
 
 
 class GitTests(unittest.TestCase):
+    _root: Path | None = None
+    _base: str | None = None
+
+    @property
+    def root(self) -> Path:
+        assert self._root is not None, "Git fixture has not been set up"
+        return self._root
+
+    @property
+    def base(self) -> str:
+        assert self._base is not None, "Git fixture has not been set up"
+        return self._base
+
+    @override
     def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.git("init", "--initial-branch=main")
-        self.git("config", "user.name", "Routing tests")
-        self.git("config", "user.email", "routing@example.invalid")
-        self.git("config", "commit.gpgsign", "false")
-        self.git("config", "core.hooksPath", "/dev/null")
-        self.base = self.commit("README.md", "# Test\n")
+        fixture = tempfile.TemporaryDirectory()
+        self.addCleanup(fixture.cleanup)
+        self._root = Path(fixture.name)
+        _ = self.git("init", "--initial-branch=main")
+        _ = self.git("config", "user.name", "Routing tests")
+        _ = self.git("config", "user.email", "routing@example.invalid")
+        _ = self.git("config", "commit.gpgsign", "false")
+        _ = self.git("config", "core.hooksPath", "/dev/null")
+        self._base = self.commit("README.md", "# Test\n")
 
     def git(self, *args: str) -> str:
         return routing.git(self.root, *args).decode().strip()
@@ -90,9 +112,9 @@ class GitTests(unittest.TestCase):
     def commit(self, path: str, content: str) -> str:
         file = self.root / path
         file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(content)
-        self.git("add", "--", path)
-        self.git("commit", "-m", "fixture")
+        _ = file.write_text(content)
+        _ = self.git("add", "--", path)
+        _ = self.git("commit", "-m", "fixture")
         return self.git("rev-parse", "HEAD")
 
     def route(
@@ -103,7 +125,7 @@ class GitTests(unittest.TestCase):
         )
 
     def test_multi_commit_push_and_nightly_include_earlier_code(self) -> None:
-        self.commit("src/main.rs", "fn main() {}\n")
+        _ = self.commit("src/main.rs", "fn main() {}\n")
         head = self.commit("README.md", "# Updated\n")
         self.assertTrue(self.route(head).build)
         self.assertTrue(self.route(head, "nightly").build)
@@ -111,20 +133,20 @@ class GitTests(unittest.TestCase):
     def test_rename_from_code_to_docs_cannot_hide_deletion(self) -> None:
         base = self.commit("input.rs", "source\n")
         (self.root / "docs").mkdir()
-        self.git("mv", "input.rs", "docs/architecture.md")
-        self.git("commit", "-m", "rename")
+        _ = self.git("mv", "input.rs", "docs/architecture.md")
+        _ = self.git("commit", "-m", "rename")
         self.assertTrue(self.route(self.git("rev-parse", "HEAD"), base=base).build)
 
     def test_delete_code_and_unusual_filename(self) -> None:
         base = self.commit("input\nname.rs", "source\n")
-        self.git("rm", "--", "input\nname.rs")
-        self.git("commit", "-m", "delete")
+        _ = self.git("rm", "--", "input\nname.rs")
+        _ = self.git("commit", "-m", "delete")
         self.assertTrue(self.route(self.git("rev-parse", "HEAD"), base=base).build)
 
     def test_pr_uses_merge_base_not_unrelated_base_branch_changes(self) -> None:
-        self.git("switch", "-c", "topic")
+        _ = self.git("switch", "-c", "topic")
         head = self.commit("docs/architecture.md", "# Architecture\n")
-        self.git("switch", "main")
+        _ = self.git("switch", "main")
         newer_base = self.commit("base-code.rs", "source\n")
         route = self.route(head, "pull_request", newer_base)
         self.assertFalse(route.build)
@@ -154,23 +176,40 @@ class GitTests(unittest.TestCase):
         self.assertFalse(self.route(head, "nightly").build)
         self.assertFalse(self.route(self.base).build)
 
-    def test_document_checker_detects_broken_links_and_structure(self) -> None:
-        self.commit("docs/README.md", "# Docs\n\n[Root](../README.md)\n")
-        routing.check_docs(self.root)
-        self.commit("docs/README.md", "# Docs\n\n[Missing](missing.md)\n")
+    def test_protocol_guide_is_lightweight_but_code_mix_still_builds(self) -> None:
+        head = self.commit("docs/guarded-application.md", "# Guarded application\n")
+        route = self.route(head)
+        self.assertFalse(route.build)
+        self.assertFalse(route.site)
+        head = self.commit("src/main.rs", "fn main() {}\n")
+        route = self.route(head)
+        self.assertTrue(route.build)
+        self.assertFalse(route.site)
+
+    def test_protocol_guide_links_are_checked(self) -> None:
+        _ = self.commit(
+            "docs/guarded-application.md", "# Guide\n\n[Broken](missing.md)\n"
+        )
         with self.assertRaisesRegex(ValueError, "missing or escaping"):
             routing.check_docs(self.root)
-        self.commit("docs/README.md", "# Docs\n\n### Skipped\n")
+
+    def test_document_checker_detects_broken_links_and_structure(self) -> None:
+        _ = self.commit("docs/README.md", "# Docs\n\n[Root](../README.md)\n")
+        routing.check_docs(self.root)
+        _ = self.commit("docs/README.md", "# Docs\n\n[Missing](missing.md)\n")
+        with self.assertRaisesRegex(ValueError, "missing or escaping"):
+            routing.check_docs(self.root)
+        _ = self.commit("docs/README.md", "# Docs\n\n### Skipped\n")
         with self.assertRaisesRegex(ValueError, "heading levels"):
             routing.check_docs(self.root)
 
     def test_document_checker_ignores_fenced_examples_and_external_urls(self) -> None:
-        self.commit(
+        _ = self.commit(
             "README.md",
             "# Test\n\n[Web](https://example.invalid)\n\n```md\n[Example](missing.md)\n```\n",
         )
         routing.check_docs(self.root)
-        self.commit("README.md", "# Test\n[Escape](../outside.md)\n")
+        _ = self.commit("README.md", "# Test\n[Escape](../outside.md)\n")
         with self.assertRaisesRegex(ValueError, "escaping"):
             routing.check_docs(self.root)
 
@@ -183,7 +222,7 @@ class GitTests(unittest.TestCase):
         ]
         for example in examples:
             with self.subTest(example=example):
-                self.commit("README.md", "# Example\n\n" + example + "\n")
+                _ = self.commit("README.md", "# Example\n\n" + example + "\n")
                 routing.check_docs(self.root)
 
     def test_reference_and_image_destinations_are_checked(self) -> None:
@@ -192,9 +231,40 @@ class GitTests(unittest.TestCase):
             "# Example\n\n![picture](missing.png)\n",
         ]:
             with self.subTest(source=source):
-                self.commit("README.md", source)
+                _ = self.commit("README.md", source)
                 with self.assertRaisesRegex(ValueError, "missing or escaping"):
                     routing.check_docs(self.root)
+
+
+class _YamlDocumentLoader(Protocol):
+    def load(self, stream: str) -> object: ...
+
+
+class DeploymentFilterTests(unittest.TestCase):
+    def test_repository_doc_registration_excludes_main_deployment(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        source = (root / ".github/workflows/docs.yml").read_text(encoding="utf-8")
+        # Keep untyped parser data at the IO boundary; validate the small schema
+        # consumed by this policy check rather than relying on YAML source layout.
+        parser = cast(_YamlDocumentLoader, YAML(typ="safe", pure=True))
+        document = parser.load(source)
+        for field in ("on", "push", "paths"):
+            assert isinstance(document, dict), f"expected mapping before {field}"
+            document = cast(dict[object, object], document)[field]
+        assert isinstance(document, list), "push.paths must be a sequence"
+        patterns: list[str] = []
+        for pattern in cast(list[object], document):
+            assert isinstance(pattern, str), "push.paths entries must be strings"
+            patterns.append(pattern)
+        include_position = patterns.index("docs/**")
+        for path in sorted(routing.REPOSITORY_DOCS):
+            if path.startswith("docs/"):
+                with self.subTest(path=path):
+                    exclusion = f"!{path}"
+                    self.assertIn(exclusion, patterns)
+                    self.assertGreater(patterns.index(exclusion), include_position)
+        for path in routing.BUILD_AND_SITE_FILES:
+            self.assertNotIn(f"!{path}", patterns)
 
 
 class GateTests(unittest.TestCase):
@@ -242,4 +312,4 @@ class GateTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

@@ -8,6 +8,7 @@ on:
       - "docs/**"
       - "!docs/README.md"
       - "!docs/architecture.md"
+      - "!docs/guarded-application.md"
       - "!docs/engineering-roadmap.md"
       - "!docs/refactoring-plan.md"
       - "!docs/operations/*.md"
