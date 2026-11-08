@@ -43,12 +43,12 @@ impl Guard {
                 return Ok(Err(ApplyError::Invalid("canonical root must be UTF-8")));
             }
             let root_directory = Directory::root(&root)?;
-            if let Some(expected) = expected {
-                if root != expected.root || root_directory.identity()? != expected.root_identity {
-                    return Ok(Err(ApplyError::Invalid(
-                        "canonical root identity changed before application",
-                    )));
-                }
+            if let Some(expected) = expected
+                && (root != expected.root || root_directory.identity()? != expected.root_identity)
+            {
+                return Ok(Err(ApplyError::Invalid(
+                    "canonical root identity changed before application",
+                )));
             }
             let directory = match root_directory.make_child(PRIVATE_DIRECTORY) {
                 Ok(directory) => directory,
