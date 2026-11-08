@@ -514,7 +514,7 @@
           "FILE:@@//crates/rebaze-cmake-file-api/Cargo.toml f01c05d2fde86ba606476083ce4325174cbd3769ebffb8d0e304133bf6a7022e",
           "FILE:@@//crates/rebaze-core/Cargo.toml 98aabd257bee7d6c7672f84ef785bf1be65a4c24df4efcf1d1eb6f6b16bb7a01",
           "FILE:@@//crates/rebaze-gradle/Cargo.toml d14423cb1fbc15a035c4815174c54b36afa677631dad6ceb19f1ba44e6434a4f",
-          "FILE:@@//crates/rebaze-input/Cargo.toml d0d810d0f0be5dfd8752e9555c6882a9717dbfe55cca68f52b0069120d7299bd",
+          "FILE:@@//crates/rebaze-input/Cargo.toml 6a57b98abe0b4fa14d87ff326d696805e7b9c881a269fbdc3ecbff6140294913",
           "FILE:@@//crates/rebaze-starlark/Cargo.toml 44a91d06d25184ce495ef7d1950447842895309a9d907e333110bb6678c13758"
         ],
         "generatedRepoSpecs": {
