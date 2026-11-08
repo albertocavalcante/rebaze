@@ -12,6 +12,7 @@ in one authoritative place, then link to it from other entry points.
 | `REVIEW.md`                    | Authors/reviewers: complete-diff review, failure and rollback questions, required evidence, and merge gates |
 | `AGENTS.md`                    | Coding agents: repository-specific instructions and links to contributor/review policy                      |
 | `docs/architecture.md`         | Maintainers: current crate responsibilities, data flow, API/effect boundaries, and limitations              |
+| `docs/guarded-application.md`  | Library consumers: opt-in single-file write/recovery protocol and its filesystem/metadata limits           |
 | `docs/engineering-roadmap.md`  | Maintainers: the next milestone, dependency order, completion evidence, and deferred work                   |
 | `docs/operations/`             | Operators: runner/release procedures, prerequisites, verification, failure recovery, and rollback           |
 | `docs/src/content/docs/`       | Users: published tutorials, task guides, conceptual explanations, and reference                             |
