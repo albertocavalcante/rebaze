@@ -175,6 +175,18 @@ is now a `Vec<TargetAlias>` of observed declarations rather than a map; retain
 all declarations so preparation can reject duplicates. Recursive source extraction
 preserves child-directory aliases.
 
+Configuration project loaders now return `Result`; only an absent file selects
+defaults. Malformed/unreadable files, broken symlinks, unknown keys and mixed
+flat/nested sections are errors. Handle `Config::load_from_project(path)?` and
+`MigrationConfig::load_from_project(path)?` explicitly. Core's `Config` loader
+accepts flat or nested files; the target-specific `MigrationConfig` loader accepts
+flat native settings only and rejects a `[bazel]` envelope. Native CMake honors root
+visibility and language defaults; currently reserved overrides fail preparation.
+Gradle Java and bazelle accept only default configuration. See the
+[configuration reference](docs/src/content/docs/reference/config.mdx) for field
+support and scope. Ordinary tests validate its canonical TOML examples; site
+build/link checks and real migration fixtures establish separate behavior.
+
 `ThirdPartyConfig`, `DepsStrategy`, and direct third-party rendering helpers have
 been removed. They could disagree with `MigrationConfig` and the shared plan.
 Use `MigrationConfig.strategy` and the prepared API instead. Raw TOML spellings
@@ -209,6 +221,22 @@ They ignore system/home Bazel rc files and pass only PATH/HOME to fixture
 processes. Their results establish the tested host's compatibility, not native
 Windows execution or complete Meson/Autotools/GLib support. Record which oracles
 actually ran, separately from standard CI and optional corpus tests.
+
+### Explicit native configuration build
+
+When changing native language defaults, use the same Unix/Bazel/C/C++ toolchain
+prerequisites to run:
+
+```bash
+cargo test -p rebaze-bazel --locked config_build_tests -- --ignored --test-threads=1
+```
+
+The generated mixed C/C++ executable has compiler checks requiring C17 and C++20,
+then runs and checks its result. This independently verifies language-specific
+flags, rather than only checking generated text. It is an explicit networked
+oracle; missing tools fail the selected check. `REBAZE_BAZEL_TEST_ROOT` can select
+an absolute cache directory, as for the dependency oracles above. Record the
+actual native toolchain/platform; this does not establish all compiler support.
 
 ### Required CMake CLI migration
 

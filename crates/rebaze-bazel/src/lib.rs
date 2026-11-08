@@ -20,6 +20,8 @@ pub enum GenerationError {
     #[error("cannot migrate Gradle Java project: {0}")]
     Gradle(String),
     #[error(transparent)]
+    Config(#[from] config::ConfigError),
+    #[error(transparent)]
     Render(#[from] rebaze_starlark::Error),
     #[error(transparent)]
     Plan(#[from] PlanError),
@@ -36,6 +38,8 @@ pub type GenerationResult<T> = std::result::Result<T, GenerationError>;
 mod cmake_generator;
 mod cmake_tests;
 pub mod config;
+#[cfg(test)]
+mod config_build_tests;
 #[cfg(test)]
 mod dependency_build_tests;
 mod dependency_plan;
@@ -89,6 +93,7 @@ pub fn plan_cmake<'a>(
     project: &'a rebaze_cmake::CMakeProject,
     config: &'a MigrationConfig,
 ) -> GenerationResult<CMakeGeneration<'a>> {
+    config.validate_for(config::ConfigProfile::NativeCmake)?;
     let plan = dependency_plan::DependencyPlan::new(project, config)?;
     let mut names = native_links::TargetNames::default();
     let links = native_links::NativeLinkPlan::new(project, config, &plan, &mut names)?;
@@ -129,7 +134,10 @@ impl CMakeGeneration<'_> {
                 )?,
             ),
             (".bazelversion".into(), "9.0.0\n".into()),
-            (".bazelrc".into(), generate_cpp_bazelrc(self.project, &[])),
+            (
+                ".bazelrc".into(),
+                generate_cpp_bazelrc(self.project, self.config, &[]),
+            ),
         ]);
         if !self.plan.aliases.is_empty() {
             let mut build = third_party::build_file(&self.plan)?;
@@ -162,6 +170,7 @@ const EXPERIMENTAL_CXX_STANDARDS: &[&str] = &["20", "23", "26"];
 #[allow(clippy::option_if_let_else, clippy::too_many_lines)]
 fn generate_cpp_bazelrc(
     project: &rebaze_cmake::CMakeProject,
+    config: &MigrationConfig,
     system_includes: &[String],
 ) -> String {
     let mut lines = vec![
@@ -229,7 +238,7 @@ fn generate_cpp_bazelrc(
                     )
                 }
             }
-            None => ("17".to_string(), None), // Default to C++17
+            None => (config.build.default_cxx_standard.clone(), None),
         };
 
         if let Some(note) = note {
@@ -249,7 +258,7 @@ fn generate_cpp_bazelrc(
     }
 
     // C standard settings
-    if has_c && !has_cxx {
+    if has_c {
         let c_std = match &project.c_standard {
             Some(std) => {
                 // Normalize common variants
@@ -268,7 +277,7 @@ fn generate_cpp_bazelrc(
                     }
                 }
             }
-            None => "11", // Default to C11
+            None => config.build.default_c_standard.as_str(),
         };
 
         lines.push(format!(
@@ -279,8 +288,8 @@ fn generate_cpp_bazelrc(
                 .unwrap_or("not specified")
                 .escape_debug()
         ));
-        lines.push(format!("common --copt=-std=c{c_std}"));
-        lines.push(format!("common --host_copt=-std=c{c_std}"));
+        lines.push(format!("common --conlyopt=-std=c{c_std}"));
+        lines.push(format!("common --host_conlyopt=-std=c{c_std}"));
         lines.push(String::new());
     }
 

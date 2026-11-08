@@ -10,7 +10,51 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// The concrete generator consuming migration configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigProfile {
+    NativeCmake,
+    NativeGradle,
+    Bazelle,
+}
+
+impl std::fmt::Display for ConfigProfile {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::NativeCmake => "native CMake",
+            Self::NativeGradle => "native Gradle Java",
+            Self::Bazelle => "bazelle",
+        })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("failed to read configuration {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("invalid migration configuration {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error(
+        "{0} overrides are not implemented for native CMake migration; leave this setting at its documented default"
+    )]
+    UnsupportedOverride(&'static str),
+    #[error("invalid value {value:?} for {field}")]
+    InvalidValue { field: &'static str, value: String },
+    #[error(
+        "migration configuration overrides are not implemented for {0}; use native CMake or leave configuration at defaults"
+    )]
+    UnsupportedProfile(ConfigProfile),
+}
 
 /// A dependency decision; unresolved input must never be treated as an omission.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,8 +84,8 @@ impl DependencyMapping {
 }
 
 /// Main configuration for CMake to Bazel migration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MigrationConfig {
     /// Bazel dependency versions
     pub versions: VersionConfig,
@@ -64,33 +108,121 @@ pub struct MigrationConfig {
 const COMPONENT_PLACEHOLDER: &str = "{component}";
 
 impl MigrationConfig {
-    /// Load configuration from a TOML file, merging with defaults.
-    pub fn load_from_file(path: &Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
-        Ok(config)
+    /// Load flat native settings from TOML, filling omitted fields with defaults.
+    /// The `[bazel]` envelope belongs to `rebaze_core::Config`, not this loader.
+    pub fn load_from_file(path: &Path) -> Result<Self, ConfigError> {
+        let content = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.into(),
+            source,
+        })?;
+        toml::from_str(&content).map_err(|source| ConfigError::Parse {
+            path: path.into(),
+            source,
+        })
     }
 
-    /// Try to load configuration from the project directory.
-    /// Looks for `rebaze.toml` in the given directory.
-    pub fn load_from_project(project_dir: &Path) -> Self {
-        let config_path = project_dir.join("rebaze.toml");
-        if config_path.exists() {
-            match Self::load_from_file(&config_path) {
-                Ok(config) => {
-                    tracing::info!("Loaded configuration from {}", config_path.display());
-                    return config;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load {}: {}. Using defaults.",
-                        config_path.display(),
-                        e
-                    );
+    /// Discover flat native settings; only an absent file selects defaults.
+    /// Use `rebaze_core::Config` when a file may contain the `[bazel]` envelope.
+    pub fn load_from_project(project_dir: &Path) -> Result<Self, ConfigError> {
+        let path = project_dir.join("rebaze.toml");
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => Self::load_from_file(&path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(source) => Err(ConfigError::Read { path, source }),
+        }
+    }
+
+    /// Validate generator support before running tools or applying output.
+    pub fn validate_for(&self, profile: ConfigProfile) -> Result<(), ConfigError> {
+        let defaults = Self::default();
+        if profile != ConfigProfile::NativeCmake {
+            return if self == &defaults {
+                Ok(())
+            } else {
+                Err(ConfigError::UnsupportedProfile(profile))
+            };
+        }
+        for (field, actual, expected) in [
+            (
+                "filters.excluded_source_extensions",
+                &self.filters.excluded_source_extensions,
+                &defaults.filters.excluded_source_extensions,
+            ),
+            (
+                "filters.excluded_define_patterns",
+                &self.filters.excluded_define_patterns,
+                &defaults.filters.excluded_define_patterns,
+            ),
+            (
+                "filters.excluded_copt_patterns",
+                &self.filters.excluded_copt_patterns,
+                &defaults.filters.excluded_copt_patterns,
+            ),
+            (
+                "filters.excluded_include_patterns",
+                &self.filters.excluded_include_patterns,
+                &defaults.filters.excluded_include_patterns,
+            ),
+            (
+                "build.header_patterns",
+                &self.build.header_patterns,
+                &defaults.build.header_patterns,
+            ),
+        ] {
+            if actual != expected {
+                return Err(ConfigError::UnsupportedOverride(field));
+            }
+        }
+        if self.mappings.system_linkopts != defaults.mappings.system_linkopts {
+            return Err(ConfigError::UnsupportedOverride("mappings.system_linkopts"));
+        }
+        for (field, value) in [
+            ("build.rules.library_rule", &self.build.rules.library_rule),
+            ("build.rules.binary_rule", &self.build.rules.binary_rule),
+            ("build.rules.test_rule", &self.build.rules.test_rule),
+        ] {
+            if crate::starlark::validate_function_name(value).is_err() {
+                return Err(ConfigError::InvalidValue {
+                    field,
+                    value: value.clone(),
+                });
+            }
+        }
+        for load in &self.build.rules.extra_loads {
+            for item in &load.items {
+                if crate::starlark::Identifier::new(item.clone()).is_err() {
+                    return Err(ConfigError::InvalidValue {
+                        field: "build.rules.extra_loads.items",
+                        value: item.clone(),
+                    });
                 }
             }
         }
-        Self::default()
+        for (field, value, allowed) in [
+            (
+                "build.default_visibility",
+                &self.build.default_visibility,
+                &["//visibility:public", "//visibility:private"][..],
+            ),
+            (
+                "build.default_cxx_standard",
+                &self.build.default_cxx_standard,
+                &["98", "03", "11", "14", "17", "20", "23", "26"][..],
+            ),
+            (
+                "build.default_c_standard",
+                &self.build.default_c_standard,
+                &["89", "90", "99", "11", "17", "18", "23"][..],
+            ),
+        ] {
+            if !allowed.contains(&value.as_str()) {
+                return Err(ConfigError::InvalidValue {
+                    field,
+                    value: value.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Get the Bazel target for a system library.
@@ -305,8 +437,8 @@ impl MigrationConfig {
 }
 
 /// Bazel dependency versions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct VersionConfig {
     pub rules_cc: String,
     pub platforms: String,
@@ -328,8 +460,8 @@ impl Default for VersionConfig {
 }
 
 /// Dependency mapping configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MappingConfig {
     /// System library to Bazel target mappings.
     /// Empty string means "skip this library" (implicit system lib).
@@ -710,7 +842,8 @@ impl MappingConfig {
 }
 
 /// Mapping configuration for a CMake package.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageMapping {
     /// Default target pattern. Use {component} as placeholder.
     pub target_pattern: String,
@@ -742,7 +875,8 @@ pub enum SourceBuildSystem {
 }
 
 /// Metadata for a known package that can be built from source.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KnownPackageInfo {
     /// Package version.
     pub version: String,
@@ -782,8 +916,8 @@ pub struct KnownPackageInfo {
 }
 
 /// Filter configuration for cleaning up CMake artifacts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct FilterConfig {
     /// File extensions to exclude from sources.
     pub excluded_source_extensions: Vec<String>,
@@ -866,10 +1000,10 @@ impl Default for FilterConfig {
 }
 
 /// Build file generation options.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct BuildConfig {
-    /// Default visibility for generated targets.
+    /// Default visibility for targets in the generated root BUILD file.
     pub default_visibility: String,
 
     /// Header file glob patterns.
@@ -906,8 +1040,8 @@ impl Default for BuildConfig {
 ///
 /// Allows organizations to use their own rule wrappers (e.g., spotify_library)
 /// instead of standard Bazel rules (cc_library).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct RuleConfig {
     /// Rule name for libraries (default: "cc_library").
     pub library_rule: String,
@@ -935,7 +1069,8 @@ impl Default for RuleConfig {
 }
 
 /// A Starlark load statement.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoadStatement {
     /// The .bzl file to load from (e.g., `@spotify//build:rules.bzl`).
     pub bzl: String,
@@ -945,8 +1080,8 @@ pub struct LoadStatement {
 }
 
 /// Third-party dependency strategy configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct StrategyConfig {
     /// Default strategy for resolving dependencies.
     /// Implemented values: "bcr", "system", "source". Other values fail planning.
@@ -978,8 +1113,8 @@ impl Default for StrategyConfig {
 }
 
 /// Configuration specific to BCR (Bazel Central Registry) strategy.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct BcrConfig {
     /// Override BCR module names for specific packages.
     /// E.g., `{"openssl": "boringssl"}` to use boringssl instead of openssl.
@@ -1006,6 +1141,22 @@ mod tests {
         let config = MigrationConfig::default();
         assert_eq!(config.versions.rules_cc, "0.2.27");
         assert_eq!(config.strategy.default, "system");
+    }
+
+    #[test]
+    fn published_configuration_snippets_match_the_supported_profile() {
+        let reference = include_str!("../../../docs/src/content/docs/reference/config.mdx");
+        let mut count = 0;
+        for block in reference.split("```toml\n").skip(1) {
+            let snippet = block.split_once("```").unwrap().0;
+            let config: MigrationConfig = toml::from_str(snippet).unwrap();
+            config.validate_for(ConfigProfile::NativeCmake).unwrap();
+            count += 1;
+        }
+        assert!(
+            count > 0,
+            "configuration reference contains no executable TOML snippets"
+        );
     }
 
     #[test]
@@ -1253,7 +1404,7 @@ default = "source"
         assert_eq!(config.build.rules.library_rule, "cc_library");
         assert_eq!(config.build.rules.binary_rule, "cc_binary");
         assert_eq!(config.build.rules.test_rule, "cc_test");
-        assert!(config.build.rules.extra_loads.is_empty());
+        assert_eq!(config.build.rules.extra_loads, []);
     }
 
     #[test]

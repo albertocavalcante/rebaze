@@ -78,6 +78,9 @@ assert_rejected() {
   fi
   cmp "$work/app-before.bazel" "$work/migrated/app/BUILD.bazel"
 }
+printf '[build]\nmodule_version = "2.0"\n' >"$work/migrated/rebaze.toml"
+assert_rejected 'configuration overrides are not implemented for native Gradle Java'
+rm "$work/migrated/rebaze.toml"
 mv "$work/migrated/maven_install.json" "$work/held-maven.json"
 if isolated "$cli" migrate "$work/migrated" --build-generator native >"$work/unpinned.log" 2>&1; then
   echo 'Unpinned Maven dependencies were built without explicit preparation.' >&2

@@ -84,6 +84,7 @@ fn valid_identifier(name: &str) -> bool {
         )
 }
 
+/// Validate an identifier or dotted callable name without constructing a call.
 pub fn validate_function(name: &str) -> Result<()> {
     if name.split('.').all(valid_identifier) {
         Ok(())
