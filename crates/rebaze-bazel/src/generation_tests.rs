@@ -173,11 +173,11 @@ fn unsupported_or_conflicting_cmake_tests_fail_during_planning() {
         ),
         (
             "enable_testing()\nset_property(TARGET probe PROPERTY TEST_LAUNCHER /usr/bin/false)\nadd_test(NAME x COMMAND probe)",
-            "launchers",
+            "set_property",
         ),
         (
             "enable_testing()\nset_target_properties(probe PROPERTIES CROSSCOMPILING_EMULATOR tool)\nadd_test(NAME x COMMAND probe)",
-            "emulators",
+            "set_target_properties",
         ),
         (
             "enable_testing()\nset(CMAKE_TEST_LAUNCHER tool)\nadd_test(NAME x COMMAND probe)",
@@ -185,11 +185,11 @@ fn unsupported_or_conflicting_cmake_tests_fail_during_planning() {
         ),
         (
             "enable_testing()\nset(PROP TEST_LAUNCHER)\nset_property(TARGET probe PROPERTY ${PROP} /usr/bin/false)\nadd_test(NAME x COMMAND probe)",
-            "dynamic property",
+            "set_property",
         ),
         (
             "enable_testing()\nif(OFF)\nadd_subdirectory(tests)\nendif()\nadd_test(NAME x COMMAND probe)",
-            "conditional or scoped add_subdirectory",
+            "conditional",
         ),
     ] {
         let file = rebaze_cmake::parse_source(&format!(
@@ -199,7 +199,10 @@ fn unsupported_or_conflicting_cmake_tests_fail_during_planning() {
         let project = rebaze_cmake::extract_project(&file, ".".into());
         let error = crate::plan_cmake(&project, &config).unwrap_err();
         assert!(
-            matches!(error, crate::GenerationError::Test(_)),
+            matches!(
+                error,
+                crate::GenerationError::Test(_) | crate::GenerationError::Source(_)
+            ),
             "{source}: {error}"
         );
         assert!(error.to_string().contains(diagnostic), "{source}: {error}");
@@ -938,5 +941,54 @@ fn every_reserved_override_reports_its_field() {
         assert!(
             matches!(error, crate::GenerationError::Config(crate::config::ConfigError::UnsupportedOverride(actual)) if actual == expected)
         );
+    }
+}
+
+#[test]
+fn unsupported_cmake_evaluation_fails_before_discovery() {
+    for source in [
+        "if(OFF)\nadd_library(hidden hidden.c)\nendif()",
+        "function(make_target)\nadd_library(hidden hidden.c)\nendfunction()",
+        "foreach(x one two)\nadd_library(hidden hidden.c)\nendforeach()",
+        "include(extra.cmake)",
+        "file(GLOB SRC *.c)",
+        "set(SRC main.c CACHE STRING sources)",
+        "set(SRC main.c PARENT_SCOPE)",
+        "set(SRC $ENV{SRC})",
+        "list(REMOVE_ITEM SRC main.c)",
+        "set(SRC one.c two.c)\nadd_library(mixed prefix/${SRC})",
+        "set(EXTRA expat)\npkg_check_modules(DEP REQUIRED zlib ${EXTRA})",
+        "set(SRC before.c)\nfind_package(Toggle REQUIRED)\nadd_library(core STATIC ${SRC})",
+        "set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES hook.cmake)",
+        "set(CMAKE_PROJECT_example_INCLUDE hook.cmake)",
+        "list(APPEND CMAKE_PROJECT_example_INCLUDE_BEFORE hook.cmake)",
+        "list(PREPEND CMAKE_MODULE_PATH custom)",
+        "set(BUILD_SHARED_LIBS ON)",
+        "list(APPEND CMAKE_TEST_LAUNCHER tool)",
+        "list(PREPEND CMAKE_CROSSCOMPILING_EMULATOR tool)",
+        "list(APPEND CMAKE_C_STANDARD 17)",
+        "set(CMAKE_CXX_STANDARD 17 20)",
+        "set(PREFIX CAC)\nset(SUFFIX HE)\nset(SRC main.c ${PREFIX}${SUFFIX} STRING sources)",
+        "add_subdirectory(${DIR})",
+        "add_library(dynamic $<TARGET_OBJECTS:other>)",
+        "add_library(dynamic [=[$<TARGET_OBJECTS:other>]=])",
+        "target_sources(other PRIVATE hidden.c)",
+        "set(CMAKE_C_STANDARD 99)\nadd_library(early early.c)\nset(CMAKE_C_STANDARD 17)\nadd_library(late late.c)",
+    ] {
+        let file = rebaze_cmake::parse_source(&format!(
+            "project(example C)\nadd_executable(probe main.c)\n{source}"
+        ))
+        .unwrap();
+        let project = rebaze_cmake::extract_project(&file, ".".into());
+        let error = crate::plan_cmake(&project, &MigrationConfig::default()).unwrap_err();
+        assert!(
+            matches!(error, crate::GenerationError::Source(_)),
+            "{source}: {error}"
+        );
+        assert!(
+            error.to_string().contains("CMake evaluation"),
+            "{source}: {error}"
+        );
+        assert!(!project.libraries.iter().any(|lib| lib.name == "hidden"));
     }
 }

@@ -469,6 +469,7 @@ mod tests {
 
     fn test_project() -> CMakeProject {
         CMakeProject {
+            requires_evaluation: Vec::new(),
             name: "test-project".to_string(),
             version: Some("1.0.0".to_string()),
             languages: vec!["CXX".to_string()],

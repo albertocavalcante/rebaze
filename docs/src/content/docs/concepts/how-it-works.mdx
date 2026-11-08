@@ -41,8 +41,8 @@ The CMake parser handles:
 
 Two parsing modes:
 
-1. **CMakeLists.txt parsing** - Analyzes CMake files directly
-2. **cmake-file-api** - Uses CMake's File API for exact build info
+1. **CMakeLists.txt parsing** - Analyzes CMake files directly; native migration rejects source constructs outside its static profile
+2. **cmake-file-api** - Reads explicitly selected configured build observations; it does not import test registrations or complete compiler semantics
 
 ### Gradle Parser
 
@@ -64,7 +64,7 @@ Extracts:
 ```
 CMake                          Bazel
 ─────                          ─────
-find_package(ZLIB)      ──▶    @zlib
+ZLIB::ZLIB             ──▶    @zlib
 target_link_libraries(         deps = [
   mylib                          "@zlib",
   ZLIB::ZLIB                     "@openssl//:ssl",

@@ -135,6 +135,61 @@ and Bourne escaping. Other compiler flags remain snapshot data and require
 manual review. Three explicit build oracles cover representative system, source,
 and BCR cases; they do not establish complete pkg-config flag conformance.
 
+## CMake source evaluation
+
+Syntax parsing (`parse_source`) remains a pure AST operation. Source extraction
+records `SourceIssue` values in `CMakeProject.requires_evaluation`; native
+`plan_cmake` rejects these before discovery or generated output writes. The normal
+native CLI prepares source-only input before configuring/building the original
+project. Explicit configured File API input follows its separate evaluated-data
+path: normal validation refreshes that build before its replies are captured;
+unsupported source never causes an implicit configure/evaluate fallback.
+
+Supported ordinary `set` assignments and `list(APPEND/PREPEND ...)` changes are
+processed in statement order, including target sources and properties. Each
+literal `add_subdirectory(relative/path)` captures the parent's variable context
+at that call. Child mutations are isolated; later parent assignments cannot
+rewrite an earlier child. Required directories/listfiles must exist, and repeated
+or cyclic source-directory visits are errors. AST-only extraction cannot read
+children: its model records that incompleteness; use
+`extract_project_from_path` for recursive source extraction.
+
+The native source profile rejects conditionals, loops, function/macro definitions,
+blocks, cache/environment/parent-scope assignments, unsupported list operations,
+unknown commands, dynamic metadata names, generator expressions, nested/undefined
+variables, semicolon-list syntax and quoted variable expansion. It does not
+extract scoped bodies as unconditional targets. Tests retain their separate
+literal argv validation, including empty/quoted/bracket arguments. `include`
+currently accepts only literal `FindPkgConfig` without a custom module path.
+Custom includes, module/toolchain hooks, every `find_package` call and generated
+source commands need explicit evaluated evidence: package modules/config scripts
+can mutate arbitrary source variables. Mutating `CMAKE_*` variables is allowed
+only through ordinary `set` for the two scalar language standards and the two
+separately validated test-launcher settings; other mutations (including
+project-specific hooks and all `list` mutations) need evaluated evidence. `BUILD_SHARED_LIBS` mutation also needs evaluation.
+Package metadata is retained for analysis,
+but does not authorize native source migration. Other metadata commands such as
+`project`, `pkg_check_modules` and `target_compile_features` require
+literal arguments throughout; their extractors do not evaluate variable values.
+Built-in path substitution is
+limited to `CMAKE_CURRENT_SOURCE_DIR` in include-directory commands.
+
+Target property commands require a preceding target in the same directory.
+Cross-directory target mutation, inherited directory include settings and differing
+per-target/directory language standards are rejected when the current model cannot
+represent their scope. Standards are captured when targets are created; a later
+assignment does not retroactively change them. Complete compiler features,
+usage-requirement propagation and flag ordering remain R10 work. This static
+profile is deliberately narrower than CMake and is not a general interpreter.
+
+The required first-party CMake oracle builds and tests both original and generated
+projects. It includes an early target between two assignments and child variable
+inheritance/isolation; missing source or leaked state makes the build fail.
+A separate stale-reply case changes a configured target before normal migration
+and requires the refreshed File API target in output. Independent native execution
+establishes these cases, not arbitrary CMake
+compatibility or a complete external corpus pass.
+
 ## Starlark generation
 
 `File` combines and hoists loads before rule calls while preserving body order.

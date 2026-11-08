@@ -187,6 +187,15 @@ Gradle Java and bazelle accept only default configuration. See the
 support and scope. Ordinary tests validate its canonical TOML examples; site
 build/link checks and real migration fixtures establish separate behavior.
 
+Source extraction records unsupported CMake evaluation in
+`CMakeProject.requires_evaluation`; native preparation returns
+`GenerationError::Source` rather than generating partial targets. `parse_source`
+still parses the complete syntax tree without filesystem or native-tool effects.
+Use `extract_project_from_path` to resolve required child listfiles; AST-only
+extraction records unread children. See the architecture guide's
+[CMake source profile](docs/architecture.md#cmake-source-evaluation) for supported
+variable operations, directory scope and rejected constructs.
+
 `ThirdPartyConfig`, `DepsStrategy`, and direct third-party rendering helpers have
 been removed. They could disagree with `MigrationConfig` and the shared plan.
 Use `MigrationConfig.strategy` and the prepared API instead. Raw TOML spellings
@@ -251,8 +260,9 @@ CI explicitly runs this oracle after the ordinary Cargo tests. It bootstraps
 verified Bazel and CMake 3.31.10 archives on the minimal Linux runner. Ordinary
 library tests never download these tools or execute the oracle implicitly.
 
-The checked-in first-party fixture contains a library, public header, executable,
-and a test registered in a subdirectory. An alias declared in that child directory
+The checked-in first-party fixture contains libraries, a public header, executable,
+and a test registered in a subdirectory. It exercises statement-order source
+assignment and parent-to-child variable inheritance without child-to-parent leaks. An alias declared in that child directory
 is linked by the parent executable. The harness copies it into disposable
 original/migration directories, checks preview behavior, invokes the real CLI
 with normal build validation, and compares CTest/Bazel test and executable results.
@@ -264,7 +274,9 @@ The harness clears unrelated environment variables for the CLI/Bazel, ignores
 system/home Bazel rc files, and uses a separate output root. Optional
 `REBAZE_CMAKE_TEST_CACHE` names an absolute reusable Bazel output root; do not share
 it between simultaneous runs. It does not establish Gradle, File API test import,
-arbitrary CMake logic, external corpus, or native Windows compatibility. The CLI's
+arbitrary CMake logic, external corpus, or native Windows compatibility. A separate
+configured File API case checks that normal validation refreshes replies before
+capture; it does not establish general File API test import. The CLI's
 normal migration validation still builds only; the harness explicitly runs tests.
 
 ### Required Gradle/Java CLI migration

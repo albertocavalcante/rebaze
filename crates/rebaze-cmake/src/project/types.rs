@@ -28,6 +28,9 @@ pub enum ExtractError {
     #[error("CMakeLists.txt not found at {0}")]
     NotFound(PathBuf),
 
+    #[error("repeated or cyclic source directory requires CMake evaluation: {0}")]
+    RepeatedDirectory(PathBuf),
+
     /// Parse error in CMakeLists.txt.
     #[error("Parse error in {path}: {message}")]
     Parse { path: PathBuf, message: String },
@@ -36,6 +39,8 @@ pub enum ExtractError {
 /// A parsed CMake project.
 #[derive(Debug, Clone, Default)]
 pub struct CMakeProject {
+    /// Source constructs requiring evaluated CMake evidence before native migration.
+    pub requires_evaluation: Vec<SourceIssue>,
     /// Project name from project() command.
     pub name: String,
     /// Project version if specified.
@@ -68,6 +73,52 @@ pub struct CMakeProject {
     pub aliases: Vec<TargetAlias>,
     /// Explicit test registrations; native migration validates its supported subset.
     pub testing: Testing,
+}
+
+/// An observed source construct that the static migration profile cannot evaluate.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{path} at character {offset}: {command} requires CMake evaluation: {reason}")]
+pub struct SourceIssue {
+    pub path: PathBuf,
+    pub offset: usize,
+    pub command: String,
+    pub reason: EvaluationReason,
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum EvaluationReason {
+    #[error("conditional, loop, function, macro or block scope is unsupported")]
+    ControlFlow,
+    #[error("command is outside the supported source profile")]
+    Command,
+    #[error("environment, cache, generator, nested or undefined-variable expansion is unsupported")]
+    Expansion,
+    #[error("semicolon lists and quoted variable expansion require CMake argument modeling")]
+    ArgumentList,
+    #[error(
+        "cache/environment/parent-scope assignments and dynamic variable names are unsupported"
+    )]
+    Assignment,
+    #[error(
+        "only list(APPEND ...) and list(PREPEND ...) with a literal variable name are supported"
+    )]
+    List,
+    #[error("add_subdirectory requires one literal relative source directory")]
+    Subdirectory,
+    #[error("target properties require an existing target declared in the same directory")]
+    TargetScope,
+    #[error("different target/directory language standards need per-target compiler modeling")]
+    LanguageStandard,
+    #[error("inherited include_directories needs directory-relative path modeling")]
+    DirectoryIncludes,
+    #[error("metadata and target names must be literal")]
+    Name,
+    #[error("subdirectories were not read; use extract_project_from_path for recursive extraction")]
+    UnvisitedSubdirectory,
+    #[error(
+        "package/module evaluation can mutate source state; select configured File API evidence"
+    )]
+    Module,
 }
 
 /// An observed alias declaration, before identity/graph validation.

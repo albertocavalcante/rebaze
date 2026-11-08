@@ -94,10 +94,12 @@ rebaze migrate . --dry-run
 rebaze migrate . --config custom.toml
 ```
 
-**CMake with File API (most accurate):**
+**CMake with explicitly required File API evidence:**
 ```bash
+mkdir -p build/.cmake/api/v1/query
+touch build/.cmake/api/v1/query/codemodel-v2
 cmake -S . -B build
-rebaze migrate . --cmake-build-dir build
+rebaze migrate . --build-generator native --cmake-build-dir build --cmake-file-api-only
 ```
 
 **Specific CMake configuration:**
