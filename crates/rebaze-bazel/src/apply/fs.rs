@@ -116,6 +116,17 @@ impl Directory {
         }
     }
 
+    pub fn regular_entry(&self, name: &str) -> io::Result<Option<bool>> {
+        match rustix::fs::statat(&self.0, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(metadata) => Ok(Some(
+                rustix::fs::FileType::from_raw_mode(metadata.st_mode)
+                    == rustix::fs::FileType::RegularFile,
+            )),
+            Err(rustix::io::Errno::NOENT) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     // dev_t is signed on macOS and unsigned on Linux. Treat its bits as an
     // opaque persistent identity; no arithmetic or narrowing uses this value.
     #[allow(clippy::cast_sign_loss, clippy::unnecessary_cast)]
@@ -136,12 +147,17 @@ impl Directory {
     }
 
     pub fn read_record(&self, name: &str) -> io::Result<Vec<u8>> {
+        self.read_record_with_limit(name, MAX_RECORD_BYTES)
+    }
+
+    pub fn read_record_with_limit(&self, name: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
+        let counted = max_bytes
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("invalid recovery record byte limit"))?;
         let mut bytes = Vec::new();
-        self.open(name)?
-            .take(MAX_RECORD_BYTES + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > MAX_RECORD_BYTES {
-            return Err(io::Error::other("recovery record exceeds 64 KiB"));
+        self.open(name)?.take(counted).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(io::Error::other("recovery record exceeds its byte limit"));
         }
         Ok(bytes)
     }
@@ -152,8 +168,18 @@ impl Directory {
         bytes: &[u8],
         hook: &mut impl FnMut(RecordPoint) -> io::Result<()>,
     ) -> io::Result<()> {
-        if bytes.len() as u64 > MAX_RECORD_BYTES {
-            return Err(io::Error::other("recovery record exceeds 64 KiB"));
+        self.record_with_limit(name, bytes, MAX_RECORD_BYTES, hook)
+    }
+
+    pub fn record_with_limit(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        max_bytes: u64,
+        hook: &mut impl FnMut(RecordPoint) -> io::Result<()>,
+    ) -> io::Result<()> {
+        if bytes.len() as u64 > max_bytes {
+            return Err(io::Error::other("recovery record exceeds its byte limit"));
         }
         // Interrupted partial records remain private and unreferenced. Never
         // publish partial JSON or truncate a prior attempt during recovery.
@@ -185,6 +211,27 @@ impl Directory {
 
     pub fn sync(&self) -> io::Result<()> {
         self.0.sync_all()
+    }
+
+    pub fn entry_names(&self, max_entries: usize) -> io::Result<Vec<String>> {
+        let directory = rustix::fs::Dir::read_from(&self.0)?;
+        let mut names = Vec::new();
+        for entry in directory {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .to_str()
+                .map_err(|_| io::Error::other("non-UTF-8 recovery entry"))?;
+            if matches!(name, "." | "..") {
+                continue;
+            }
+            if names.len() == max_entries {
+                return Err(io::Error::other("recovery directory entry limit exceeded"));
+            }
+            names.push(name.to_owned());
+        }
+        names.sort_unstable();
+        Ok(names)
     }
 }
 

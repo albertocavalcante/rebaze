@@ -223,11 +223,17 @@ not guaranteed. `write_files` validates through an owned bundle and delegates to
 `write_bundle`; use the bundle API to avoid cloning a legacy map. Empty/invalid
 legacy batches now fail before writes. Application retains the existing per-file
 replacement contract, partial-batch failure behavior and concurrency limitations;
-journaled batch recovery remains R06 work. The opt-in Linux/macOS
-[`apply` API](guarded-application.md) implements guarded single-file application
+journaled batch integration remains R06 work. The opt-in Linux/macOS
+[`apply` API](guarded-application.md) implements guarded single-file and
+existing-parent batch application
 with explicit baseline/metadata intent, a cooperative lock, durable journal,
 no-clobber install/restoration and retained originals. Core does not use it yet;
 the metadata contract excludes ACLs/xattrs and needs an explicit integration policy.
+Batch application stages every output before moving destinations, binds ordered
+per-file intent to one transaction, and reconciles actual state during forward
+recovery. Durable stop/restoration intent prevents reapplication. Receipts report
+current per-output evidence, including preserved user deletion and mixed terminal
+conflict; no whole-batch undo or observer-atomic update is promised.
 
 ## Core stages, previews and build evidence
 

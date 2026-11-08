@@ -301,6 +301,12 @@ must exercise the implementation; model checking alone is insufficient.
 
 ### R06 — Complete-batch staging and conservative recovery
 
+The opt-in existing-parent library slice stages complete batches and supports
+forward recovery with per-output conflict evidence; see the
+[protocol](guarded-application.md). Core integration, missing-parent ownership,
+safe default metadata policy, post-build reports and external Bazelle boundaries
+remain open. The complete R06 gate is not met by the library slice alone.
+
 **Work:** stage the complete bundle before the first destination change. Record
 per-file progress durably and reconcile journal plus filesystem after a crash.
 Define allowed stopping outcomes: all intended files applied, baseline restored,

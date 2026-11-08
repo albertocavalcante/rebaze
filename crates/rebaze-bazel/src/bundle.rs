@@ -74,11 +74,26 @@ impl Borrow<str> for OutputPath {
     }
 }
 
+impl std::fmt::Display for OutputPath {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
 /// Immutable ordered files, validated as one set before application is possible.
 /// No baseline, host observation, application or verification success is implied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputBundle {
     files: BTreeMap<OutputPath, String>,
+}
+
+impl IntoIterator for OutputBundle {
+    type Item = (OutputPath, String);
+    type IntoIter = std::collections::btree_map::IntoIter<OutputPath, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.files.into_iter()
+    }
 }
 
 impl OutputBundle {
