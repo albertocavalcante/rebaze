@@ -32,6 +32,20 @@ pub struct FileApiOptions {
     pub configuration: Option<String>,
 }
 
+/// The observed codemodel configuration, distinct from a requested option.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectedConfiguration {
+    Unnamed,
+    Named(String),
+}
+
+/// Captured model plus the configuration actually selected from the codemodel.
+#[derive(Debug, Clone)]
+pub struct FileApiCapture {
+    pub project: CMakeProject,
+    pub selected_configuration: SelectedConfiguration,
+}
+
 /// Write a codemodel-v2 query into the build directory.
 pub fn write_query(build_dir: &Path) -> Result<(), FileApiError> {
     query::Writer::default()
@@ -50,10 +64,18 @@ pub fn parse_build_dir_with_options(
     build_dir: &Path,
     options: &FileApiOptions,
 ) -> Result<CMakeProject, FileApiError> {
+    Ok(capture_build_dir_with_options(build_dir, options)?.project)
+}
+
+/// Capture configured data and the selected configuration at the explicit IO boundary.
+pub fn capture_build_dir_with_options(
+    build_dir: &Path,
+    options: &FileApiOptions,
+) -> Result<FileApiCapture, FileApiError> {
     let reader =
         reply::Reader::from_build_dir(build_dir).map_err(|err| map_reader_error(err, build_dir))?;
     let codemodel: objects::CodeModelV2 = reader.read_object()?;
-    project_from_codemodel(&codemodel, options)
+    capture_from_codemodel(&codemodel, options)
 }
 
 /// Convert a codemodel into a rebaze CMake project model.
@@ -61,6 +83,14 @@ pub fn project_from_codemodel(
     codemodel: &objects::CodeModelV2,
     options: &FileApiOptions,
 ) -> Result<CMakeProject, FileApiError> {
+    Ok(capture_from_codemodel(codemodel, options)?.project)
+}
+
+/// Pure conversion retaining the observed selection separately from option intent.
+pub fn capture_from_codemodel(
+    codemodel: &objects::CodeModelV2,
+    options: &FileApiOptions,
+) -> Result<FileApiCapture, FileApiError> {
     let config = select_configuration(codemodel, options.configuration.as_deref())?;
     let source_root = codemodel.paths.source.clone();
     let build_root = codemodel.paths.build.clone();
@@ -150,7 +180,14 @@ pub fn project_from_codemodel(
         }
     }
 
-    Ok(project)
+    Ok(FileApiCapture {
+        project,
+        selected_configuration: if config.name.is_empty() {
+            SelectedConfiguration::Unnamed
+        } else {
+            SelectedConfiguration::Named(config.name.clone())
+        },
+    })
 }
 
 fn map_reader_error(err: reply::ReaderError, build_dir: &Path) -> FileApiError {
@@ -520,5 +557,27 @@ mod tests {
         let project = project_from_codemodel(&codemodel, &options).unwrap();
 
         assert_eq!(project.name, "release_proj");
+        let default_capture =
+            capture_from_codemodel(&codemodel, &FileApiOptions::default()).unwrap();
+        assert_eq!(
+            default_capture.selected_configuration,
+            SelectedConfiguration::Named("Debug".into())
+        );
+        assert_eq!(default_capture.project.name, "debug_proj");
+        let requested = FileApiOptions {
+            configuration: Some("release".into()),
+        };
+        let named_capture = capture_from_codemodel(&codemodel, &requested).unwrap();
+        assert_eq!(
+            named_capture.selected_configuration,
+            SelectedConfiguration::Named("Release".into())
+        );
+        assert_eq!(named_capture.project.name, "release_proj");
+        codemodel.configurations[0].name.clear();
+        let unnamed = capture_from_codemodel(&codemodel, &FileApiOptions::default()).unwrap();
+        assert_eq!(
+            unnamed.selected_configuration,
+            SelectedConfiguration::Unnamed
+        );
     }
 }

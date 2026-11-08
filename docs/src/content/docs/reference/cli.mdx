@@ -59,7 +59,13 @@ rebaze migrate /path/to/project
 | `--dry-run` | Preview without writing files |
 | `-f, --from <SYSTEM>` | Force build system (auto-detected) |
 | `-c, --config <FILE>` | Path to rebaze.toml |
-| `--unsafe-mode` | Skip validation checks |
+| `--unsafe-mode` | Skip pre/post build checks; input/configuration/generation checks still apply |
+
+Preview reads project inputs and may run bounded pkg-config discovery. It runs no
+builds, executes no Bazelle version probe, and writes no generated files. Generated
+preview text uses stdout; CLI tracing uses stderr. Automatic generator selection
+checks tool candidates without proving they execute successfully; choose `native`
+explicitly to use the native path.
 
 ### CMake options
 
@@ -68,6 +74,12 @@ rebaze migrate /path/to/project
 | `--cmake-build-dir <DIR>` | CMake build directory with file-api data |
 | `--cmake-config <NAME>` | Configuration (Debug/Release) |
 | `--cmake-file-api-only` | Require file-api (fail if unavailable) |
+
+File API replies must belong to the selected source root. Normal validation
+refreshes replies before capture; preview and `--unsafe-mode` use existing replies.
+Use `--cmake-config` to select a named codemodel configuration; otherwise the
+adapter selects the first available configuration. File API input does not import
+test registrations or prove semantic equivalence.
 
 ### Generator options
 

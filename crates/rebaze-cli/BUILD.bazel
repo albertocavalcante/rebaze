@@ -1,4 +1,4 @@
-load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
 
 rust_binary(
     name = "rebaze",
@@ -16,4 +16,10 @@ rust_binary(
         "@crates//:tracing",
         "@crates//:tracing-subscriber",
     ],
+)
+
+rust_test(
+    name = "rebaze_test",
+    crate = ":rebaze",
+    edition = "2024",
 )
