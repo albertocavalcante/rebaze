@@ -16,6 +16,7 @@ mod project;
 
 pub use ast::{Argument, ArgumentPart, ArgumentValue, CMakeFile, Command};
 pub use eval::EvalContext;
+pub use parser::{ParseLimits, ParseLimitsError};
 pub use project::{
     CMakeProject, CMakeTest, EvaluationReason, Executable, ExtractError, Library, LibraryKind,
     Package, PkgConfigModule, SourceIssue, TargetAlias, TestEvaluation, Testing, extract_project,
@@ -64,16 +65,27 @@ pub fn parse(path: &Path) -> Result<CMakeProject> {
     Ok(project)
 }
 
-/// Parse CMake source directly (for testing or embedded CMake).
+/// Parse borrowed CMake source with the default 1 MiB / 32 recursive-scope budget.
+/// No input file is opened and no CMake statements are evaluated.
 pub fn parse_source(src: &str) -> Result<CMakeFile> {
-    let (file, errors) = parser::parse(src);
+    parse_source_with_limits(src, ParseLimits::default())
+}
+
+/// Parse with a validated byte/recursive-scope policy, without IO or evaluation.
+///
+/// ```
+/// use rebaze_cmake::{ParseLimits, parse_source_with_limits};
+/// let limits = ParseLimits::new(2 * 1024 * 1024, 64)?;
+/// let parsed = parse_source_with_limits("project(example)", limits)?;
+/// assert_eq!(parsed.commands[0].name, "project");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn parse_source_with_limits(src: &str, limits: ParseLimits) -> Result<CMakeFile> {
+    let (file, errors) = parser::parse_with_limits(src, limits);
 
     if !errors.is_empty() {
         // Format errors for display
-        let error_msgs: Vec<String> = errors
-            .iter()
-            .map(|e| format!("at {}: {e}", e.span().start))
-            .collect();
+        let error_msgs: Vec<String> = errors.iter().map(parser::describe_error).collect();
         anyhow::bail!("Parse errors:\n{}", error_msgs.join("\n"));
     }
 

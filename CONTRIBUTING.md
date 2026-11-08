@@ -205,6 +205,13 @@ extraction records unread children. See the architecture guide's
 [CMake source profile](docs/architecture.md#cmake-source-evaluation) for supported
 variable operations, directory scope and rejected constructs.
 
+Borrowed CMake syntax uses a default 1 MiB / 32 recursive-scope budget. Embedded
+callers can select `ParseLimits` with `parse_source_with_limits`, up to 4 MiB and
+128 scopes. These limits do not bound the caller's earlier IO or subsequent
+evaluation. `cargo test --locked -p rebaze-cmake parser::` covers the grammar and
+fresh-process boundary cases without CMake or corpus downloads. Optional fixture
+tests can still skip; their green status does not establish that a corpus ran.
+
 `ThirdPartyConfig`, `DepsStrategy`, and direct third-party rendering helpers have
 been removed. They could disagree with `MigrationConfig` and the shared plan.
 Use `MigrationConfig.strategy` and the prepared API instead. Raw TOML spellings

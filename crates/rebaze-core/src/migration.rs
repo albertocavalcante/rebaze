@@ -433,6 +433,38 @@ mod tests {
     }
 
     #[test]
+    fn source_budget_rejections_preserve_existing_output_before_application() {
+        for (source, reason) in [
+            (
+                format!("#{}", "x".repeat(1024 * 1024)),
+                "source byte budget",
+            ),
+            (
+                format!("message({}leaf{})", "(".repeat(33), ")".repeat(33)),
+                "nesting budget",
+            ),
+        ] {
+            let temp = input();
+            std::fs::write(temp.path().join("CMakeLists.txt"), source).unwrap();
+            let destination = temp.path().join("BUILD.bazel");
+            std::fs::write(&destination, "user output").unwrap();
+            let failure = migrate_with_report(&options(temp.path(), false, true)).unwrap_err();
+            assert!(format!("{:#}", failure.source).contains(reason));
+            assert!(matches!(
+                failure.report.stages.last(),
+                Some(StageRecord {
+                    stage: Stage::Capture,
+                    outcome: StageOutcome::Failed { .. }
+                })
+            ));
+            assert_eq!(failure.report.outputs, []);
+            assert_eq!(std::fs::read_to_string(destination).unwrap(), "user output");
+            assert!(!temp.path().join(".rebaze-apply").exists());
+            assert!(!temp.path().join("MODULE.bazel").exists());
+        }
+    }
+
+    #[test]
     fn config_failure_records_available_field_without_running_builds() {
         let temp = input();
         let mut options = options(temp.path(), false, false);
