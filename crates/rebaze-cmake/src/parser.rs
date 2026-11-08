@@ -7,19 +7,57 @@ use chumsky::prelude::*;
 
 use crate::ast::{Argument, ArgumentPart, ArgumentValue, CMakeFile, Command};
 
+mod limits;
+use limits::Budget;
+pub use limits::{ParseLimits, ParseLimitsError};
+
+#[cfg(test)]
+mod limit_tests;
+
 /// Parse a CMake file from source text.
 ///
 /// # Errors
 /// Returns parsing errors with source spans for error reporting.
 pub fn parse(src: &str) -> (Option<CMakeFile>, Vec<Simple<char>>) {
-    let (commands, errors) = cmake_file().parse_recovery(src);
+    parse_with_limits(src, ParseLimits::default())
+}
+
+pub fn parse_with_limits(src: &str, limits: ParseLimits) -> (Option<CMakeFile>, Vec<Simple<char>>) {
+    if src.len() > limits.source_bytes() {
+        return (
+            None,
+            vec![Simple::custom(
+                0..0,
+                format!(
+                    "CMake source byte budget exceeded ({})",
+                    limits.source_bytes()
+                ),
+            )],
+        );
+    }
+    let budget = Budget::new(limits);
+    let (commands, errors) = cmake_file(&budget).parse_recovery(src);
+    if let Some(error) = budget.exhausted() {
+        return (None, vec![error]);
+    }
     (commands.map(|commands| CMakeFile { commands }), errors)
 }
 
+/// Chumsky 0.9's Display implementation omits custom failure reasons.
+/// Keep resource failures visible in both embedded and project diagnostics.
+pub fn describe_error(error: &Simple<char>) -> String {
+    match error.reason() {
+        chumsky::error::SimpleReason::Custom(message) => {
+            format!("at {}: {message}", error.span().start)
+        }
+        _ => format!("at {}: {error}", error.span().start),
+    }
+}
+
 /// Parser for a complete CMake file.
-fn cmake_file() -> impl Parser<char, Vec<Command>, Error = Simple<char>> {
+fn cmake_file(budget: &Budget) -> impl Parser<char, Vec<Command>, Error = Simple<char>> + use<> {
     trivia()
-        .ignore_then(command().padded_by(trivia()).repeated())
+        .ignore_then(command(budget).padded_by(trivia()).repeated())
         .then_ignore(trivia())
         .then_ignore(end())
 }
@@ -49,7 +87,7 @@ fn arg_separator() -> impl Parser<char, (), Error = Simple<char>> + Clone {
 }
 
 /// Parser for a CMake command.
-fn command() -> impl Parser<char, Command, Error = Simple<char>> {
+fn command(budget: &Budget) -> impl Parser<char, Command, Error = Simple<char>> + use<> {
     let name = filter(|c: &char| c.is_ascii_alphabetic() || *c == '_')
         .then(filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_').repeated())
         .map(|(first, rest): (char, Vec<char>)| {
@@ -63,7 +101,7 @@ fn command() -> impl Parser<char, Command, Error = Simple<char>> {
         .then_ignore(trivia())
         .then_ignore(just('('))
         .then_ignore(trivia())
-        .then(argument_list())
+        .then(argument_list(budget))
         .then_ignore(trivia())
         .then_ignore(just(')'))
         .map_with_span(|((name_original, name_span), arguments), span| {
@@ -78,7 +116,9 @@ fn command() -> impl Parser<char, Command, Error = Simple<char>> {
 }
 
 /// Parser for a list of arguments.
-fn argument_list() -> impl Parser<char, Vec<Argument>, Error = Simple<char>> {
+fn argument_list(
+    budget: &Budget,
+) -> impl Parser<char, Vec<Argument>, Error = Simple<char>> + use<> {
     // Arguments are typically separated by whitespace/semicolons, but we make separators
     // optional to handle edge cases:
     // - `if(NOT(A))` - no space between NOT and (
@@ -86,58 +126,63 @@ fn argument_list() -> impl Parser<char, Vec<Argument>, Error = Simple<char>> {
     // The parser still works because each argument type is distinct and unambiguous
     arg_separator()
         .or_not()
-        .ignore_then(argument())
+        .ignore_then(argument(budget))
         .then_ignore(arg_separator().or_not())
         .repeated()
 }
 
 /// Parser for a single argument (including nested parentheses with mixed arg types).
-fn argument() -> impl Parser<char, Argument, Error = Simple<char>> {
-    recursive(|arg| {
+fn argument(budget: &Budget) -> impl Parser<char, Argument, Error = Simple<char>> + use<> {
+    let budget = budget.clone();
+    recursive(move |arg| {
         // Parenthesis group that can contain any argument type
         let paren_group = just('(')
             .ignore_then(
-                arg.clone()
-                    .separated_by(arg_separator())
-                    .allow_leading()
-                    .allow_trailing()
-                    .map(|args: Vec<Argument>| {
-                        // Flatten all arguments into a single string with parens
-                        let mut content = String::from("(");
-                        for (i, a) in args.iter().enumerate() {
-                            if i > 0 {
-                                content.push(' ');
-                            }
-                            // Reconstruct quoted strings with quotes
-                            match a {
-                                Argument::Quoted(_) => {
-                                    content.push('"');
-                                    content.push_str(&a.to_string_with_vars());
-                                    content.push('"');
+                budget.enter().ignore_then(
+                    arg.clone()
+                        .separated_by(arg_separator())
+                        .allow_leading()
+                        .allow_trailing()
+                        .map(|args: Vec<Argument>| {
+                            // Flatten all arguments into a single string with parens
+                            let mut content = String::from("(");
+                            for (i, a) in args.iter().enumerate() {
+                                if i > 0 {
+                                    content.push(' ');
                                 }
-                                _ => content.push_str(&a.to_string_with_vars()),
+                                // Reconstruct quoted strings with quotes
+                                match a {
+                                    Argument::Quoted(_) => {
+                                        content.push('"');
+                                        content.push_str(&a.to_string_with_vars());
+                                        content.push('"');
+                                    }
+                                    _ => content.push_str(&a.to_string_with_vars()),
+                                }
                             }
-                        }
-                        content.push(')');
-                        Argument::Unquoted(ArgumentValue {
-                            parts: vec![ArgumentPart::Text(content)],
-                        })
-                    }),
+                            content.push(')');
+                            Argument::Unquoted(ArgumentValue {
+                                parts: vec![ArgumentPart::Text(content)],
+                            })
+                        }),
+                ),
             )
             .then_ignore(just(')'));
 
         choice((
             bracket_argument(),
-            quoted_argument(),
+            quoted_argument(&budget),
             paren_group,
-            unquoted_argument_simple(),
+            unquoted_argument_simple(&budget),
         ))
     })
 }
 
 /// Parser for unquoted arguments (simple version without nested parens - those are handled at argument level).
 /// Handles embedded quoted strings like `-DFOO="${VAR}"` where the whole thing is one unquoted argument.
-fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char>> {
+fn unquoted_argument_simple(
+    budget: &Budget,
+) -> impl Parser<char, Argument, Error = Simple<char>> + use<> {
     // Escape sequences - handle common escapes like \\, \", \n, \t, \r, \;, \$
     // Also handle \# which is used to escape comments in CMake
     let escape_sequence = just('\\')
@@ -173,7 +218,7 @@ fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char
         .collect::<String>()
         .map(|s| vec![ArgumentPart::Text(s)]);
 
-    let var_ref = variable_reference().map(|p| vec![p]);
+    let var_ref = variable_reference(budget).map(|p| vec![p]);
 
     // Bare dollar sign: $ not followed by {, E (for ENV), C (for CACHE), or < (for generator expr)
     // This handles cases like $foo where $ should be treated as literal text
@@ -183,7 +228,7 @@ fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char
 
     // Embedded quoted string (e.g., ="value" or ="${VAR}" or just "value")
     // This handles patterns like -DFOO="bar" or -DFOO="${VAR}"
-    let embedded_quoted = embedded_quoted_content();
+    let embedded_quoted = embedded_quoted_content(budget);
 
     choice((var_ref, bare_dollar, embedded_quoted, text_part))
         .repeated()
@@ -194,9 +239,11 @@ fn unquoted_argument_simple() -> impl Parser<char, Argument, Error = Simple<char
 
 /// Parser for embedded quoted content within unquoted arguments.
 /// Parses `"content"` and returns a vector of ArgumentParts with quotes included.
-fn embedded_quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> {
+fn embedded_quoted_content(
+    budget: &Budget,
+) -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> + use<> {
     just('"')
-        .ignore_then(embedded_quoted_inner())
+        .ignore_then(embedded_quoted_inner(budget))
         .then_ignore(just('"'))
         .map(|inner_parts| {
             // Wrap the content with quotes as text
@@ -208,7 +255,9 @@ fn embedded_quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Sim
 }
 
 /// Parser for content inside embedded quotes.
-fn embedded_quoted_inner() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> {
+fn embedded_quoted_inner(
+    budget: &Budget,
+) -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> + use<> {
     let escape_sequence = just('\\').ignore_then(choice((
         just('\\').to('\\'),
         just('"').to('"'),
@@ -229,7 +278,7 @@ fn embedded_quoted_inner() -> impl Parser<char, Vec<ArgumentPart>, Error = Simpl
         .collect::<String>()
         .map(ArgumentPart::Text);
 
-    let var_ref = variable_reference();
+    let var_ref = variable_reference(budget);
 
     // Bare dollar sign: $ not followed by {, E (for ENV), C (for CACHE), or < (for generator expr)
     let bare_dollar = just('$')
@@ -260,15 +309,17 @@ fn bracket_content() -> impl Parser<char, String, Error = Simple<char>> + Clone 
 }
 
 /// Parser for double-quoted arguments: "content"
-fn quoted_argument() -> impl Parser<char, Argument, Error = Simple<char>> {
+fn quoted_argument(budget: &Budget) -> impl Parser<char, Argument, Error = Simple<char>> + use<> {
     just('"')
-        .ignore_then(quoted_content())
+        .ignore_then(quoted_content(budget))
         .then_ignore(just('"'))
         .map(|parts| Argument::Quoted(ArgumentValue { parts }))
 }
 
 /// Parser for content inside double quotes.
-fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> {
+fn quoted_content(
+    budget: &Budget,
+) -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>> + use<> {
     // Escape sequences - handle common escapes and fall back to literal for others
     let escape_sequence = just('\\').ignore_then(choice((
         just('\\').to('\\'),
@@ -299,7 +350,7 @@ fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>
     // In quoted strings, use variable_reference_no_genexpr to avoid parsing
     // incomplete generator expressions (like "$<BUILD_INTERFACE:...") which
     // are valid CMake when combined with list(TRANSFORM ... APPEND ">")
-    let var_ref = variable_reference_no_genexpr();
+    let var_ref = variable_reference_no_genexpr(budget);
 
     // Bare dollar sign: $ not followed by {, E (for ENV), or C (for CACHE)
     // Note: $< is handled by treating it as literal "$<" since we don't
@@ -314,8 +365,11 @@ fn quoted_content() -> impl Parser<char, Vec<ArgumentPart>, Error = Simple<char>
 /// Parser for variable references: ${VAR}, $ENV{VAR}, $CACHE{VAR}, $<GENEXPR>
 /// Supports nested variables like ${${VARNAME}}
 /// Supports escape sequences like $ENV{ProgramFiles\(x86\)}
-fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>> {
-    recursive(|var_ref| {
+fn variable_reference(
+    budget: &Budget,
+) -> impl Parser<char, ArgumentPart, Error = Simple<char>> + use<> {
+    let budget = budget.clone();
+    recursive(move |var_ref| {
         // Variable content can be: alphanumeric, underscore, hyphen, or nested ${...}
         let plain_chars = filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
             .repeated()
@@ -330,24 +384,26 @@ fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>>
 
         // Nested variable reference - capture as string including ${}
         let nested_var = just("${")
-            .then(
-                var_ref
-                    .clone()
-                    .map(|part: ArgumentPart| match part {
-                        ArgumentPart::Variable(s) => format!("${{{s}}}"),
-                        ArgumentPart::EnvVariable(s) => format!("$ENV{{{s}}}"),
-                        ArgumentPart::CacheVariable(s) => format!("$CACHE{{{s}}}"),
-                        ArgumentPart::GeneratorExpr(s) => format!("$<{s}>"),
-                        ArgumentPart::Text(s) => s,
-                    })
-                    .or(escape_in_var)
-                    .or(plain_chars)
-                    .repeated()
-                    .at_least(1)
-                    .collect::<Vec<String>>(),
+            .ignore_then(
+                budget.enter().ignore_then(
+                    var_ref
+                        .clone()
+                        .map(|part: ArgumentPart| match part {
+                            ArgumentPart::Variable(s) => format!("${{{s}}}"),
+                            ArgumentPart::EnvVariable(s) => format!("$ENV{{{s}}}"),
+                            ArgumentPart::CacheVariable(s) => format!("$CACHE{{{s}}}"),
+                            ArgumentPart::GeneratorExpr(s) => format!("$<{s}>"),
+                            ArgumentPart::Text(s) => s,
+                        })
+                        .or(escape_in_var)
+                        .or(plain_chars)
+                        .repeated()
+                        .at_least(1)
+                        .collect::<Vec<String>>(),
+                ),
             )
             .then_ignore(just('}'))
-            .map(|(_, parts)| parts.join(""));
+            .map(|parts| parts.join(""));
 
         // Content inside ${} can be plain chars, escape sequences, or nested refs
         let var_content = plain_chars
@@ -375,7 +431,7 @@ fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>>
 
         // Generator expressions: $<...> - handle nested <> properly
         let gen_expr = just("$<")
-            .ignore_then(gen_expr_content())
+            .ignore_then(gen_expr_content(&budget))
             .then_ignore(just('>'))
             .map(ArgumentPart::GeneratorExpr);
 
@@ -386,8 +442,11 @@ fn variable_reference() -> impl Parser<char, ArgumentPart, Error = Simple<char>>
 /// Parser for variable references without generator expressions.
 /// Used inside quoted strings where incomplete generator expressions
 /// (like "$<BUILD_INTERFACE:...") are valid CMake syntax.
-fn variable_reference_no_genexpr() -> impl Parser<char, ArgumentPart, Error = Simple<char>> {
-    recursive(|var_ref| {
+fn variable_reference_no_genexpr(
+    budget: &Budget,
+) -> impl Parser<char, ArgumentPart, Error = Simple<char>> + use<> {
+    let budget = budget.clone();
+    recursive(move |var_ref| {
         // Escape sequences inside variable names (for things like $ENV{ProgramFiles\(x86\)})
         let escape_in_var = just('\\').ignore_then(any()).map(|c| c.to_string());
 
@@ -398,23 +457,25 @@ fn variable_reference_no_genexpr() -> impl Parser<char, ArgumentPart, Error = Si
 
         // Nested variable reference: ${...}
         let nested_var = just("${")
-            .then(
-                var_ref
-                    .clone()
-                    .map(|part| match part {
-                        ArgumentPart::Variable(s) => format!("${{{s}}}"),
-                        ArgumentPart::EnvVariable(s) => format!("$ENV{{{s}}}"),
-                        ArgumentPart::CacheVariable(s) => format!("$CACHE{{{s}}}"),
-                        _ => String::new(),
-                    })
-                    .or(plain_chars)
-                    .or(escape_in_var)
-                    .repeated()
-                    .at_least(1)
-                    .collect::<Vec<String>>(),
+            .ignore_then(
+                budget.enter().ignore_then(
+                    var_ref
+                        .clone()
+                        .map(|part| match part {
+                            ArgumentPart::Variable(s) => format!("${{{s}}}"),
+                            ArgumentPart::EnvVariable(s) => format!("$ENV{{{s}}}"),
+                            ArgumentPart::CacheVariable(s) => format!("$CACHE{{{s}}}"),
+                            _ => String::new(),
+                        })
+                        .or(plain_chars)
+                        .or(escape_in_var)
+                        .repeated()
+                        .at_least(1)
+                        .collect::<Vec<String>>(),
+                ),
             )
             .then_ignore(just('}'))
-            .map(|(_, parts)| parts.join(""));
+            .map(|parts| parts.join(""));
 
         // Content inside ${} can be plain chars, escape sequences, or nested refs
         let var_content = plain_chars
@@ -446,10 +507,11 @@ fn variable_reference_no_genexpr() -> impl Parser<char, ArgumentPart, Error = Si
 }
 
 /// Parser for generator expression content (handles nested <>)
-fn gen_expr_content() -> impl Parser<char, String, Error = Simple<char>> {
-    recursive(|content| {
+fn gen_expr_content(budget: &Budget) -> impl Parser<char, String, Error = Simple<char>> + use<> {
+    let budget = budget.clone();
+    recursive(move |content| {
         let nested = just('<')
-            .then(content.clone())
+            .then(budget.enter().ignore_then(content.clone()))
             .then(just('>'))
             .map(|((open, inner), close): ((char, String), char)| format!("{open}{inner}{close}"));
 

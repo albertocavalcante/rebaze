@@ -145,6 +145,21 @@ project. Explicit configured File API input follows its separate evaluated-data
 path: normal validation refreshes that build before its replies are captured;
 unsupported source never causes an implicit configure/evaluate fallback.
 
+Borrowed-source parsing defaults to 1 MiB and 32 active recursive grammar scopes.
+`parse_source_with_limits` accepts a validated `ParseLimits` profile up to 4 MiB
+and 128 scopes; zero or larger settings are errors. Parenthesis groups, nested
+variable grammar and nested generator expressions share that scope budget.
+Literal delimiter text in quotes, brackets and comments does not count as
+recursive syntax. Scopes are released on success, failure and backtracking;
+exhaustion returns an explicit diagnostic instead of a partial AST. Each parse
+owns its state, without filesystem, SDK or environment access.
+
+These are parser-allocation/recursion bounds for already borrowed text. Project
+readers still need counted IO, aggregate traversal and expansion budgets in R07.
+This does not claim a process deadline or a bound on all parser work. Chumsky's
+existing stack-growth support remains enabled; a reproduced stack overflow is
+not the basis for these limits.
+
 Supported ordinary `set` assignments and `list(APPEND/PREPEND ...)` changes are
 processed in statement order, including target sources and properties. Each
 literal `add_subdirectory(relative/path)` captures the parent's variable context

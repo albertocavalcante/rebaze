@@ -328,6 +328,13 @@ report recovery options; never silently restore over subsequent edits.
 
 ### R07 — Input, traversal, expansion, and output budgets
 
+The borrowed CMake parser now has validated byte/recursive-scope profiles and
+explicit exhaustion diagnostics. Grammar scopes are shared across recursive
+families and released on backtracking. This initial slice does not complete R07:
+counted project reads, confinement, aggregate traversal, evaluation/expansion,
+diagnostics and output budgets remain open. Native syntax and recorded corpus
+comparisons are separate from migration or compiler-equivalence claims.
+
 **Work:** add typed limits for file and aggregate bytes, file/project count,
 recursion/token/node count, variable expansion, diagnostics, and generated output.
 Use counted reads, not metadata size alone. Reject special files before blocking

@@ -193,10 +193,7 @@ fn extract_recursive(
     let (file, errors) = crate::parser::parse(&source);
 
     if !errors.is_empty() {
-        let error_msgs: Vec<String> = errors
-            .iter()
-            .map(|e| format!("at {}: {e}", e.span().start))
-            .collect();
+        let error_msgs: Vec<String> = errors.iter().map(crate::parser::describe_error).collect();
         return Err(ExtractError::Parse {
             path: cmake_path,
             message: error_msgs.join("; "),
