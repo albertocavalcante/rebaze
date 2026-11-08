@@ -29,6 +29,22 @@ fn absent_sources_and_build_files_retain_defaults_but_ambiguity_is_an_error() {
 }
 
 #[test]
+fn maven_lock_rejection_retains_legacy_context_and_typed_cause() {
+    let root = project();
+    fs::create_dir(root.path().join("maven_install.json")).unwrap();
+    let error = read_project(root.path(), ReadLimits::default()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Maven lock must be a regular project file")
+    );
+    assert!(matches!(
+        error.downcast_ref::<ReadError>(),
+        Some(ReadError::NotRegular(_))
+    ));
+}
+
+#[test]
 fn nested_modules_keep_relative_paths_and_scan_complete_java_files() {
     let root = project();
     fs::write(root.path().join("settings.gradle"), "include(':group:app')").unwrap();
@@ -300,5 +316,10 @@ fn fifo_child() {
             .unwrap()
             .success()
     );
-    assert!(read_project(root.path(), ReadLimits::default()).is_err());
+    let error = read_project(root.path(), ReadLimits::default()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Maven lock must be a regular project file")
+    );
 }

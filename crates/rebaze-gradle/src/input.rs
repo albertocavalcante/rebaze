@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use rebaze_input::{EntryKind, ReadLimits, RootReader, SymlinkPolicy};
+use rebaze_input::{EntryKind, ReadError, ReadLimits, RootReader, SymlinkPolicy};
 
 use crate::{GradleModule, GradleProject, java, parse_build_source, parser, project_path};
 
@@ -57,7 +57,14 @@ pub fn read_project(path: &Path, limits: ReadLimits) -> Result<GradleProject> {
     }
     let maven_lock = reader
         .read_optional_text(Path::new("maven_install.json"))
-        .context("read Maven lock as a bounded regular project file")?;
+        .map_err(|error| {
+            let context = if matches!(&error, ReadError::NotRegular(_)) {
+                "Maven lock must be a regular project file"
+            } else {
+                "read Maven lock as a bounded regular project file"
+            };
+            anyhow::Error::new(error).context(context)
+        })?;
     Ok(GradleProject {
         name,
         path: root,
