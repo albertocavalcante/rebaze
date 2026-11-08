@@ -43,6 +43,11 @@ operands and repetitions during capture. Later native filtering and toolchain
 selection still have the semantic limits described in the roadmap; this is not
 a general compiler-equivalence guarantee. File API test import remains unimplemented.
 
+When a configured reply is present, malformed or unsupported capture is terminal,
+even without `--cmake-file-api-only`. Only an absent reply may fall back to source
+capture; the explicit-only option also rejects absence. This prevents a weaker
+source model from hiding known configured inputs.
+
 ## Related tools and reusable boundaries
 
 Rebaze owns its Rust migration path. Its typed Starlark models construct generated

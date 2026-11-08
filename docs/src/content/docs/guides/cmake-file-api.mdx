@@ -1,98 +1,84 @@
 ---
-title: Use cmake-file-api
-description: How to use CMake's File API for more accurate migrations
+title: Use CMake File API observations
+description: Capture an explicitly configured CMake project and understand migration limits
 ---
 
-import { Steps, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-CMake's File API provides detailed build information that results in more accurate Bazel file generation.
+Use File API replies when source extraction reports that a project needs CMake
+evaluation. Replies describe one configured build; they do not establish that
+Rebaze can preserve every captured feature.
 
-## Why Use cmake-file-api?
+## Capture and preview
 
-The default CMakeLists.txt parser works well for most projects, but cmake-file-api provides:
+Use a disposable checkout. Configuring CMake executes project code and can change
+its source tree as well as its build directory.
 
-- **Exact source lists** - Including generated files
-- **Resolved paths** - Absolute include directories
-- **Actual compiler flags** - As CMake would use them
-- **Configuration-specific settings** - Debug vs Release
-
-## Prerequisites
-
-- CMake 3.14 or later
-- An existing CMake build directory (or ability to create one)
-
-<Steps>
-
-1. **Configure your CMake project**
+1. Request a codemodel before configuring with CMake 3.14 or later:
 
    ```bash
-   cd myproject
-   cmake -S . -B build
+   mkdir -p build/.cmake/api/v1/query
+   touch build/.cmake/api/v1/query/codemodel-v2
+   cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
    ```
 
-   For a specific configuration:
+2. Preview the explicitly selected configuration without applying output:
 
    ```bash
-   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+   rebaze migrate . --build-generator native --cmake-build-dir build --cmake-config Debug --cmake-file-api-only --dry-run
    ```
 
-2. **Run migration with File API**
+   Preview reads existing replies. It does not refresh them, build the project,
+   or prove that generated output compiles. Reconfigure after input changes.
+
+3. Review the preview, then run migration on the disposable checkout:
 
    ```bash
-   rebaze migrate . --cmake-build-dir build
+   rebaze migrate . --build-generator native --cmake-build-dir build --cmake-config Debug --cmake-file-api-only
    ```
 
-   For a specific configuration:
+   Normal migration refreshes and builds the original configured project before
+   capture, then writes output and builds the generated Bazel workspace. A later
+   build failure can leave generated files in place; this is not transaction-wide
+   rollback. Migration build success does not establish test or compiler equivalence.
 
-   ```bash
-   rebaze migrate . --cmake-build-dir build --cmake-config Release
-   ```
+For a multi-configuration generator, configure that generator explicitly and
+select its configuration with `--cmake-config`. An unknown configuration is an
+error. Omitting the option currently selects the first captured configuration;
+name it explicitly for reproducible experiments.
 
-3. **Require File API (optional)**
+## Understand capture refusals
 
-   To fail if File API isn't available:
+The native adapter currently refuses:
 
-   ```bash
-   rebaze migrate . --cmake-build-dir build --cmake-file-api-only
-   ```
+- Generated target inputs and build-directory include roots, because their
+  producer actions and required headers cannot yet be preserved.
+- Multiple compile groups, because the current model has one option list per target.
+- Invalid compile-group indices and non-compiled inputs outside the supported
+  header subset. Documentation and header-only C++ files cannot become compiler
+  sources just because they appear in a target.
 
-</Steps>
+Compiler options retain their captured order and repetitions. Later lowering,
+usage requirements and toolchain selection still have limits. File API capture
+does not import CTest registrations; run nonempty original and generated test
+suites separately.
 
-## How It Works
-
-1. rebaze reads the `.cmake/api/v1/reply/` directory
-2. Parses the codemodel JSON files
-3. Extracts targets, sources, includes, and dependencies
-4. Generates Bazel files from this accurate data
-
-## Troubleshooting
-
-### "Failed to load cmake-file-api"
-
-Ensure CMake was configured with version 3.14+:
-
-```bash
-cmake --version
-```
-
-Re-run CMake configuration:
-
-```bash
-cmake -S . -B build
-```
-
-### Missing targets
-
-Some targets may only exist in certain configurations:
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-rebaze migrate . --cmake-build-dir build --cmake-config Debug
-```
-
-<Aside type="tip">
-**Best Practices:**
-1. Always configure CMake before migration
-2. Match configurations between CMake and rebaze
-3. Use `--cmake-file-api-only` in CI for consistency
+<Aside type="caution">
+A present but malformed or unsupported reply fails migration even without
+`--cmake-file-api-only`. Only an absent reply may fall back to source extraction;
+the explicit-only option also makes absence an error. These refusals happen
+before generated output application, though normal original-build validation
+has already executed.
 </Aside>
+
+## Troubleshoot missing or stale replies
+
+Check `cmake --version`, ensure the query exists under the selected build
+directory, and rerun configuration. Inspect `.cmake/api/v1/reply/` and select the
+configuration actually emitted by the generator. A reply for a different source
+root is rejected.
+
+Keep unsupported captures visible. Do not remove generated headers, change
+comparison policy, or switch to source fallback solely to obtain a successful
+exit. See the [migration tutorial](/rebaze/tutorials/cmake/) for a supported
+first-party example and its validation limits.
