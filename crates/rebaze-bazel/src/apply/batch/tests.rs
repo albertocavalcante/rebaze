@@ -795,6 +795,51 @@ fn review_unpublished_preparation_is_recoverable_without_baseline_claims() {
 }
 
 #[test]
+fn compatibility_marker_precedes_batch_evidence_and_rejects_missing_or_foreign_records() {
+    let _spawn_guard = PROCESS_SPAWN.read().unwrap();
+    for record in [
+        RecordPoint::Created,
+        RecordPoint::Written,
+        RecordPoint::Synced,
+        RecordPoint::Published,
+    ] {
+        let root = fixture();
+        assert!(
+            plan(root.path())
+                .apply_with(&mut fail(point(None, Phase::CompatibilityRecord(record))))
+                .is_err()
+        );
+        baseline(root.path());
+        assert!(
+            !root
+                .path()
+                .join(".rebaze-apply/active/batch-plan.json")
+                .exists()
+        );
+        let receipt = recover_bundle(root.path()).unwrap().unwrap();
+        assert_eq!(receipt.outcome, BatchOutcome::Unprepared);
+        assert_eq!(receipt.outputs, []);
+    }
+    for marker in [None, Some(b"{}".as_slice())] {
+        let root = fixture();
+        assert!(
+            plan(root.path())
+                .apply_with(&mut fail(point(None, Phase::IntentDurable)))
+                .is_err()
+        );
+        let path = root.path().join(".rebaze-apply/active/manifest.json");
+        if let Some(bytes) = marker {
+            fs::write(path, bytes).unwrap();
+        } else {
+            fs::remove_file(path).unwrap();
+        }
+        assert!(recover_bundle(root.path()).is_err());
+        baseline(root.path());
+        assert!(root.path().join(".rebaze-apply/active").is_dir());
+    }
+}
+
+#[test]
 fn review_recovery_sync_failure_keeps_installation_and_restore_pending() {
     let _spawn_guard = PROCESS_SPAWN.read().unwrap();
     for restoring in [false, true] {
