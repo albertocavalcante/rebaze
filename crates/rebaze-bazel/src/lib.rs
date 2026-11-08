@@ -44,6 +44,8 @@ pub enum GenerationError {
 
 pub type GenerationResult<T> = std::result::Result<T, GenerationError>;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod apply;
 mod bundle;
 mod cmake_generator;
 mod cmake_tests;

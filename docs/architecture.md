@@ -223,7 +223,11 @@ not guaranteed. `write_files` validates through an owned bundle and delegates to
 `write_bundle`; use the bundle API to avoid cloning a legacy map. Empty/invalid
 legacy batches now fail before writes. Application retains the existing per-file
 replacement contract, partial-batch failure behavior and concurrency limitations;
-journaled recovery remains R05/R06 work.
+journaled batch recovery remains R06 work. The opt-in Linux/macOS
+[`apply` API](guarded-application.md) implements guarded single-file application
+with explicit baseline/metadata intent, a cooperative lock, durable journal,
+no-clobber install/restoration and retained originals. Core does not use it yet;
+the metadata contract excludes ACLs/xattrs and needs an explicit integration policy.
 
 ## Core stages, previews and build evidence
 

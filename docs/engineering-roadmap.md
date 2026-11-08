@@ -252,12 +252,12 @@ ambiguous-configuration behavior stays explicit.
 
 ### R04 — Return bundles, diagnostics, and stage reports
 
-R04a landed in PR #16 with independent review, base regression evidence and
-required CI. R04b now implements structured core stages, CLI-owned preview
-presentation and mandatory build claims; missing/empty evidence remains unknown.
-Review, the complete native oracle and final-head CI remain required before this
-work package is complete. Journaled recovery and shared process budgets remain
-R05/R06 and R08 work.
+Implemented in PRs #16 and #17 with independent exact-head review, baseline
+regression evidence, native CMake/Bazel oracles and required Linux CI including
+Java migration. Core returns structured stages, CLI-owned previews and mandatory
+build claims; missing/empty evidence remains unknown. Configured capture records
+actual root/configuration and rejects foreign source roots. Journaled batch
+application and shared process budgets remain R05/R06 and R08 work.
 
 **Work:** replace bare output maps at the orchestration boundary with a validated,
 ordered bundle and lowering report. Add origins and stable diagnostic categories
@@ -274,6 +274,13 @@ missing mandatory claim results as unknown, including an empty required set.
 ## Phase 2: make output application recoverable
 
 ### R05 — Guarded single-file apply and recovery
+
+The opt-in Linux/macOS library API separates captured baseline and explicit
+POSIX metadata intent
+from pure generation, retains originals, and uses no-clobber renames for install
+and recovery. See the [protocol and limits](guarded-application.md). Core's default
+writer is unchanged pending R06; full metadata preservation is not claimed.
+Independent review, mutation checks and required CI are part of the gate below.
 
 **Work:** define expected absent/present state, baseline digest, intended bytes,
 permissions, and ownership. Journal intent before replacement. Stage new content,

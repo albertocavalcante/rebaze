@@ -19,11 +19,17 @@ rust_library(
         "//crates/rebaze-starlark",
         "@crates//:anyhow",
         "@crates//:serde",
+        "@crates//:serde_json",
+        "@crates//:sha2",
         "@crates//:tempfile",
         "@crates//:thiserror",
         "@crates//:toml",
         "@crates//:tracing",
-    ],
+    ] + select({
+        "@platforms//os:linux": ["@crates//:rustix"],
+        "@platforms//os:macos": ["@crates//:rustix"],
+        "//conditions:default": [],
+    }),
 )
 
 rust_test(

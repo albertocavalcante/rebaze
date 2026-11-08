@@ -332,6 +332,12 @@ Gradle/Bazel tests explicitly.
 
 ## Core report consumers
 
+For opt-in single-file application, see the
+[guarded application guide](docs/guarded-application.md). Its ordinary
+`cargo test --locked -p rebaze-bazel apply::` suite includes deterministic IO faults
+and fresh-process interruptions; it requires no native SDK or corpus checkout.
+Core's default writer retains its existing limitations until batch integration.
+
 Use `migrate_with_report`/`validate_with_report` for stage results and build evidence.
 Inspect `failure.report` on error; completed stages are retained, and application
 failure does not imply rollback. `report.preview` contains native file intent or
