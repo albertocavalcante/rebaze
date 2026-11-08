@@ -221,7 +221,7 @@ fn unreadable_source_directories_are_not_treated_as_absent() {
     let directory = root.path().join("src/main/java");
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("Value.java"), "class Value {}").unwrap();
-    fs::set_permissions(&directory, fs::Permissions::from_mode(0)).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o0)).unwrap();
     let denied = fs::read_dir(&directory).is_err();
     let result = read_project(root.path(), ReadLimits::default());
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
