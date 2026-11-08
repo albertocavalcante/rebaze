@@ -113,10 +113,13 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                 rebaze_bazel::config::ConfigProfile::Bazelle
             };
             bazel_config.validate_for(profile)?;
-            if !options.unsafe_mode && !options.dry_run {
+            // Configured File API replies describe the validated build. Refresh
+            // them before capture; source-only input can be prepared before IO.
+            let original_validated =
+                options.cmake_build_dir.is_some() && !options.unsafe_mode && !options.dry_run;
+            if original_validated {
                 pre_validate_cmake(path, options.cmake_build_dir, options.cmake_config)?;
             }
-
             let project = parse_cmake_project(
                 path,
                 options.cmake_build_dir,
@@ -126,6 +129,9 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
             match generator {
                 BuildGenerator::Native => {
                     let generation = rebaze_bazel::plan_cmake(&project, &bazel_config)?;
+                    if !original_validated && !options.unsafe_mode && !options.dry_run {
+                        pre_validate_cmake(path, options.cmake_build_dir, options.cmake_config)?;
+                    }
                     let observations = discovery::discover_packages(
                         generation.system_modules(),
                         &discovery::DiscoveryOptions::default(),
@@ -157,6 +163,9 @@ pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
                     }
                 }
                 BuildGenerator::Bazelle => {
+                    if !original_validated && !options.unsafe_mode && !options.dry_run {
+                        pre_validate_cmake(path, options.cmake_build_dir, options.cmake_config)?;
+                    }
                     let languages = bazelle_languages_for_cmake(&project);
                     run_bazelle_generation(
                         path,

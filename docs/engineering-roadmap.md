@@ -171,7 +171,7 @@ Do not change the compiler floor merely to follow an upstream release.
 | 4. Stronger native evidence | R10–R11       | Usage and compiler intent survive a real downstream consumer.      | Independent build/capture tests detect deliberate semantic damage.             |
 | 5. Repeatable delivery      | D01–D03       | Local, CI, docs, and release evidence agree.                       | A clean checkout reproduces checks and packages the selected tested revision.  |
 
-Start R01 next. R02/R03 can follow it independently; R04 consumes their outcomes.
+R01/R02 have landed. R03 is the active semantics slice; R04 consumes their outcomes.
 R05 needs R04; R06 needs R05. R07/R08 can start after R04 but must land without
 invalidating the apply protocol. R09 is an independent standalone-library slice.
 R10 uses R03/R04 and the process/budget contracts from R07/R08. R11 begins with
@@ -213,12 +213,12 @@ mapping needed to proceed; do not provide an implicit permissive mode.
 
 ### R02 — Make configuration intent observable
 
-Implementation progress: strict field/format handling, fallible project loaders,
-profile-specific support checks, root visibility and language defaults are in
-place. Reserved filter/header/system-linkopts overrides fail explicitly; Gradle
-Java and bazelle reject non-default settings. Canonical public TOML examples are
-validated offline. Final review, migration fixtures and CI must pass before this
-package is recorded complete.
+Implemented in PR #14: strict field/format handling, fallible project loaders,
+profile-specific support checks, root visibility and language defaults. Reserved
+filter/header/system-linkopts overrides fail explicitly; Gradle Java and bazelle
+reject non-default settings. Canonical public TOML examples are validated offline.
+Independent final-head review, required CLI fixtures, mixed-language compiler
+oracle and CI passed. Full compiler semantics and label validation remain open.
 
 **Work:** inventory every public setting as implemented, unsupported, or deprecated.
 Wire documented filters/defaults to generation or reject unsupported non-default
@@ -231,6 +231,14 @@ explicit unsupported error. Malformed files never silently activate defaults.
 Defaults retain existing supported behavior unless the PR documents a correction.
 
 ### R03 — Define the accepted CMake evaluation subset
+
+Implementation progress: source extraction observes supported variable changes in
+statement order and captures isolated child contexts at directory calls. Unsupported
+source evaluation is recorded separately from syntax and blocks native preparation;
+missing required listfiles and repeated visits fail visibly. The native fixture
+covers temporal assignment and directory scope. Exact-head independent review and
+CI remain required before recording this package complete. Per-target compiler and
+usage semantics remain R10 work.
 
 **Work:** process supported variable changes in statement order. Test an early
 `add_library` between two assignments and directory-scope inheritance. Recognize

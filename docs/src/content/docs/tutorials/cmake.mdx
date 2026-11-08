@@ -1,188 +1,110 @@
 ---
 title: Migrate a CMake Project
-description: Step-by-step guide to migrating a CMake project to Bazel
+description: Build and test a small CMake fixture before and after native migration
 ---
 
-import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-This tutorial walks through migrating a CMake C++ project to Bazel using rebaze.
-
-## What You'll Learn
-
-- How to analyze a CMake project
-- How to run the migration
-- How to customize dependency mappings
-- How to validate the generated Bazel files
+Use rebaze's checked-in C fixture to compare an original CMake build with generated
+Bazel targets. It contains two libraries, a public header, an executable and a
+literal CTest registration in a child directory.
 
 ## Prerequisites
 
-- A CMake project with `CMakeLists.txt`
-- Bazel 9.x installed
-- rebaze binary (see [Installation](/rebaze/getting-started/installation/))
+Install rebaze, Bazel 9, CMake/CTest, Make and a C compiler. Bazel may download its
+pinned dependencies. See [Installation](/rebaze/getting-started/installation/).
+Use a source checkout of the rebaze revision matching your binary for the fixture.
 
-## Project Structure
-
-Let's start with a simple CMake project:
-
-<FileTree>
-
-- myproject/
-  - CMakeLists.txt
-  - src/
-    - main.cpp
-    - lib.cpp
-  - include/
-    - lib.h
-
-</FileTree>
-
-With this `CMakeLists.txt`:
-
-```cmake
-cmake_minimum_required(VERSION 3.14)
-project(myproject)
-
-find_package(ZLIB REQUIRED)
-
-add_library(mylib src/lib.cpp)
-target_include_directories(mylib PUBLIC include)
-target_link_libraries(mylib ZLIB::ZLIB)
-
-add_executable(myapp src/main.cpp)
-target_link_libraries(myapp mylib)
-```
-
-<Steps>
-
-1. **Analyze the project**
-
-   ```bash
-   rebaze analyze myproject/
-   ```
-
-   Output:
-   ```
-   Detected build systems: cmake
-   ```
-
-2. **Preview the migration**
-
-   Run in dry-run mode first:
-
-   ```bash
-   rebaze migrate myproject/ --dry-run
-   ```
-
-   This shows what would be generated:
-
-   ```python
-   # MODULE.bazel
-   module(name = "myproject", version = "0.1.0")
-   bazel_dep(name = "rules_cc", version = "0.2.27")
-   ```
-
-   ```python
-   # BUILD.bazel
-   load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-
-   cc_library(
-       name = "mylib",
-       srcs = ["src/lib.cpp"],
-       hdrs = ["include/lib.h"],
-       includes = ["include"],
-       deps = ["@zlib"],
-       visibility = ["//visibility:public"],
-   )
-
-   cc_binary(
-       name = "myapp",
-       srcs = ["src/main.cpp"],
-       deps = [":mylib"],
-   )
-   ```
-
-3. **Run the migration**
-
-   If the output looks correct:
-
-   ```bash
-   rebaze migrate myproject/
-   ```
-
-4. **Customize dependencies** (if needed)
-
-   Create `rebaze.toml` for custom mappings:
-
-   ```toml
-   [mappings.system_libraries]
-   myvendorlib = "@myvendor//:lib"
-
-   [mappings.packages.MyVendor]
-   target_pattern = "@myvendor//:{component}"
-   ```
-
-   Then re-run:
-
-   ```bash
-   rebaze migrate myproject/ --config rebaze.toml
-   ```
-
-5. **Validate the migration**
-
-   ```bash
-   rebaze validate myproject/
-   ```
-
-   Or build directly:
-
-   ```bash
-   cd myproject && bazel build //...
-   ```
-
-</Steps>
-
-## Using cmake-file-api
-
-For more accurate migration, use CMake's File API:
+From that checkout, copy the input to a disposable directory:
 
 ```bash
-# Configure CMake first
-cd myproject
-cmake -S . -B build
-
-# Then migrate using the build directory
-rebaze migrate . --cmake-build-dir build
+cp -R crates/rebaze-cli/tests/fixtures/cmake /tmp/rebaze-cmake-example
 ```
 
-<Aside type="tip">
-  The File API provides exact source lists, resolved include paths, and actual compiler flags used during configuration.
+Choose a fresh destination if it already exists. The fixture deliberately changes
+a source variable after creating a target and changes a parent variable inside a
+child directory. Both builds must preserve the original command order and scope.
+
+## Build and test the original
+
+```bash
+cmake -S /tmp/rebaze-cmake-example -B /tmp/rebaze-cmake-original-build
+cmake --build /tmp/rebaze-cmake-original-build
+ctest --test-dir /tmp/rebaze-cmake-original-build --output-on-failure --no-tests=error
+```
+
+CTest should report one passing test. Missing source files or leaked variable
+state will fail configuration or compilation.
+
+## Preview and migrate
+
+```bash
+rebaze analyze /tmp/rebaze-cmake-example
+rebaze migrate /tmp/rebaze-cmake-example --build-generator native --dry-run
+```
+
+Preview prints generated files without creating them or running builds. Inspect
+`dep`, `scope`, `probe` and `ctest_value` in the proposed BUILD file. Then migrate:
+
+```bash
+rebaze migrate /tmp/rebaze-cmake-example --build-generator native
+```
+
+Normal migration validates the original and generated builds. It does not run
+their test suites; run Bazel tests explicitly:
+
+```bash
+cd /tmp/rebaze-cmake-example
+bazel test //... --test_output=errors
+bazel run //:probe -- "two words'$" 42 ""
+```
+
+Expect `ctest_value` to pass and the executable to print `rebaze fixture: 42`.
+The arguments intentionally exercise spaces, a quote, a dollar sign and an empty
+argument. For the complete success/failure oracle, see the source checkout's
+`CONTRIBUTING.md`.
+
+## Unsupported source evaluation
+
+Native source migration accepts a limited static profile. Ordinary `set` and
+`list(APPEND/PREPEND ...)` changes are observed in order; child directories inherit
+an isolated context at their call. Required child listfiles must exist.
+
+Conditions, loops, function/macro bodies, custom includes, `find_package` calls,
+cache/environment/parent-scope assignments, unmodeled list/variable forms and
+cross-directory target mutation require evaluated evidence. The source parser
+can analyze syntax without making those constructs safe to migrate. Unsupported
+intent returns an error before generated files are replaced.
+
+<Aside type="caution">
+  A dependency mapping supplies a Bazel edge; it does not evaluate CMake modules
+  or authorize ignoring their effects on source variables. Unknown required links
+  fail rather than becoming skipped dependencies.
 </Aside>
 
-## Troubleshooting
+## Select configured File API evidence
 
-### Missing dependency mappings
+For a project requiring CMake evaluation, explicitly create a codemodel query,
+configure with the project's required options, then require that evidence:
 
-If you see:
-
-```
-WARN: Unknown library 'customlib', skipping
-```
-
-Add to `rebaze.toml`:
-
-```toml
-[mappings.system_libraries]
-customlib = "@customlib"
+```bash
+mkdir -p build/.cmake/api/v1/query
+touch build/.cmake/api/v1/query/codemodel-v2
+cmake -S . -B build
+rebaze migrate . --build-generator native --cmake-build-dir build --cmake-file-api-only
 ```
 
-### Build failures after migration
+Run these commands from that project's root. Normal validation refreshes the build
+before capturing replies. Preview and `--unsafe-mode` read existing replies without
+refreshing them. `--cmake-file-api-only` prevents fallback to source extraction.
 
-1. Check that all source files are included
-2. Verify include paths match your directory structure
-3. Ensure external dependencies are correctly mapped
+File API input is a separate path with incomplete compiler/usage semantics and no
+test-registration import. Successful generation is not proof that all project
+behavior migrated. Review outputs and independently build/test the generated
+project before adopting it.
 
-## Next Steps
+## Next steps
 
-- [Dependency Strategies](/rebaze/concepts/dependency-strategies/) - Understand resolution options
-- [CLI Reference](/rebaze/reference/cli/) - All available options
-- [Build from Source](/rebaze/guides/source-builds/) - Hermetic builds
+- [Dependency Mappings](/rebaze/guides/dependency-mappings/) — configure required edges.
+- [CLI Reference](/rebaze/reference/cli/) — select input and generator modes.
+- [Dependency Strategies](/rebaze/concepts/dependency-strategies/) — choose providers.

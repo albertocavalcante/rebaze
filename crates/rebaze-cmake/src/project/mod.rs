@@ -6,14 +6,15 @@
 mod commands;
 mod extract;
 mod path_utils;
+mod source_profile;
 mod target_props;
 mod testing;
 mod types;
 
 // Re-export public types
 pub use types::{
-    CMakeProject, CMakeTest, Executable, ExtractError, Library, LibraryKind, Package,
-    PkgConfigModule, TargetAlias, TestEvaluation, Testing,
+    CMakeProject, CMakeTest, EvaluationReason, Executable, ExtractError, Library, LibraryKind,
+    Package, PkgConfigModule, SourceIssue, TargetAlias, TestEvaluation, Testing,
 };
 
 // Re-export main extraction functions
@@ -350,10 +351,8 @@ add_subdirectory(nonexistent)
         )
         .unwrap();
 
-        // Should succeed despite missing subdirectory
-        let project = extract_project_from_path(&temp_dir).unwrap();
-        assert_eq!(project.name, "testproject");
-        assert_eq!(project.subdirectories, vec!["nonexistent"]);
+        // CMake requires each unconditional subdirectory to exist with a listfile.
+        assert!(extract_project_from_path(&temp_dir).is_err());
 
         // Clean up
         std::fs::remove_dir_all(&temp_dir).unwrap();

@@ -17,8 +17,8 @@ mod project;
 pub use ast::{Argument, ArgumentPart, ArgumentValue, CMakeFile, Command};
 pub use eval::EvalContext;
 pub use project::{
-    CMakeProject, CMakeTest, Executable, ExtractError, Library, LibraryKind, Package,
-    PkgConfigModule, TargetAlias, TestEvaluation, Testing, extract_project,
+    CMakeProject, CMakeTest, EvaluationReason, Executable, ExtractError, Library, LibraryKind,
+    Package, PkgConfigModule, SourceIssue, TargetAlias, TestEvaluation, Testing, extract_project,
     extract_project_from_path, extract_project_with_context,
 };
 
@@ -45,6 +45,9 @@ pub fn parse(path: &Path) -> Result<CMakeProject> {
         }
         project::ExtractError::NotFound(p) => {
             anyhow::anyhow!("CMakeLists.txt not found at {}", p.display())
+        }
+        project::ExtractError::RepeatedDirectory(p) => {
+            anyhow::anyhow!("Repeated or cyclic source directory: {}", p.display())
         }
         project::ExtractError::Parse { path: p, message } => {
             anyhow::anyhow!("Failed to parse {}: {}", p.display(), message)

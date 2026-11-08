@@ -45,7 +45,11 @@ benchmark = "@google_benchmark//:benchmark"
 
 ## CMake Packages
 
-Map `find_package()` targets using patterns:
+Map namespace-qualified link names using patterns. This does not evaluate a
+`find_package()` module: native source migration rejects those calls because
+modules can mutate source state. Select configured File API evidence for projects
+that require that evaluation; see the [CMake tutorial](/rebaze/tutorials/cmake/).
+Mappings do not create or verify the destination repository/target by themselves.
 
 ```toml
 [mappings.packages.Boost]
@@ -82,7 +86,7 @@ Libraries provided by the system:
 implicit_system_libs = ["pthread", "c", "m", "dl", "rt"]
 ```
 
-These are silently ignored during migration.
+These are deliberate omissions for dependencies assumed to need no generated edge.
 
 ## Ignored Libraries
 
@@ -112,11 +116,10 @@ When resolving a dependency:
 3. `-l` prefix → `system_libraries`
 4. `::` separator → `packages`
 5. Plain name → `plain_libraries`
-6. Default → Warning, dependency skipped
+6. Unresolved required link → migration error before generated output writes
 
 <Aside type="tip">
-Use `--dry-run` to see how dependencies are resolved:
-```bash
-rebaze migrate . --dry-run 2>&1 | grep -i "unknown"
-```
+Use `rebaze migrate . --build-generator native --dry-run` to inspect output or
+read the required-link error. Add a real mapping, or deliberately ignore a link
+only when the generated build truly needs no edge.
 </Aside>

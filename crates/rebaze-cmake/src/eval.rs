@@ -129,11 +129,17 @@ impl EvalContext {
 /// Updates the context with variable definitions.
 pub fn evaluate(file: &CMakeFile, ctx: &mut EvalContext) {
     for cmd in &file.commands {
-        match cmd.name.as_str() {
-            "set" => eval_set(cmd, ctx),
-            "list" => eval_list(cmd, ctx),
-            _ => {}
-        }
+        evaluate_command(cmd, ctx);
+    }
+}
+
+/// Apply one supported variable command at its position in the source stream.
+/// Callers selecting the static migration profile validate unsupported forms first.
+pub(crate) fn evaluate_command(cmd: &Command, ctx: &mut EvalContext) {
+    match cmd.name.as_str() {
+        "set" => eval_set(cmd, ctx),
+        "list" => eval_list(cmd, ctx),
+        _ => {}
     }
 }
 
@@ -157,41 +163,25 @@ fn eval_set(cmd: &Command, ctx: &mut EvalContext) {
         expanded.remove(0)
     };
 
-    // Check for PARENT_SCOPE, CACHE, etc. - skip these for now
-    for arg in cmd.arguments.iter().skip(1) {
-        if let Some(lit) = arg.as_literal()
-            && matches!(
-                lit.to_uppercase().as_str(),
-                "PARENT_SCOPE" | "CACHE" | "FORCE"
-            )
-        {
-            // Just process normally for now, ignore the modifier
-            break;
-        }
+    // Cache/parent/environment assignments need evaluated evidence. Never guess
+    // their effects or treat their metadata as ordinary source-list entries.
+    if var_name.starts_with("ENV{")
+        || var_name.starts_with("CACHE{")
+        || cmd
+            .arguments
+            .iter()
+            .skip(1)
+            .filter_map(Argument::as_literal)
+            .any(|arg| matches!(arg, "CACHE" | "PARENT_SCOPE"))
+    {
+        return;
     }
-
-    // Collect values (skip modifiers)
-    let mut values = Vec::new();
-    for arg in cmd.arguments.iter().skip(1) {
-        if let Some(lit) = arg.as_literal()
-            && matches!(
-                lit.to_uppercase().as_str(),
-                "PARENT_SCOPE"
-                    | "CACHE"
-                    | "FORCE"
-                    | "STRING"
-                    | "BOOL"
-                    | "PATH"
-                    | "FILEPATH"
-                    | "INTERNAL"
-            )
-        {
-            continue;
-        }
-        // Expand any variable references in the value
-        let expanded = ctx.expand_argument(arg);
-        values.extend(expanded);
-    }
+    let values = cmd
+        .arguments
+        .iter()
+        .skip(1)
+        .flat_map(|arg| ctx.expand_argument(arg))
+        .collect();
 
     ctx.set(&var_name, values);
 }

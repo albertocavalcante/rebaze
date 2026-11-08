@@ -17,6 +17,8 @@ pub use native_links::NativeLinkError;
 /// Failure to render a complete native output bundle.
 #[derive(Debug, thiserror::Error)]
 pub enum GenerationError {
+    #[error(transparent)]
+    Source(#[from] rebaze_cmake::SourceIssue),
     #[error("cannot migrate Gradle Java project: {0}")]
     Gradle(String),
     #[error(transparent)]
@@ -94,6 +96,9 @@ pub fn plan_cmake<'a>(
     config: &'a MigrationConfig,
 ) -> GenerationResult<CMakeGeneration<'a>> {
     config.validate_for(config::ConfigProfile::NativeCmake)?;
+    if let Some(issue) = project.requires_evaluation.first() {
+        return Err(issue.clone().into());
+    }
     let plan = dependency_plan::DependencyPlan::new(project, config)?;
     let mut names = native_links::TargetNames::default();
     let links = native_links::NativeLinkPlan::new(project, config, &plan, &mut names)?;
