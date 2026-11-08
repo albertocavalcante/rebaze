@@ -6,16 +6,14 @@ rust_library(
     edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
+        "//crates/rebaze-input",
         "@crates//:anyhow",
-        "@crates//:globset",
-        "@crates//:serde",
         "@crates//:thiserror",
-        "@crates//:tracing",
-        "@crates//:walkdir",
     ],
 )
 
 rust_test(
     name = "rebaze-gradle_test",
     crate = ":rebaze-gradle",
+    deps = ["@crates//:tempfile"],
 )

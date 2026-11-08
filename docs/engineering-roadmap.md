@@ -176,8 +176,10 @@ R01–R04 have landed, as have R05's single-file protocol and R06a's existing-pa
 batch library. These application APIs remain opt-in: missing-parent handling,
 qualified metadata and core integration still gate R06 completion. R07a's borrowed
 CMake parser limits have landed in [#21](https://github.com/albertocavalcante/rebaze/pull/21).
-R07b adds the shared bounded input reader and CMake/configuration consumers;
-remaining readers, evaluation, output and whole-operation limits are still open.
+R07b's shared bounded input reader and CMake/configuration consumers landed in
+[#22](https://github.com/albertocavalcante/rebaze/pull/22). R07c adds counted directory
+traversal and Gradle consumers. Remaining readers, evaluation, output and
+whole-operation limits are still open.
 D01's documentation/compiled-input routing correction landed in
 [#19](https://github.com/albertocavalcante/rebaze/pull/19); local-tool alignment and
 the broader delivery gates remain open.
@@ -343,9 +345,11 @@ explicit exhaustion diagnostics. Grammar scopes are shared across recursive
 families and released on backtracking. This initial slice does not complete R07:
 CMake source capture now has counted reads, root confinement and shared byte,
 file-attempt, operation and path-depth budgets through `rebaze-input`. Both TOML
-configuration loaders also use bounded regular-file reads. Other readers,
-directory enumeration, evaluation/expansion, diagnostics and output budgets
-remain open. Native syntax and recorded corpus
+configuration loaders also use bounded regular-file reads. Gradle capture now
+shares the reader across modules, source enumeration, complete test sources and
+its Maven lock. Directory entry and module-count budgets bound wide projects;
+borrowed Gradle/Java lexing has an independent byte cap. File API/other readers,
+evaluation/expansion, diagnostics and output budgets remain open. Native syntax and recorded corpus
 comparisons are separate from migration or compiler-equivalence claims.
 
 **Work:** add typed limits for file and aggregate bytes, file/project count,

@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
@@ -21,6 +21,23 @@ pub enum EntryKind {
     Directory,
     Symlink,
     Other,
+}
+
+/// An owned name and observed kind; retaining this value holds no directory FD.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryEntry {
+    name: OsString,
+    kind: EntryKind,
+}
+
+impl DirectoryEntry {
+    pub fn name(&self) -> &OsStr {
+        &self.name
+    }
+
+    pub const fn kind(&self) -> EntryKind {
+        self.kind
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -167,6 +184,73 @@ impl RootReader {
 
     pub fn read_text(&mut self, path: &Path) -> Result<String, ReadError> {
         self.read_with(path, &mut |_| Ok(()))
+    }
+
+    /// List an existing directory in name order, observing links without following them.
+    ///
+    /// Every yielded entry is charged before decoding, filtering or sorting. The
+    /// first over-budget proof entry remains charged and prevents further scans.
+    pub fn directory_entries(&mut self, path: &Path) -> Result<Vec<DirectoryEntry>, ReadError> {
+        self.begin(path, true)?;
+        self.entry_budget(path)?;
+        let directory = match self.policy {
+            SymlinkPolicy::WithinRoot => self
+                .root
+                .open_dir(root_path(path))
+                .map_err(|source| io_error(path, source))?,
+            SymlinkPolicy::Reject => self.reject_directory(path)?,
+        };
+        let iterator = directory
+            .entries()
+            .map_err(|source| io_error(path, source))?;
+        self.collect_directory(path, iterator)
+    }
+
+    fn collect_directory(
+        &mut self,
+        path: &Path,
+        mut iterator: impl Iterator<Item = io::Result<cap_std::fs::DirEntry>>,
+    ) -> Result<Vec<DirectoryEntry>, ReadError> {
+        let mut entries = Vec::new();
+        loop {
+            charge(
+                &mut self.usage.operations,
+                self.limits.operations,
+                path,
+                LimitKind::Operations,
+            )?;
+            let Some(entry) = iterator.next() else {
+                break;
+            };
+            self.usage.entries = self.usage.entries.checked_add(1).ok_or_else(|| {
+                io_error(path, io::Error::other("directory entry count overflow"))
+            })?;
+            self.entry_budget(path)?;
+            let entry = entry.map_err(|source| io_error(path, source))?;
+            let name = entry.file_name();
+            let child = child_path(path, &name)?;
+            self.begin(&child, false)?;
+            let kind = file_type_kind(
+                entry
+                    .file_type()
+                    .map_err(|source| io_error(&child, source))?,
+            );
+            entries.push(DirectoryEntry { name, kind });
+        }
+        entries.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(entries)
+    }
+
+    fn entry_budget(&self, path: &Path) -> Result<(), ReadError> {
+        if self.usage.entries > self.limits.entries {
+            return Err(limit(
+                path,
+                LimitKind::DirectoryEntries,
+                self.limits.entries,
+                self.usage.entries as u64,
+            ));
+        }
+        Ok(())
     }
 
     fn read_with(
@@ -372,6 +456,25 @@ impl RootReader {
     }
 }
 
+fn child_path(parent: &Path, name: &OsStr) -> Result<PathBuf, ReadError> {
+    let parent_bytes = parent.as_os_str().as_encoded_bytes();
+    let separator = usize::from(
+        !parent_bytes.is_empty()
+            && !parent_bytes
+                .last()
+                .is_some_and(|byte| *byte == b'/' || cfg!(windows) && *byte == b'\\'),
+    );
+    let bytes = parent_bytes
+        .len()
+        .checked_add(separator)
+        .and_then(|value| value.checked_add(name.as_encoded_bytes().len()))
+        .ok_or_else(|| io_error(parent, io::Error::other("directory path length overflow")))?;
+    if bytes > 4096 {
+        return Err(ReadError::PathTooLong { bytes });
+    }
+    Ok(parent.join(name))
+}
+
 fn root_path(path: &Path) -> &Path {
     if path.as_os_str().is_empty() {
         Path::new(".")
@@ -380,11 +483,14 @@ fn root_path(path: &Path) -> &Path {
     }
 }
 fn entry_kind(metadata: &Metadata) -> EntryKind {
-    if metadata.is_file() {
+    file_type_kind(metadata.file_type())
+}
+fn file_type_kind(kind: cap_std::fs::FileType) -> EntryKind {
+    if kind.is_file() {
         EntryKind::File
-    } else if metadata.is_dir() {
+    } else if kind.is_dir() {
         EntryKind::Directory
-    } else if metadata.file_type().is_symlink() {
+    } else if kind.is_symlink() {
         EntryKind::Symlink
     } else {
         EntryKind::Other
@@ -431,3 +537,7 @@ enum Point {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod directory_tests;

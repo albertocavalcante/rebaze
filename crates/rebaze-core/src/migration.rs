@@ -494,6 +494,49 @@ mod tests {
     }
 
     #[test]
+    fn gradle_input_budgets_fail_capture_without_replacing_output() {
+        for (wide, reason) in [(false, "file bytes"), (true, "directory entries")] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(root.path().join("build.gradle"), "plugins { id 'java' }").unwrap();
+            if wide {
+                std::fs::write(
+                    root.path().join("settings.gradle"),
+                    "rootProject.name = 'example'",
+                )
+                .unwrap();
+                let sources = root.path().join("src/main/java");
+                std::fs::create_dir_all(&sources).unwrap();
+                for index in 0..8193 {
+                    std::fs::write(sources.join(format!("ignored-{index}.bin")), "").unwrap();
+                }
+            } else {
+                std::fs::write(
+                    root.path().join("settings.gradle"),
+                    format!("//{}", "x".repeat(1024 * 1024)),
+                )
+                .unwrap();
+            }
+            let output = root.path().join("BUILD.bazel");
+            std::fs::write(&output, "user output").unwrap();
+            let mut options = options(root.path(), false, true);
+            options.from = Some("gradle");
+            let failure = migrate_with_report(&options).unwrap_err();
+            assert!(format!("{:#}", failure.source).contains(reason));
+            assert!(matches!(
+                failure.report.stages.last(),
+                Some(StageRecord {
+                    stage: Stage::Capture,
+                    outcome: StageOutcome::Failed { .. }
+                })
+            ));
+            assert_eq!(failure.report.outputs, []);
+            assert_eq!(std::fs::read_to_string(output).unwrap(), "user output");
+            assert!(!root.path().join("MODULE.bazel").exists());
+            assert!(!root.path().join(".rebaze-apply").exists());
+        }
+    }
+
+    #[test]
     fn config_failure_records_available_field_without_running_builds() {
         let temp = input();
         let mut options = options(temp.path(), false, false);

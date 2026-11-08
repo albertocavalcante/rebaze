@@ -8,6 +8,7 @@ pub struct ReadLimits {
     pub(super) files: usize,
     pub(super) operations: usize,
     pub(super) depth: usize,
+    pub(super) entries: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -42,7 +43,7 @@ impl ReadLimits {
         })
     }
 
-    /// Operations count public lookups/reads and read attempts,
+    /// Operations count public lookups/reads, read attempts and iterator advances,
     /// including failures. They are not exact underlying syscall counts.
     pub fn with_traversal(
         mut self,
@@ -71,6 +72,17 @@ impl ReadLimits {
     pub const fn depth(self) -> usize {
         self.depth
     }
+
+    /// Bound all observed directory entries, including filtered/error entries.
+    pub fn with_directory_entries(mut self, entries: usize) -> Result<Self, ReadLimitsError> {
+        check("directory entries", entries, 65_536)?;
+        self.entries = entries;
+        Ok(self)
+    }
+
+    pub const fn directory_entries(self) -> usize {
+        self.entries
+    }
 }
 
 impl Default for ReadLimits {
@@ -81,6 +93,7 @@ impl Default for ReadLimits {
             files: 4096,
             operations: 65_536,
             depth: 64,
+            entries: 8192,
         }
     }
 }
@@ -103,6 +116,7 @@ pub enum LimitKind {
     FileAttempts,
     Operations,
     PathDepth,
+    DirectoryEntries,
 }
 
 impl std::fmt::Display for LimitKind {
@@ -113,16 +127,18 @@ impl std::fmt::Display for LimitKind {
             Self::FileAttempts => "file attempts",
             Self::Operations => "logical operations",
             Self::PathDepth => "relative path depth",
+            Self::DirectoryEntries => "directory entries",
         })
     }
 }
 
-/// Actual charged work. Oversize reads include their single proof byte.
+/// Actual charged work. Oversize reads/scans include their single proof byte/entry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Usage {
     pub(super) bytes: usize,
     pub(super) files: usize,
     pub(super) operations: usize,
+    pub(super) entries: usize,
 }
 
 impl Usage {
@@ -134,5 +150,9 @@ impl Usage {
     }
     pub const fn operations(self) -> usize {
         self.operations
+    }
+
+    pub const fn directory_entries(self) -> usize {
+        self.entries
     }
 }

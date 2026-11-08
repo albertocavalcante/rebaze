@@ -10,6 +10,12 @@ pub enum Token {
 }
 
 pub fn lex(source: &str) -> Result<Vec<Token>> {
+    if source.len() > 1024 * 1024 {
+        bail!(
+            "Gradle/Java source byte budget exceeded: limit 1048576, observed {}",
+            source.len()
+        );
+    }
     let mut chars = source.chars().peekable();
     let mut tokens = Vec::new();
     while let Some(c) = chars.next() {
@@ -137,5 +143,21 @@ impl Cursor {
             }
             other => bail!("expected an uninterpolated, unescaped Gradle literal, found {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn borrowed_source_byte_limits_count_utf8_before_token_allocation() {
+        let source = format!("//{}", "é".repeat((1024 * 1024 - 2) / 2));
+        assert_eq!(source.len(), 1024 * 1024);
+        assert_eq!(lex(&source).unwrap(), [] as [Token; 0]);
+        let error = lex(&(source + "x")).unwrap_err();
+        assert!(error.to_string().contains("source byte budget"));
+        assert!(error.to_string().len() < 256);
     }
 }
