@@ -60,17 +60,11 @@ fn file_and_aggregate_budgets_include_settings_build_java_and_lock() {
     assert!(read_project(root.path(), exact).is_ok());
     let bytes = ReadLimits::new(settings.len(), settings.len() + 1, 3).unwrap();
     assert!(
-        read_project(root.path(), bytes)
-            .unwrap_err()
-            .to_string()
-            .contains("aggregate bytes")
+        format!("{:#}", read_project(root.path(), bytes).unwrap_err()).contains("aggregate bytes")
     );
     let files = ReadLimits::new(settings.len(), settings.len() + 2, 2).unwrap();
     assert!(
-        read_project(root.path(), files)
-            .unwrap_err()
-            .to_string()
-            .contains("file attempts")
+        format!("{:#}", read_project(root.path(), files).unwrap_err()).contains("file attempts")
     );
 }
 

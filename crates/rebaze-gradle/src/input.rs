@@ -55,7 +55,9 @@ pub fn read_project(path: &Path, limits: ReadLimits) -> Result<GradleProject> {
         }
         modules.push(module);
     }
-    let maven_lock = reader.read_optional_text(Path::new("maven_install.json"))?;
+    let maven_lock = reader
+        .read_optional_text(Path::new("maven_install.json"))
+        .context("read Maven lock as a bounded regular project file")?;
     Ok(GradleProject {
         name,
         path: root,
@@ -127,6 +129,10 @@ fn optional_directory(reader: &mut RootReader, module: &Path, path: &Path) -> Re
         match reader.kind(&prefix)? {
             None => return Ok(false),
             Some(EntryKind::Directory) => {}
+            Some(EntryKind::Symlink) => bail!(
+                "source symlinks need explicit mapping: {}",
+                prefix.display()
+            ),
             Some(_) => bail!(
                 "source directory components must be directories without symlinks: {}",
                 prefix.display()
@@ -157,8 +163,11 @@ fn files(
                         files.push(relative);
                     }
                 }
-                EntryKind::Symlink | EntryKind::Other => bail!(
-                    "source entries must be regular files/directories without symlinks: {}",
+                EntryKind::Symlink => {
+                    bail!("source symlinks need explicit mapping: {}", path.display())
+                }
+                EntryKind::Other => bail!(
+                    "special source entries need explicit mapping: {}",
                     path.display()
                 ),
             }
