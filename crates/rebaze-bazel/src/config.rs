@@ -107,15 +107,49 @@ pub struct MigrationConfig {
 #[allow(clippy::literal_string_with_formatting_args)]
 const COMPONENT_PLACEHOLDER: &str = "{component}";
 
+// Configuration is deliberately small and does not follow descendant symlinks.
+fn read_configuration(path: &Path) -> std::io::Result<Option<String>> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "configuration path has no filename",
+        )
+    })?;
+    let limits =
+        rebaze_input::ReadLimits::new(64 * 1024, 64 * 1024, 1).map_err(std::io::Error::other)?;
+    let mut reader =
+        rebaze_input::RootReader::open(parent, limits, rebaze_input::SymlinkPolicy::Reject)
+            .map_err(rebaze_input::ReadError::into_io_error)?;
+    reader
+        .read_optional_text(Path::new(name))
+        .map_err(rebaze_input::ReadError::into_io_error)
+}
+
 impl MigrationConfig {
     /// Load flat native settings from TOML, filling omitted fields with defaults.
     /// The `[bazel]` envelope belongs to `rebaze_core::Config`, not this loader.
     pub fn load_from_file(path: &Path) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.into(),
-            source,
-        })?;
-        toml::from_str(&content).map_err(|source| ConfigError::Parse {
+        let content = read_configuration(path)
+            .map_err(|source| ConfigError::Read {
+                path: path.into(),
+                source,
+            })?
+            .ok_or_else(|| ConfigError::Read {
+                path: path.into(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "required configuration file is absent",
+                ),
+            })?;
+        Self::parse_file(&content, path)
+    }
+
+    fn parse_file(content: &str, path: &Path) -> Result<Self, ConfigError> {
+        toml::from_str(content).map_err(|source| ConfigError::Parse {
             path: path.into(),
             source,
         })
@@ -125,9 +159,9 @@ impl MigrationConfig {
     /// Use `rebaze_core::Config` when a file may contain the `[bazel]` envelope.
     pub fn load_from_project(project_dir: &Path) -> Result<Self, ConfigError> {
         let path = project_dir.join("rebaze.toml");
-        match std::fs::symlink_metadata(&path) {
-            Ok(_) => Self::load_from_file(&path),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+        match read_configuration(&path) {
+            Ok(Some(content)) => Self::parse_file(&content, &path),
+            Ok(None) => Ok(Self::default()),
             Err(source) => Err(ConfigError::Read { path, source }),
         }
     }

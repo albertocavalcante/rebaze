@@ -8,6 +8,9 @@ use std::path::PathBuf;
 /// Error type for project extraction.
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractError {
+    #[error(transparent)]
+    Input(#[from] rebaze_input::ReadError),
+
     /// Failed to read a CMakeLists.txt file.
     #[error("Failed to read {path}: {source}")]
     ReadFile {

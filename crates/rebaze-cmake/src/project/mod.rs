@@ -18,7 +18,10 @@ pub use types::{
 };
 
 // Re-export main extraction functions
-pub use extract::{extract_project, extract_project_from_path, extract_project_with_context};
+pub use extract::{
+    extract_project, extract_project_from_path, extract_project_from_path_with_limits,
+    extract_project_with_context,
+};
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

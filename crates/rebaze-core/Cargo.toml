@@ -11,6 +11,7 @@ description = "Core migration logic for rebaze"
 workspace = true
 
 [dependencies]
+rebaze-input.workspace = true
 rebaze-cmake.workspace = true
 rebaze-cmake-file-api.workspace = true
 rebaze-gradle.workspace = true

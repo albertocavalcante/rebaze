@@ -35,6 +35,7 @@ crate.from_cargo(
         "//crates/rebaze-cmake-file-api:Cargo.toml",
         "//crates/rebaze-core:Cargo.toml",
         "//crates/rebaze-gradle:Cargo.toml",
+        "//crates/rebaze-input:Cargo.toml",
         "//crates/rebaze-starlark:Cargo.toml",
     ],
 )

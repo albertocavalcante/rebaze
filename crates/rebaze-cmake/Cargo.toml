@@ -12,8 +12,10 @@ workspace = true
 
 [dev-dependencies]
 walkdir = "2"
+tempfile = "3"
 
 [dependencies]
+rebaze-input.workspace = true
 chumsky.workspace = true
 ariadne.workspace = true
 anyhow.workspace = true

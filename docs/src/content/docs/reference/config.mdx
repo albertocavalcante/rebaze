@@ -9,7 +9,10 @@ Create a `rebaze.toml` in your project root to configure native CMake generation
 Use `--build-generator native` for this path. Gradle Java and bazelle currently
 accept only default configuration; explicit overrides are rejected rather than
 ignored. Unknown fields and mixed flat/nested formats are errors. An absent file
-selects defaults; malformed or unreadable files fail visibly.
+selects defaults; malformed or unreadable files fail visibly. Configuration files
+must be regular UTF-8 files no larger than 64 KiB. Configuration-file symlinks are
+rejected, including links to valid files; place the TOML directly in the selected
+location.
 
 Use either flat sections such as `[build]`, or place every section under `[bazel]`
 (such as `[bazel.build]`). Do not mix them in one file.
