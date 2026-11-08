@@ -99,18 +99,38 @@ impl Profile {
             issue(project, cmd, reason);
             return false;
         }
-        if cmd.name == "set"
-            && matches!(
-                cmd.arg_literal(0),
-                Some(
-                    "CMAKE_MODULE_PATH"
-                        | "CMAKE_TOOLCHAIN_FILE"
-                        | "CMAKE_PROJECT_INCLUDE"
-                        | "CMAKE_PROJECT_INCLUDE_BEFORE"
-                )
-            )
-        {
+        let assigned_variable = match cmd.name.as_str() {
+            "set" => cmd.arg_literal(0),
+            "list" => cmd.arg_literal(1),
+            _ => None,
+        };
+        if assigned_variable.is_some_and(|name| {
+            name == "BUILD_SHARED_LIBS"
+                || name.starts_with("CMAKE_")
+                    && !(cmd.name == "set"
+                        && matches!(
+                            name,
+                            "CMAKE_C_STANDARD"
+                                | "CMAKE_CXX_STANDARD"
+                                | "CMAKE_TEST_LAUNCHER"
+                                | "CMAKE_CROSSCOMPILING_EMULATOR"
+                        ))
+        }) {
             issue(project, cmd, EvaluationReason::Module);
+            return false;
+        }
+        if matches!(
+            assigned_variable,
+            Some("CMAKE_C_STANDARD" | "CMAKE_CXX_STANDARD")
+        ) && cmd
+            .arguments
+            .iter()
+            .skip(1)
+            .flat_map(|arg| ctx.expand_argument(arg))
+            .count()
+            > 1
+        {
+            issue(project, cmd, EvaluationReason::Assignment);
             return false;
         }
         if cmd.name == "include" && ctx.get("CMAKE_MODULE_PATH").is_some() {

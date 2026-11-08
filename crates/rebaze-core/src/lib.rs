@@ -643,6 +643,40 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_source_fails_before_original_build_effects() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("CMakeLists.txt"),
+            "project(example C)\nif(OFF)\nadd_library(hidden hidden.c)\nendif()",
+        )
+        .unwrap();
+        let options = MigrateOptions {
+            path: temp.path().to_str().unwrap(),
+            from: Some("cmake"),
+            dry_run: false,
+            cmake_build_dir: None,
+            cmake_config: None,
+            cmake_file_api_only: false,
+            build_generator: BuildGenerator::Native,
+            bazelle_root: None,
+            bazelle_bin: None,
+            unsafe_mode: false,
+            config: None,
+        };
+        assert!(
+            migrate(&options)
+                .unwrap_err()
+                .to_string()
+                .contains("requires CMake evaluation")
+        );
+        let files: Vec<_> = std::fs::read_dir(temp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(files, ["CMakeLists.txt"]);
+    }
+
+    #[test]
     fn generation_error_does_not_write_a_partial_migration() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(

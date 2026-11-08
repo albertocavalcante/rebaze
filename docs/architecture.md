@@ -163,7 +163,11 @@ literal argv validation, including empty/quoted/bracket arguments. `include`
 currently accepts only literal `FindPkgConfig` without a custom module path.
 Custom includes, module/toolchain hooks, every `find_package` call and generated
 source commands need explicit evaluated evidence: package modules/config scripts
-can mutate arbitrary source variables. Package metadata is retained for analysis,
+can mutate arbitrary source variables. Mutating `CMAKE_*` variables is allowed
+only through ordinary `set` for the two scalar language standards and the two
+separately validated test-launcher settings; other mutations (including
+project-specific hooks and all `list` mutations) need evaluated evidence. `BUILD_SHARED_LIBS` mutation also needs evaluation.
+Package metadata is retained for analysis,
 but does not authorize native source migration. Other metadata commands such as
 `project`, `pkg_check_modules` and `target_compile_features` require
 literal arguments throughout; their extractors do not evaluate variable values.

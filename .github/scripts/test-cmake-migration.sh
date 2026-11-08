@@ -114,6 +114,9 @@ for source in \
   'function(make_target)\nadd_library(hidden hidden.c)\nendfunction()' \
   'foreach(item a b)\nadd_library(hidden hidden.c)\nendforeach()' \
   'include(extra.cmake)' \
+  'find_package(Toggle REQUIRED)' \
+  'set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES hook.cmake)' \
+  'list(APPEND CMAKE_PROJECT_rebaze_fixture_INCLUDE hook.cmake)' \
   'list(REMOVE_ITEM DEP_SOURCES dep.c)' \
   'set(DEP_SOURCES dep.c CACHE STRING sources)' \
   'add_subdirectory(missing_required_directory)'; do
