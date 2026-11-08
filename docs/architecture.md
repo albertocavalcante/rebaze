@@ -29,6 +29,37 @@ available before publishing either frontend. Local archive-consumer checks use a
 unpublished dependency; they do not establish crates.io readiness for all
 workspace libraries or authorize publication.
 
+## Configured CMake capture limits
+
+The current target model has one compile-option list per target. File API capture
+rejects multiple compile groups and generated target inputs rather than merging
+per-source settings or dropping generated headers. Compiler options retain order,
+operands and repetitions during capture. Later native filtering and toolchain
+selection still have the semantic limits described in the roadmap; this is not
+a general compiler-equivalence guarantee. File API test import remains unimplemented.
+
+## Related tools and reusable boundaries
+
+Rebaze owns its Rust migration path. Its typed Starlark models construct generated
+files; they are distinct from a concrete syntax tree used to preserve and edit
+existing source. Keep the current serializer unless a demonstrated expression or
+editing requirement exceeds it.
+
+Buildport is a separate Go research prototype with configured capture, ordered
+compiler interpretation, explicit verification claims and pilot CMake/Bazel
+lowering. The owner's `cmake-file-api-go` SDK supplies lossless configured
+observations; CMake/Starlark CST libraries supply syntax and rewrite operations.
+Those libraries are not Rust runtime dependencies. The SDK's successful capture
+or matching query identity is not a successful configure, build or test result.
+
+Cross-language reuse starts with shared fixtures and explicit evidence contracts.
+Keep raw/native facts, configuration and target identity beside interpreted data.
+Compiler policy and test execution belong above capture; keep private tools
+optional in public validation. Extract another shared IR or generator only after
+real consumers show a stable contract. The [real-world validation program](engineering-roadmap.md#real-world-migration-validation)
+sets the next comparison gates. This direction is not an implemented Buildport
+integration or a general equivalence claim.
+
 ## Native migration path
 
 1. The CLI loads explicit or discovered configuration and calls `rebaze-core`.

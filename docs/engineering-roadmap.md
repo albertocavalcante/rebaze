@@ -51,6 +51,71 @@ otherwise, the proposed defect examples still need executable reproductions.
 The historical [file-decomposition proposal](refactoring-plan.md) is superseded
 by this behavior-driven sequence.
 
+## Real-world migration validation
+
+The comparison with [any2bazel](https://github.com/EngFlow/any2bazel/tree/af53b99b71a6238cdd0b4dca15dd20d429918871)
+reinforces a missing evidence boundary: generating valid Starlark and building it
+is weaker than independently comparing the original and generated builds.
+Its deterministic differ and agent-assisted repairs are useful references;
+its published case studies are upstream-reported results, not rebaze passes.
+
+Use the following pinned project ladder. These versions are fixed comparison
+inputs, not recommendations to downgrade a project's dependencies.
+
+| Project / revision | Purpose | Admission and stronger completion gate |
+| --- | --- | --- |
+| [TinyXML2 11.0.0](https://github.com/leethomason/tinyxml2/tree/9148bdf719e997d1f474be6bcc7943881046dba1) | Small C++ library, executable tests, static/shared options; aligns with the existing Buildport pilot. | Compare source extraction and explicit configured File API capture separately. Build/run original and generated tests in Debug/Release, then exercise a downstream consumer. |
+| [fmt 11.2.0](https://github.com/fmtlib/fmt/tree/40626af88bd7df9a5fb80be7b25ac85b122d6c21) | C++ usage requirements, compiled/header-only forms and configuration-sensitive flags. | Record exact enabled targets/options; first validate the compiled-library profile and downstream headers/defines. Header-only and shared profiles need separate evidence. |
+| [zlib 1.3.1](https://github.com/madler/zlib/tree/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf) | C build, configured headers, feature probes and static/shared variants. | Generated headers and selected compiler/configuration must be preserved or explicitly refused; a successful existing BCR dependency fixture is not a zlib migration pass. |
+| [spdlog 1.15.3](https://github.com/gabime/spdlog/tree/6fa36017cfd5731d617e1a934f0e5ea9c4445b13) | External fmt dependency and public compile definitions. | Add after fmt's profile works; require the declared dependency variant and a downstream consumer. |
+| [Mockito 5.20.0](https://github.com/mockito/mockito/tree/3a1a19ee40f1234048880393343405046fc3fa60) | Real Gradle plugins, dependency scopes and test/runtime instrumentation. | Begin with admission/refusal analysis. Its build is outside the current literal Java/JUnit4 fixture contract; do not claim compatibility from parsing project names. |
+
+Larger projects such as Abseil, RE2, or Ladybird follow demonstrated progress on
+these profiles. Project count alone is not a compatibility measure. Keep a small
+first-party fixture for each discovered defect so ordinary regression checks do
+not need every external checkout or private tool.
+
+### Record each boundary
+
+For every selected project, retain its URL, tag and full commit, clean-input
+inventory/hash, tool revision and binary hash, OS/architecture, compiler identity,
+configuration, enabled options/targets and exact commands. A tag or commit does
+not identify a dirty source tree. Keep source and generated workspaces separate.
+
+Record source admission, configured capture, planning, rendering, original build,
+generated build, test discovery/execution, downstream consumption and independent
+comparison as separate results. Distinguish unsupported input, infrastructure or
+tool failure, semantic mismatch, and missing evidence. A failed baseline cannot
+validate a migration; an empty or unexecuted test set cannot establish test parity.
+
+File API fragments are shell text and structured observations, not a replacement
+for the complete ordered compiler command. Combine them with an explicit compile
+capture where needed. Preserve target ownership, configuration, raw evidence and
+unknown facts. Compare with Buildport as an optional independent experiment and
+any2bazel where its supported profile applies. Public required gates must remain
+reproducible without private libraries or machine paths.
+
+Use explicit wall-clock, retained-log, disk and concurrency budgets. An exceeded
+experiment budget is an incomplete result. Never lower runmux storage gates,
+terminate unrelated jobs, or share a writable output root between runs. Keep
+third-party suites out of ordinary library tests; explicitly selected integration
+runs fail on missing inputs/tools and retain failed logs. Required existing CLI
+fixtures remain required.
+
+### Learn from failures
+
+For each choke point, record the first failed boundary, the observed behavior,
+expected supported/refused outcome, evidence and smallest owning change. Separate
+an honest refusal from a bug that accepts or drops required semantics. Fix the
+minimal reproducer, obtain independent review, and rerun the original case on the
+final source. Do not patch the comparison oracle to accept the candidate.
+
+A profile passes only when its nonempty required claims are satisfied. Deliberate
+damage to a dependency, owning-target flag, include resolution, configuration or
+test behavior must be detected by the relevant gate. Report accepted differences
+and exclusions with reasons; a zero-error scoped diff is not universal equivalence.
+No result in this selection table is a completed migration claim by itself.
+
 ## Milestone contract
 
 Complete this milestone when all five phase gates pass for the documented subset:

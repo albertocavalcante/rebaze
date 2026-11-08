@@ -20,6 +20,21 @@ pub enum FileApiError {
     #[error("cmake-file-api configuration '{name}' not found")]
     UnknownConfiguration { name: String },
 
+    #[error(
+        "target {target:?} contains generated input {path:?}; native migration cannot preserve generated inputs yet"
+    )]
+    GeneratedInput { target: String, path: PathBuf },
+
+    #[error(
+        "target {target:?} reads build-directory include {path:?}; native migration cannot preserve generated build inputs yet"
+    )]
+    BuildDirectoryInclude { target: String, path: PathBuf },
+
+    #[error(
+        "target {target:?} has {groups} compile groups; per-source compile settings are not supported by native migration"
+    )]
+    MultipleCompileGroups { target: String, groups: usize },
+
     #[error("cmake-file-api query error: {0}")]
     Query(#[from] query::WriterError),
 
@@ -153,6 +168,8 @@ pub fn capture_from_codemodel(
             continue;
         };
 
+        validate_target_capture(target, &build_root)?;
+
         match kind {
             TargetKind::Executable => {
                 let exe = Executable {
@@ -226,9 +243,6 @@ fn collect_sources(
 ) -> Vec<String> {
     let mut set = HashSet::new();
     for source in &target.sources {
-        if source.is_generated {
-            continue;
-        }
         if let Some(path) = normalize_source_path(&source.path, source_root, build_root) {
             set.insert(path);
         }
@@ -267,8 +281,41 @@ fn collect_defines(target: &objects::codemodel_v2::Target) -> Vec<String> {
     sorted_vec(set)
 }
 
+fn validate_target_capture(
+    target: &objects::codemodel_v2::Target,
+    build_root: &Path,
+) -> Result<(), FileApiError> {
+    if let Some(source) = target.sources.iter().find(|source| source.is_generated) {
+        return Err(FileApiError::GeneratedInput {
+            target: target.name.clone(),
+            path: source.path.clone(),
+        });
+    }
+    // The current model has one option list per target. Combining groups would
+    // apply one source's settings to another, so require a representable capture.
+    if target.compile_groups.len() > 1 {
+        return Err(FileApiError::MultipleCompileGroups {
+            target: target.name.clone(),
+            groups: target.compile_groups.len(),
+        });
+    }
+    // A generated header may be used only through an include root, without a
+    // sources[] entry. Dropping that root would also drop required build input.
+    for group in &target.compile_groups {
+        if let Some(include) = group.includes.iter().find(|include| {
+            !build_root.as_os_str().is_empty() && include.path.starts_with(build_root)
+        }) {
+            return Err(FileApiError::BuildDirectoryInclude {
+                target: target.name.clone(),
+                path: include.path.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn collect_compile_options(target: &objects::codemodel_v2::Target) -> Vec<String> {
-    let mut set = HashSet::new();
+    let mut options = Vec::new();
     for group in &target.compile_groups {
         let mut skip_next = false;
         for flag in group.flags() {
@@ -284,11 +331,13 @@ fn collect_compile_options(target: &objects::codemodel_v2::Target) -> Vec<String
                 continue;
             }
             if !flag.is_empty() {
-                set.insert(flag);
+                // Compiler operands, repeated flags and last-wins overrides are
+                // ordered data. Sorting or deduplicating changes their meaning.
+                options.push(flag);
             }
         }
     }
-    sorted_vec(set)
+    options
 }
 
 fn collect_dependencies(
@@ -390,6 +439,16 @@ mod tests {
         Include, MinimumCmakeVersion, Project, Target, TargetPaths, TargetReference,
     };
     use cmake_file_api::objects::{MajorMinor, ObjectKind};
+
+    fn target_codemodel(target: Target) -> objects::CodeModelV2 {
+        let mut configuration = Configuration::default();
+        configuration.targets = vec![target];
+        let mut codemodel = objects::CodeModelV2::default();
+        codemodel.paths.source = PathBuf::from("/repo");
+        codemodel.paths.build = PathBuf::from("/repo/build");
+        codemodel.configurations = vec![configuration];
+        codemodel
+    }
 
     #[test]
     // Test setup requires many mock objects to simulate realistic CMake codemodel
@@ -519,6 +578,77 @@ mod tests {
             project.executables[0].link_libraries,
             vec!["mylib".to_string()]
         );
+    }
+
+    #[test]
+    fn compiler_options_preserve_operand_order_and_repetitions() {
+        let mut fragment = CompileCommandFragment::default();
+        fragment.fragment =
+            "-arch arm64 -fvisibility=hidden -std=c++11 -std=c++20 -arch arm64".into();
+        let mut group = CompileGroup::default();
+        group.compile_command_fragments = vec![fragment];
+        let mut target = Target::default();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.compile_groups = vec![group];
+        let project =
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()).unwrap();
+        assert_eq!(
+            project.libraries[0].compile_options,
+            [
+                "-arch",
+                "arm64",
+                "-fvisibility=hidden",
+                "-std=c++11",
+                "-std=c++20",
+                "-arch",
+                "arm64"
+            ]
+        );
+    }
+
+    #[test]
+    fn generated_headers_are_refused_instead_of_dropped() {
+        let mut source = objects::codemodel_v2::Source::default();
+        source.path = PathBuf::from("/build/zconf.h");
+        source.is_generated = true;
+        let mut target = Target::default();
+        target.name = "zlib".into();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.sources = vec![source];
+        assert!(matches!(
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()),
+            Err(FileApiError::GeneratedInput { target, path })
+                if target == "zlib" && path == Path::new("/build/zconf.h")
+        ));
+    }
+
+    #[test]
+    fn per_source_compile_groups_are_refused_instead_of_merged() {
+        let mut target = Target::default();
+        target.name = "mixed".into();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.compile_groups = vec![CompileGroup::default(), CompileGroup::default()];
+        assert!(matches!(
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()),
+            Err(FileApiError::MultipleCompileGroups { target, groups: 2 }) if target == "mixed"
+        ));
+    }
+
+    #[test]
+    fn generated_include_roots_are_refused_without_a_generated_source_entry() {
+        let mut include = Include::default();
+        include.path = PathBuf::from("/repo/build/generated");
+        let mut group = CompileGroup::default();
+        group.includes = vec![include];
+        let mut target = Target::default();
+        target.name = "zlib".into();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.compile_groups = vec![group];
+        assert!(matches!(
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()),
+            Err(FileApiError::BuildDirectoryInclude { target, path })
+                if target == "zlib" && path == Path::new("/repo/build/generated")
+        ));
     }
 
     #[test]
