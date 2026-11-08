@@ -29,6 +29,14 @@ Repository Markdown outside `src/content/docs/` is browsed in GitHub and is not
 published automatically. Link to it through its repository URL from site pages.
 Use relative links between repository Markdown files.
 
+Register a new repository-only guide in `REPOSITORY_DOCS` in
+[the CI router](../.github/scripts/ci_routing.py) and its routing tests. That
+selects the lightweight Markdown checks and includes the guide in link checking.
+Add its matching negative path in the main deployment workflow's `push.paths`;
+the routing suite checks the two lists together.
+Unknown paths remain build inputs. Documentation used as a compiled fixture,
+such as the configuration reference, must select build checks as well as the site.
+
 ## Work on the site
 
 The user site uses Astro Starlight. Run these commands from the repository root:
