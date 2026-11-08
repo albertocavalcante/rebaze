@@ -992,3 +992,113 @@ fn unsupported_cmake_evaluation_fails_before_discovery() {
         assert!(!project.libraries.iter().any(|lib| lib.name == "hidden"));
     }
 }
+
+#[test]
+fn ordered_bundle_and_lowering_decisions_are_reproducible() {
+    use crate::DependencyResolution;
+    use crate::config::OmissionReason;
+    let file = rebaze_cmake::parse_source("project(example C)\nadd_library(core core.c)\nadd_executable(app main.c)\ntarget_link_libraries(app core ignored empty pthread)").unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    let mut config = MigrationConfig::default();
+    config.mappings.ignored_libraries.push("ignored".into());
+    config
+        .mappings
+        .plain_libraries
+        .insert("empty".into(), String::new());
+    let plan = crate::plan_cmake(&project, &config).unwrap();
+    let snapshot = DiscoverySnapshot::default();
+    let first = plan.render_bundle(&snapshot).unwrap();
+    let second = plan.render_bundle(&snapshot).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(
+        first
+            .bundle
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect::<Vec<_>>(),
+        [".bazelrc", ".bazelversion", "BUILD.bazel", "MODULE.bazel"]
+    );
+    assert_eq!(
+        first
+            .report
+            .dependencies
+            .iter()
+            .map(|decision| (
+                decision.target.as_str(),
+                decision.input.as_str(),
+                decision.resolution.clone()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("app", "core", DependencyResolution::Mapped(":core".into())),
+            (
+                "app",
+                "ignored",
+                DependencyResolution::Omitted(OmissionReason::ConfiguredIgnore)
+            ),
+            (
+                "app",
+                "empty",
+                DependencyResolution::Omitted(OmissionReason::EmptyMapping)
+            ),
+            (
+                "app",
+                "pthread",
+                DependencyResolution::Omitted(OmissionReason::ImplicitSystemLibrary)
+            ),
+        ]
+    );
+    assert_eq!(first.bundle.into_files(), plan.render(&snapshot).unwrap());
+}
+
+#[test]
+fn diagnostic_categories_and_available_origins_do_not_depend_on_messages() {
+    use crate::{DiagnosticCode, DiagnosticOrigin};
+    let file = rebaze_cmake::parse_source(
+        "project(example C)\nadd_executable(app main.c)\ntarget_link_libraries(app Missing::link)",
+    )
+    .unwrap();
+    let project = rebaze_cmake::extract_project(&file, ".".into());
+    let error = crate::plan_cmake(&project, &MigrationConfig::default()).unwrap_err();
+    let diagnostic = error.diagnostic();
+    assert_eq!(diagnostic.code, DiagnosticCode::NativeLink);
+    assert_eq!(diagnostic.origin, DiagnosticOrigin::Target("app".into()));
+    assert_eq!(diagnostic.message, error.to_string());
+
+    let file =
+        rebaze_cmake::parse_source("if(OFF)\nadd_executable(hidden main.c)\nendif()").unwrap();
+    let project = rebaze_cmake::extract_project(&file, "input".into());
+    let diagnostic = crate::plan_cmake(&project, &MigrationConfig::default())
+        .unwrap_err()
+        .diagnostic();
+    assert_eq!(diagnostic.code, DiagnosticCode::SourceEvaluation);
+    assert_eq!(
+        diagnostic.origin,
+        DiagnosticOrigin::Source {
+            path: "input/CMakeLists.txt".into(),
+            character_offset: 0
+        }
+    );
+
+    let config_error = crate::GenerationError::Config(
+        crate::config::ConfigError::UnsupportedOverride("filters.excluded_sources"),
+    );
+    assert_eq!(
+        config_error.diagnostic().origin,
+        DiagnosticOrigin::ConfigurationField("filters.excluded_sources".into())
+    );
+}
+
+#[test]
+fn jvm_bundle_and_legacy_files_have_identical_bytes() {
+    let project = rebaze_gradle::GradleProject {
+        name: "example".into(),
+        modules: vec![java_module(":app")],
+        path: ".".into(),
+        maven_lock: None,
+    };
+    let first = crate::generate_bundle(&project).unwrap();
+    assert_eq!(first, crate::generate_bundle(&project).unwrap());
+    assert_eq!(first.bundle.into_files(), generate(&project).unwrap());
+    assert_eq!(first.report.dependencies, Vec::new());
+}

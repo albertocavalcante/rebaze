@@ -153,6 +153,11 @@ Use `plan_cmake(project, config)` to prepare native CMake generation. The borrow
 `CMakeGeneration` validates strategy intent once. Pass only `system_modules()` to
 `rebaze_core::discovery::discover_packages`, then call `render(&snapshot)` on the
 same preparation. This keeps discovery and output selection consistent.
+Prefer `render_bundle(&snapshot)` for ordered validated output and lowering
+reports, then `write_bundle` only at the explicit application boundary. The
+legacy `render`/`generate*` file-map wrappers retain successful bytes. Reports
+currently cover native CMake input links, not JVM/provider-transitive semantics
+or successful verification.
 
 The convenience functions `generate_from_cmake(project, &snapshot)` and
 `generate_from_cmake_with_config(project, config, &snapshot)` still work; they
