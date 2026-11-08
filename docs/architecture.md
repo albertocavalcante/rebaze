@@ -190,6 +190,40 @@ and requires the refreshed File API target in output. Independent native executi
 establishes these cases, not arbitrary CMake
 compatibility or a complete external corpus pass.
 
+## Ordered output intent and lowering reports
+
+`plan_cmake(...).render_bundle(&snapshot)` and `generate_bundle(&gradle_project)`
+return `GenerationOutput`: an immutable ordered `OutputBundle` plus a
+`LoweringReport`. Construction and rendering perform no filesystem, process or
+network IO and emit no logs. A failed constructor/planning/render returns an error
+without an applicable bundle. `GenerationError::diagnostic()` supplies a stable
+category and a source/target/configuration origin where the model has one; missing
+origins remain explicitly unknown rather than fabricated locations.
+
+`OutputPath` uses a conservative ASCII component grammar, excluding traversal,
+empty components, Windows-invalid characters, reserved device stems and trailing
+dots/spaces. Bundles reject duplicate paths, ASCII case aliases and file/ancestor
+conflicts under that same case folding. Their paths and bytes iterate in lexical
+order. This narrows accepted output names (including Gradle module directories);
+Unicode remains supported in serialized content and input data. The filename rules
+are a deliberate portable subset, not a claim to model every filesystem alias:
+see [Windows filename conventions](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file).
+Actual destination state and races are application concerns, outside pure intent.
+
+The lowering report currently records native CMake direct input-link mappings and
+explicit omission reasons. It does not enumerate provider transitives; an empty
+JVM report does not claim equivalent semantics or complete coverage. A successful
+lowering report is neither a successful write nor a successful build/test result.
+Structured core stages and mandatory verification claims are the next R04 slice.
+
+`generate`, `generate_from_cmake*` and `CMakeGeneration::render` retain HashMap
+compatibility wrappers with identical successful bytes; their iteration order is
+not guaranteed. `write_files` validates through an owned bundle and delegates to
+`write_bundle`; use the bundle API to avoid cloning a legacy map. Empty/invalid
+legacy batches now fail before writes. Application retains the existing per-file
+replacement contract, partial-batch failure behavior and concurrency limitations;
+journaled recovery remains R05/R06 work.
+
 ## Starlark generation
 
 `File` combines and hoists loads before rule calls while preserving body order.

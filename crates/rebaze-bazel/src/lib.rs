@@ -9,14 +9,21 @@ use std::path::Path;
 pub use crate::config::MigrationConfig;
 pub use crate::generator::BazelFile;
 pub use crate::third_party::deduplicate_modules;
+pub use bundle::{BundleError, OutputBundle, OutputPath};
 pub use cmake_tests::TestError;
 pub use dependency_plan::{DependencyStrategy, PlanError};
 pub use discovery::DiscoverySnapshot;
 pub use native_links::NativeLinkError;
+pub use report::{
+    DependencyDecision, DependencyResolution, Diagnostic, DiagnosticCode, DiagnosticOrigin,
+    GenerationOutput, LoweringReport,
+};
 
 /// Failure to render a complete native output bundle.
 #[derive(Debug, thiserror::Error)]
 pub enum GenerationError {
+    #[error(transparent)]
+    Bundle(#[from] BundleError),
     #[error(transparent)]
     Source(#[from] rebaze_cmake::SourceIssue),
     #[error("cannot migrate Gradle Java project: {0}")]
@@ -37,6 +44,7 @@ pub enum GenerationError {
 
 pub type GenerationResult<T> = std::result::Result<T, GenerationError>;
 
+mod bundle;
 mod cmake_generator;
 mod cmake_tests;
 pub mod config;
@@ -53,6 +61,7 @@ pub mod filters;
 mod generation_tests;
 mod generator;
 mod native_links;
+mod report;
 pub use rebaze_starlark as starlark;
 mod third_party;
 
@@ -60,7 +69,17 @@ mod third_party;
 pub fn generate(
     project: &rebaze_gradle::GradleProject,
 ) -> GenerationResult<HashMap<String, String>> {
-    generator::generate(project)
+    Ok(generate_bundle(project)?.bundle.into_files())
+}
+
+/// Generate validated ordered JVM output without applying or verifying it.
+pub fn generate_bundle(
+    project: &rebaze_gradle::GradleProject,
+) -> GenerationResult<GenerationOutput> {
+    Ok(GenerationOutput {
+        bundle: OutputBundle::new(generator::generate(project)?)?,
+        report: LoweringReport::default(),
+    })
 }
 
 /// Generate Bazel files from a parsed CMake project.
@@ -121,6 +140,14 @@ impl CMakeGeneration<'_> {
         &self,
         discovery: &DiscoverySnapshot,
     ) -> GenerationResult<HashMap<String, String>> {
+        Ok(self.render_bundle(discovery)?.bundle.into_files())
+    }
+
+    /// Render immutable ordered intent and lowering decisions, without IO.
+    pub fn render_bundle(
+        &self,
+        discovery: &DiscoverySnapshot,
+    ) -> GenerationResult<GenerationOutput> {
         for module in &self.plan.systems {
             discovery.package(module)?;
         }
@@ -161,7 +188,12 @@ impl CMakeGeneration<'_> {
                 third_party::system_deps_bzl(&self.plan, discovery)?,
             );
         }
-        Ok(files)
+        Ok(GenerationOutput {
+            bundle: OutputBundle::new(files)?,
+            report: LoweringReport {
+                dependencies: self.links.decisions().to_vec(),
+            },
+        })
     }
 }
 
@@ -367,24 +399,20 @@ pub fn write_files<S: std::hash::BuildHasher>(
     root: &Path,
     files: &HashMap<String, String, S>,
 ) -> Result<()> {
-    let mut paths: Vec<_> = files.keys().collect();
-    paths.sort_unstable();
-    // Validate the entire batch before changing any generated files.
-    for path in &paths {
-        let relative = Path::new(path);
-        if relative.as_os_str().is_empty()
-            || relative
-                .components()
-                .any(|component| !matches!(component, std::path::Component::Normal(_)))
-        {
-            anyhow::bail!("Generated path must be relative without traversal: {path}");
-        }
-        if paths
+    let bundle = OutputBundle::new(
+        files
             .iter()
-            .any(|other| other != path && relative.starts_with(Path::new(other)))
-        {
-            anyhow::bail!("Generated path conflicts with another output file: {path}");
-        }
+            .map(|(path, content)| (path.clone(), content.clone())),
+    )?;
+    write_bundle(root, &bundle)
+}
+
+/// Apply validated intent with the existing per-file replacement contract.
+/// Destination state is observed here, never during bundle construction.
+pub fn write_bundle(root: &Path, bundle: &OutputBundle) -> Result<()> {
+    // Inspect the complete destination set before changing any generated file.
+    for (path, _) in bundle.iter() {
+        let relative = path.as_path();
         let mut candidate = root.to_path_buf();
         for component in relative.components() {
             candidate.push(component);
@@ -393,8 +421,8 @@ pub fn write_files<S: std::hash::BuildHasher>(
                     anyhow::bail!("Refusing to write through symlink: {}", candidate.display());
                 }
                 Ok(metadata) => {
-                    if candidate == root.join(path) && !metadata.is_file()
-                        || candidate != root.join(path) && !metadata.is_dir()
+                    if candidate == root.join(path.as_path()) && !metadata.is_file()
+                        || candidate != root.join(path.as_path()) && !metadata.is_dir()
                     {
                         anyhow::bail!(
                             "Generated path conflicts with existing entry: {}",
@@ -410,8 +438,8 @@ pub fn write_files<S: std::hash::BuildHasher>(
             }
         }
     }
-    for path in paths {
-        let full_path = root.join(path);
+    for (path, content) in bundle.iter() {
+        let full_path = root.join(path.as_path());
         if let Some(parent) = full_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -429,7 +457,7 @@ pub fn write_files<S: std::hash::BuildHasher>(
             .tempfile_in(parent)
             .with_context(|| format!("Failed to stage {}", full_path.display()))?;
         staged
-            .write_all(files[path].as_bytes())
+            .write_all(content.as_bytes())
             .with_context(|| format!("Failed to write {}", full_path.display()))?;
         if let Ok(metadata) = std::fs::metadata(&full_path) {
             staged.as_file().set_permissions(metadata.permissions())?;
@@ -446,6 +474,18 @@ pub fn write_files<S: std::hash::BuildHasher>(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn case_aliases_fail_before_any_output_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("outputs");
+        let files = HashMap::from([
+            ("App/BUILD.bazel".into(), "first".into()),
+            ("app/BUILD.bazel".into(), "second".into()),
+        ]);
+        assert!(write_files(&root, &files).is_err());
+        assert!(!root.exists());
+    }
 
     #[test]
     fn reject_invalid_batch_before_writing_valid_entries() {

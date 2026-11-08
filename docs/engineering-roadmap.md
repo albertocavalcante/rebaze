@@ -171,7 +171,7 @@ Do not change the compiler floor merely to follow an upstream release.
 | 4. Stronger native evidence | R10–R11       | Usage and compiler intent survive a real downstream consumer.      | Independent build/capture tests detect deliberate semantic damage.             |
 | 5. Repeatable delivery      | D01–D03       | Local, CI, docs, and release evidence agree.                       | A clean checkout reproduces checks and packages the selected tested revision.  |
 
-R01/R02 have landed. R03 is the active semantics slice; R04 consumes their outcomes.
+R01–R03 have landed. R04 is the active output/report boundary slice.
 R05 needs R04; R06 needs R05. R07/R08 can start after R04 but must land without
 invalidating the apply protocol. R09 is an independent standalone-library slice.
 R10 uses R03/R04 and the process/budget contracts from R07/R08. R11 begins with
@@ -232,13 +232,12 @@ Defaults retain existing supported behavior unless the PR documents a correction
 
 ### R03 — Define the accepted CMake evaluation subset
 
-Implementation progress: source extraction observes supported variable changes in
-statement order and captures isolated child contexts at directory calls. Unsupported
-source evaluation is recorded separately from syntax and blocks native preparation;
-missing required listfiles and repeated visits fail visibly. The native fixture
-covers temporal assignment and directory scope. Exact-head independent review and
-CI remain required before recording this package complete. Per-target compiler and
-usage semantics remain R10 work.
+Implemented in PR #15: source extraction observes supported changes in statement
+order and captures isolated child contexts. Unsupported source evaluation blocks
+native preparation; required missing/repeated listfiles fail visibly. Independent
+review, native temporal/scope and refreshed File API oracles, and required final-head
+CI passed. The source profile is deliberately narrow; complete per-target compiler
+and usage semantics remain R10 work.
 
 **Work:** process supported variable changes in statement order. Test an early
 `add_library` between two assignments and directory-scope inheritance. Recognize
@@ -252,6 +251,12 @@ output writes. No general CMake interpreter is required. Generated-source and
 ambiguous-configuration behavior stays explicit.
 
 ### R04 — Return bundles, diagnostics, and stage reports
+
+R04a implementation progress: ordered validated output bundles, typed lowering
+categories/origins and direct native-link decisions are in place with legacy
+file-map wrappers. Review and CI remain required. R04b still needs structured core
+stage results, CLI-owned preview presentation and nonempty mandatory claim handling;
+this work package is not complete.
 
 **Work:** replace bare output maps at the orchestration boundary with a validated,
 ordered bundle and lowering report. Add origins and stable diagnostic categories

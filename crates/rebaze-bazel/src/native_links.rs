@@ -87,6 +87,7 @@ fn valid_name(name: &str) -> bool {
 #[derive(Debug)]
 pub struct NativeLinkPlan {
     targets: BTreeMap<String, PlannedTarget>,
+    decisions: Vec<crate::DependencyDecision>,
 }
 
 #[derive(Debug)]
@@ -164,6 +165,7 @@ impl NativeLinkPlan {
         for alias in aliases.keys() {
             resolver.link(alias, alias)?;
         }
+        let mut decisions = Vec::new();
         let targets = project
             .libraries
             .iter()
@@ -178,11 +180,28 @@ impl NativeLinkPlan {
                 let mut seen = BTreeSet::new();
                 let mut deps = Vec::new();
                 for link in links {
-                    if let DependencyMapping::Mapped(label) = resolver.link(name, link)?
-                        && seen.insert(label.clone())
-                    {
-                        deps.push(label);
-                    }
+                    let resolution = match resolver.link(name, link)? {
+                        DependencyMapping::Mapped(label) => {
+                            if seen.insert(label.clone()) {
+                                deps.push(label.clone());
+                            }
+                            crate::DependencyResolution::Mapped(label)
+                        }
+                        DependencyMapping::Omitted(reason) => {
+                            crate::DependencyResolution::Omitted(reason)
+                        }
+                        DependencyMapping::Unresolved => {
+                            return Err(NativeLinkError::Unresolved {
+                                target: name.clone(),
+                                dependency: link.clone(),
+                            });
+                        }
+                    };
+                    decisions.push(crate::DependencyDecision {
+                        target: name.clone(),
+                        input: link.clone(),
+                        resolution,
+                    });
                 }
                 let output_name = target_names
                     .remove(name)
@@ -196,7 +215,11 @@ impl NativeLinkPlan {
                 ))
             })
             .collect::<Result<_, NativeLinkError>>()?;
-        Ok(Self { targets })
+        Ok(Self { targets, decisions })
+    }
+
+    pub fn decisions(&self) -> &[crate::DependencyDecision] {
+        &self.decisions
     }
 
     pub fn target(&self, target: &str) -> Result<&PlannedTarget, NativeLinkError> {
