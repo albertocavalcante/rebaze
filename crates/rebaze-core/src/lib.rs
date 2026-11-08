@@ -6,7 +6,10 @@ use std::process::Command;
 
 pub mod config;
 pub mod discovery;
+mod migration;
 pub mod model;
+pub use migration::{migrate, migrate_with_report, validate, validate_with_report};
+pub mod report;
 
 // Re-export config types for convenience
 pub use config::{BazelConfig, Config};
@@ -75,206 +78,10 @@ pub fn analyze(path: &str) -> Result<String> {
     }
 }
 
-/// Migrate a project to Bazel.
-pub fn migrate(options: &MigrateOptions<'_>) -> Result<()> {
-    let project_root = std::fs::canonicalize(options.path)
-        .with_context(|| format!("Failed to resolve project directory: {}", options.path))?;
-    if !project_root.is_dir() {
-        anyhow::bail!(
-            "Project path is not a directory: {}",
-            project_root.display()
-        );
-    }
-    let path = project_root.as_path();
-    let bazelle_available = options.build_generator != BuildGenerator::Native
-        && bazelle_available(options.bazelle_bin, options.bazelle_root);
-
-    let build_system = match options.from {
-        Some(bs) => bs.to_string(),
-        None => detect_build_system(path)?,
-    };
-
-    tracing::info!("Migrating from {build_system} to Bazel");
-
-    match build_system.as_str() {
-        "cmake" => {
-            let generator = resolve_build_generator(
-                build_system.as_str(),
-                options.build_generator,
-                bazelle_available,
-            )?;
-            let bazel_config = options
-                .config
-                .as_ref()
-                .map_or_else(BazelConfig::default, Config::bazel_config);
-            let profile = if generator == BuildGenerator::Native {
-                rebaze_bazel::config::ConfigProfile::NativeCmake
-            } else {
-                rebaze_bazel::config::ConfigProfile::Bazelle
-            };
-            bazel_config.validate_for(profile)?;
-            // Configured File API replies describe the validated build. Refresh
-            // them before capture; source-only input can be prepared before IO.
-            let original_validated =
-                options.cmake_build_dir.is_some() && !options.unsafe_mode && !options.dry_run;
-            if original_validated {
-                pre_validate_cmake(path, options.cmake_build_dir, options.cmake_config)?;
-            }
-            let project = parse_cmake_project(
-                path,
-                options.cmake_build_dir,
-                options.cmake_config,
-                options.cmake_file_api_only,
-            )?;
-            match generator {
-                BuildGenerator::Native => {
-                    let generation = rebaze_bazel::plan_cmake(&project, &bazel_config)?;
-                    if !original_validated && !options.unsafe_mode && !options.dry_run {
-                        pre_validate_cmake(path, options.cmake_build_dir, options.cmake_config)?;
-                    }
-                    let observations = discovery::discover_packages(
-                        generation.system_modules(),
-                        &discovery::DiscoveryOptions::default(),
-                    )?;
-                    for module in generation.system_modules() {
-                        use rebaze_bazel::discovery::ProbeOutcome;
-                        match observations.outcome(module)? {
-                            ProbeOutcome::Unavailable(reason) => tracing::warn!(
-                                package = ?module.prefix, reason = %reason,
-                                "Using unavailable-package fallback"
-                            ),
-                            ProbeOutcome::Available(info) if info.system.is_none() => {
-                                tracing::warn!(
-                                    package = ?module.prefix,
-                                    "No installation prefix; system wrapper needs configuration"
-                                );
-                            }
-                            // Failed probes are rejected by generation before writing outputs.
-                            ProbeOutcome::Available(_) | ProbeOutcome::Failed(_) => {}
-                        }
-                    }
-                    let bazel_files = generation.render(&observations)?;
-
-                    tracing::info!("Generated {} Bazel files", bazel_files.len());
-                    if options.dry_run {
-                        print_files(&bazel_files);
-                    } else {
-                        rebaze_bazel::write_files(path, &bazel_files)?;
-                    }
-                }
-                BuildGenerator::Bazelle => {
-                    if !original_validated && !options.unsafe_mode && !options.dry_run {
-                        pre_validate_cmake(path, options.cmake_build_dir, options.cmake_config)?;
-                    }
-                    let languages = bazelle_languages_for_cmake(&project);
-                    run_bazelle_generation(
-                        path,
-                        &project.name,
-                        &languages,
-                        options.bazelle_root,
-                        options.bazelle_bin,
-                        options.dry_run,
-                    )?;
-
-                    if options.dry_run {
-                        print_bazel_scaffolding();
-                    } else {
-                        write_bazel_version(path)?;
-                        write_cpp_bazelrc(path)?;
-                    }
-                }
-                BuildGenerator::Auto => unreachable!("auto resolved"),
-            }
-        }
-        "gradle" => {
-            let bazel_config = options
-                .config
-                .as_ref()
-                .map_or_else(BazelConfig::default, Config::bazel_config);
-            bazel_config.validate_for(rebaze_bazel::config::ConfigProfile::NativeGradle)?;
-            let project = rebaze_gradle::parse(path).context("Failed to parse Gradle project")?;
-            let generator = resolve_build_generator(
-                build_system.as_str(),
-                options.build_generator,
-                bazelle_available,
-            )?;
-
-            match generator {
-                BuildGenerator::Native => {
-                    let bazel_files = rebaze_bazel::generate(&project)?;
-                    if !options.dry_run
-                        && !options.unsafe_mode
-                        && project.maven_lock.is_none()
-                        && project
-                            .modules
-                            .iter()
-                            .flat_map(|module| &module.dependencies)
-                            .any(|dep| matches!(dep, rebaze_gradle::Dependency::Maven(_)))
-                    {
-                        anyhow::bail!(
-                            "Maven dependencies require a reviewed maven_install.json before build validation; use --dry-run to inspect, or --unsafe-mode to prepare files without executing builds, then explicitly resolve/review/pin @rebaze_maven before normal migration"
-                        );
-                    }
-
-                    tracing::info!("Generated {} Bazel files", bazel_files.len());
-                    if options.dry_run {
-                        print_files(&bazel_files);
-                    } else {
-                        rebaze_bazel::write_files(path, &bazel_files)?;
-                    }
-                }
-                BuildGenerator::Bazelle => {
-                    anyhow::bail!(
-                        "bazelle build generation is not supported for Gradle yet; use --build-generator native"
-                    );
-                }
-                BuildGenerator::Auto => unreachable!("auto resolved"),
-            }
-        }
-        _ => {
-            anyhow::bail!("Unsupported build system: {build_system}");
-        }
-    }
-
-    if !options.unsafe_mode && !options.dry_run {
-        post_validate_bazel(path)?;
-    }
-
-    Ok(())
-}
-
-fn print_files(files: &std::collections::HashMap<String, String>) {
-    let mut paths: Vec<_> = files.keys().collect();
-    paths.sort_unstable();
-    for file_path in paths {
-        let content = &files[file_path];
-        println!("--- {file_path} ---");
-        println!("{content}");
-    }
-}
-
 /// Validate generated Bazel files.
 pub struct ValidateOptions<'a> {
     pub path: &'a str,
     pub unsafe_mode: bool,
-}
-
-pub fn validate(options: &ValidateOptions<'_>) -> Result<()> {
-    let path = Path::new(options.path);
-
-    if !path.join("MODULE.bazel").exists() && !path.join("WORKSPACE").exists() {
-        anyhow::bail!("No Bazel workspace found at {}", path.display());
-    }
-
-    if options.unsafe_mode {
-        tracing::info!("Skipping Bazel build validation (--unsafe-mode)");
-        return Ok(());
-    }
-
-    post_validate_bazel(path)?;
-
-    tracing::info!("Bazel build succeeded");
-    Ok(())
 }
 
 fn detect_build_system(path: &Path) -> Result<String> {
@@ -297,13 +104,35 @@ fn parse_cmake_project(
     cmake_build_dir: Option<&str>,
     cmake_config: Option<&str>,
     cmake_file_api_only: bool,
-) -> Result<rebaze_cmake::CMakeProject> {
+) -> Result<(rebaze_cmake::CMakeProject, report::SourceEvidence)> {
     if let Some(build_dir) = cmake_build_dir {
         let options = rebaze_cmake_file_api::FileApiOptions {
             configuration: cmake_config.map(str::to_string),
         };
-        match rebaze_cmake_file_api::parse_build_dir_with_options(Path::new(build_dir), &options) {
-            Ok(project) => Ok(project),
+        match rebaze_cmake_file_api::capture_build_dir_with_options(Path::new(build_dir), &options)
+        {
+            Ok(capture) => {
+                let project = capture.project;
+                let observed = project
+                    .path
+                    .canonicalize()
+                    .context("Failed to resolve File API source root")?;
+                let expected = path.canonicalize()?;
+                anyhow::ensure!(
+                    observed == expected,
+                    "configured File API source root {} does not match project root {}",
+                    observed.display(),
+                    expected.display()
+                );
+                Ok((
+                    project,
+                    report::SourceEvidence::CMakeFileApi {
+                        build_dir: Path::new(build_dir).canonicalize()?,
+                        requested_configuration: cmake_config.map(str::to_string),
+                        selected_configuration: capture.selected_configuration,
+                    },
+                ))
+            }
             Err(err) => {
                 if cmake_file_api_only {
                     return Err(err.into());
@@ -311,14 +140,20 @@ fn parse_cmake_project(
                 tracing::warn!(
                     "Failed to load cmake-file-api from {build_dir}: {err}. Falling back to parser."
                 );
-                rebaze_cmake::parse(path).context("Failed to parse CMake project")
+                Ok((
+                    rebaze_cmake::parse(path).context("Failed to parse CMake project")?,
+                    report::SourceEvidence::CMakeSource,
+                ))
             }
         }
     } else {
         if cmake_file_api_only {
             anyhow::bail!("--cmake-file-api-only requires --cmake-build-dir");
         }
-        rebaze_cmake::parse(path).context("Failed to parse CMake project")
+        Ok((
+            rebaze_cmake::parse(path).context("Failed to parse CMake project")?,
+            report::SourceEvidence::CMakeSource,
+        ))
     }
 }
 
@@ -356,10 +191,34 @@ fn bazelle_available(bazelle_bin: Option<&str>, bazelle_root: Option<&str>) -> b
         return root.join("WORKSPACE").exists() || root.join("MODULE.bazel").exists();
     }
 
-    Command::new("bazelle")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
+    // Presence is observed without executing a tool, including during preview.
+    // Actual execution success belongs to the external-generation stage.
+    let name = if cfg!(windows) {
+        "bazelle.exe"
+    } else {
+        "bazelle"
+    };
+    std::env::var_os("PATH").is_some_and(|value| {
+        std::env::split_paths(&value).any(|dir| executable_candidate(&dir.join(name)))
+    })
+}
+
+fn executable_candidate(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn run_bazelle_generation(
@@ -372,8 +231,6 @@ fn run_bazelle_generation(
 ) -> Result<()> {
     let languages_arg = languages.join(",");
     if dry_run {
-        println!("bazelle init --languages {languages_arg} --name {module_name}");
-        println!("bazelle update --languages {languages_arg}");
         return Ok(());
     }
     let bazelle = ensure_bazelle_binary(bazelle_root, bazelle_bin)?;
@@ -462,7 +319,14 @@ fn write_cpp_bazelrc(root: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let content = r"# Generated by rebaze - C++ project settings
+    let content = cpp_bazelrc_template();
+
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
+const fn cpp_bazelrc_template() -> &'static str {
+    r"# Generated by rebaze - C++ project settings
 
 # Use C++17 by default
 build --cxxopt=-std=c++17
@@ -481,17 +345,67 @@ test --test_output=errors
 # CI config
 build:ci --color=yes
 build:ci --curses=no
-";
-
-    std::fs::write(path, content)?;
-    Ok(())
+"
 }
 
-fn print_bazel_scaffolding() {
-    println!("--- .bazelversion ---");
-    println!("9.0.0");
-    println!("--- .bazelrc ---");
-    println!("# Generated by rebaze - C++ project settings");
+fn bazelle_preview(
+    root: &Path,
+    name: &str,
+    languages: &[String],
+    bazelle_root: Option<&str>,
+    bazelle_bin: Option<&str>,
+) -> Result<report::MigrationPreview> {
+    use report::{ExistingFilePolicy, MigrationPreview, ProcessPreview, ScaffoldingPreview};
+    let mut commands = Vec::new();
+    let program = if let Some(bin) = bazelle_bin {
+        Path::new(bin)
+            .canonicalize()
+            .context("Failed to resolve bazelle binary")?
+    } else if let Some(tool_root) = bazelle_root {
+        let tool_root = Path::new(tool_root)
+            .canonicalize()
+            .context("Failed to resolve bazelle root")?;
+        commands.push(ProcessPreview {
+            program: "bazel".into(),
+            args: vec!["build".into(), "//cmd/bazelle".into()],
+            cwd: tool_root.clone(),
+        });
+        tool_root.join("bazel-bin/cmd/bazelle/bazelle_/bazelle")
+    } else {
+        PathBuf::from("bazelle")
+    };
+    commands.push(ProcessPreview {
+        program: program.clone(),
+        args: vec![
+            "init".into(),
+            "--languages".into(),
+            languages.join(","),
+            "--name".into(),
+            name.into(),
+        ],
+        cwd: root.into(),
+    });
+    commands.push(ProcessPreview {
+        program,
+        args: vec!["update".into(), "--languages".into(), languages.join(",")],
+        cwd: root.into(),
+    });
+    let scaffolding = vec![
+        ScaffoldingPreview {
+            path: rebaze_bazel::OutputPath::new(".bazelversion".into())?,
+            content: "9.0.0\n".into(),
+            existing: ExistingFilePolicy::RequireBazel9,
+        },
+        ScaffoldingPreview {
+            path: rebaze_bazel::OutputPath::new(".bazelrc".into())?,
+            content: cpp_bazelrc_template().into(),
+            existing: ExistingFilePolicy::Preserve,
+        },
+    ];
+    Ok(MigrationPreview::External {
+        commands,
+        scaffolding,
+    })
 }
 
 fn pre_validate_cmake(
@@ -729,6 +643,20 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("rebaze.toml"), "[invalid").unwrap();
         assert!(Config::load_from_path_or_discover(None, temp.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_candidates_require_execute_bits_without_running_a_program() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let candidate = temp.path().join("bazelle");
+        std::fs::write(&candidate, "not executed").unwrap();
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!executable_candidate(&candidate));
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(executable_candidate(&candidate));
+        assert!(!executable_candidate(temp.path()));
     }
 
     #[test]

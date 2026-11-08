@@ -171,7 +171,7 @@ Do not change the compiler floor merely to follow an upstream release.
 | 4. Stronger native evidence | R10–R11       | Usage and compiler intent survive a real downstream consumer.      | Independent build/capture tests detect deliberate semantic damage.             |
 | 5. Repeatable delivery      | D01–D03       | Local, CI, docs, and release evidence agree.                       | A clean checkout reproduces checks and packages the selected tested revision.  |
 
-R01–R03 have landed. R04 is the active output/report boundary slice.
+R01–R03 and R04a have landed. R04b is the active stage/evidence boundary slice.
 R05 needs R04; R06 needs R05. R07/R08 can start after R04 but must land without
 invalidating the apply protocol. R09 is an independent standalone-library slice.
 R10 uses R03/R04 and the process/budget contracts from R07/R08. R11 begins with
@@ -252,11 +252,12 @@ ambiguous-configuration behavior stays explicit.
 
 ### R04 — Return bundles, diagnostics, and stage reports
 
-R04a implementation progress: ordered validated output bundles, typed lowering
-categories/origins and direct native-link decisions are in place with legacy
-file-map wrappers. Review and CI remain required. R04b still needs structured core
-stage results, CLI-owned preview presentation and nonempty mandatory claim handling;
-this work package is not complete.
+R04a landed in PR #16 with independent review, base regression evidence and
+required CI. R04b now implements structured core stages, CLI-owned preview
+presentation and mandatory build claims; missing/empty evidence remains unknown.
+Review, the complete native oracle and final-head CI remain required before this
+work package is complete. Journaled recovery and shared process budgets remain
+R05/R06 and R08 work.
 
 **Work:** replace bare output maps at the orchestration boundary with a validated,
 ordered bundle and lowering report. Add origins and stable diagnostic categories

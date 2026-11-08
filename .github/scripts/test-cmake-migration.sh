@@ -51,6 +51,17 @@ test ! -e "$work/migrated/.rebaze"
 test ! -e "$work/migrated/BUILD.bazel"
 rm "$work/migrated/rebaze.toml"
 
+# Auto preview may inspect a tool candidate, but must not execute its version
+# probe or build an external generator. The tripwire fails if it is executed.
+ln -s "$script_dir/bazelle-preview-tripwire.sh" "$work/bin/bazelle"
+isolated env REBAZE_PREVIEW_PROBE_MARKER="$work/preview-probe-called" \
+  "$cli" migrate "$work/migrated" --dry-run >"$work/auto-preview.log"
+test ! -e "$work/preview-probe-called"
+grep -q 'Planned process' "$work/auto-preview.log"
+test ! -e "$work/migrated/.rebaze"
+test ! -e "$work/migrated/BUILD.bazel"
+rm "$work/bin/bazelle"
+
 # Static migration must reject scoped bodies before configuring the original project.
 cp "$work/migrated/CMakeLists.txt" "$work/original-listfile"
 printf '\nif(OFF)\nadd_library(hidden hidden.c)\nendif()\n' >>"$work/migrated/CMakeLists.txt"
@@ -180,4 +191,14 @@ if grep -q 'name = "before"' "$work/file-api/BUILD.bazel"; then
   echo 'Migration used stale File API evidence' >&2
   exit 1
 fi
+# Configured data from another source root must not replace this project's files.
+if isolated "$cli" migrate "$work/migrated" --build-generator native --unsafe-mode \
+  --cmake-build-dir "$work/file-api-build" --cmake-file-api-only >"$work/foreign-api.log" 2>&1; then
+  echo 'Foreign-project File API evidence was accepted' >&2
+  exit 1
+fi
+grep -q 'does not match project root' "$work/foreign-api.log"
+for file in "${generated_files[@]}"; do
+  cmp "$work/generated-before/$file" "$work/migrated/$file"
+done
 printf 'Required CMake CLI migration passed: scope, temporal sources, refreshed File API, literal argv, test success and test failure.\n'

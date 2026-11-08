@@ -281,7 +281,9 @@ system/home Bazel rc files, and uses a separate output root. Optional
 it between simultaneous runs. It does not establish Gradle, File API test import,
 arbitrary CMake logic, external corpus, or native Windows compatibility. A separate
 configured File API case checks that normal validation refreshes replies before
-capture; it does not establish general File API test import. The CLI's
+capture and rejects another source root without replacing existing files. An auto
+preview tripwire proves that tool selection does not execute a version probe.
+These checks do not establish general File API test import. The CLI's
 normal migration validation still builds only; the harness explicitly runs tests.
 
 ### Required Gradle/Java CLI migration
@@ -327,6 +329,19 @@ dependencies, compile-only configurations, dynamic versions and non-JUnit-4 test
 semantics fail visibly. See [architecture](docs/architecture.md) for the exact
 source/test subset. Normal CLI validation remains build-only; the harness runs
 Gradle/Bazel tests explicitly.
+
+## Core report consumers
+
+Use `migrate_with_report`/`validate_with_report` for stage results and build evidence.
+Inspect `failure.report` on error; completed stages are retained, and application
+failure does not imply rollback. `report.preview` contains native file intent or
+external command/scaffolding intent; the CLI owns printing it. The legacy unit
+wrappers discard this data and no longer print preview content.
+
+Build claims remain unknown when skipped or missing, including an empty required
+set. CMake requires original/generated builds; Gradle and workspace validation
+require the generated build. A successful build claim does not establish test or
+compiler equivalence. Preserve that distinction in new adapters and UI output.
 
 ## Test behavior and failures
 

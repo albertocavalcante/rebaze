@@ -214,7 +214,8 @@ The lowering report currently records native CMake direct input-link mappings an
 explicit omission reasons. It does not enumerate provider transitives; an empty
 JVM report does not claim equivalent semantics or complete coverage. A successful
 lowering report is neither a successful write nor a successful build/test result.
-Structured core stages and mandatory verification claims are the next R04 slice.
+Core stage results and verification evidence use the separate report boundary
+below; lowering does not promote either kind of evidence.
 
 `generate`, `generate_from_cmake*` and `CMakeGeneration::render` retain HashMap
 compatibility wrappers with identical successful bytes; their iteration order is
@@ -223,6 +224,54 @@ not guaranteed. `write_files` validates through an owned bundle and delegates to
 legacy batches now fail before writes. Application retains the existing per-file
 replacement contract, partial-batch failure behavior and concurrency limitations;
 journaled recovery remains R05/R06 work.
+
+## Core stages, previews and build evidence
+
+`rebaze_core::migrate_with_report` and `validate_with_report` return structured
+`MigrationReport` data. Failures retain the completed/failed stages and original
+error in `MigrationFailure`; a failed application can leave a partial batch, so
+reported output paths describe intent rather than recovery or successful writes.
+Legacy `migrate`/`validate` keep unit-returning execution wrappers but discard report
+data. They no longer print previews; callers needing preview data use the report
+APIs. `rebaze-cli` owns preview presentation and sends its tracing to stderr.
+Native preview source text goes to stdout through a fallible writer.
+
+Reports distinguish workspace inspection, build-system/generator selection,
+configuration support, capture, preparation, discovery, rendering, application,
+external generation and build stages. A passed discovery stage means capture
+completed, not that every package is available: request/policy and snapshot
+outcomes remain explicit. Pkg-config limits are currently five seconds per command
+and 256 KiB per stream; this is not a whole-operation budget. Build/external process
+bounds remain R08 work.
+
+Source evidence records actual CMake syntax, configured File API or Gradle capture.
+Fallback to source is reported as source capture. Configured capture rejects a
+source root different from the selected project. `FileApiCapture` retains the
+configuration selected from the codemodel separately from requested configuration
+intent, using a named/unnamed observed value. Missing capture is distinct from an
+observed unnamed configuration. The existing first-configuration default selection
+policy is unchanged.
+Normal File API validation refreshes before capture; preview/unsafe mode reads
+existing replies. These fields do not claim configuration or compiler equivalence.
+
+`ClaimResults` starts with nonempty required build claims in core. Missing results,
+explicit unknown results and an empty required set aggregate to `Unknown`; a
+required failure takes precedence. CMake migration requires original and generated
+build results; Gradle migration and workspace validation require the generated
+build. These claims record command success only, not tests or semantic equivalence.
+Preview and `--unsafe-mode` leave unexecuted claims unknown. CLI failures remain
+nonzero, and missing required evidence without an explicit validation skip is an
+error; deliberate skips never print a verification pass.
+
+Preview reads inputs and can perform the existing bounded pkg-config discovery.
+It executes no builds or Bazelle version probes and applies no generated files.
+Automatic tool selection inspects PATH candidates (including Unix execute bits),
+not command success. Actual execution is checked only in the external stage.
+Bazelle preview returns planned argument vectors and conditional scaffolding:
+create if absent, preserving existing files and requiring an existing Bazel 9
+version. It supplies no complete validated bundle. Normal Bazelle commands and
+conditional scaffolding still use their existing external/per-file write paths;
+R05/R06 recovery does not yet cover them. Normal child builds still inherit stdio.
 
 ## Starlark generation
 
