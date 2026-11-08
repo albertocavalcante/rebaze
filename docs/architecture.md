@@ -33,7 +33,12 @@ workspace libraries or authorize publication.
 
 The current target model has one compile-option list per target. File API capture
 rejects multiple compile groups and generated target inputs rather than merging
-per-source settings or dropping generated headers. Compiler options retain order,
+per-source settings or dropping generated headers. It also rejects build-directory
+include roots and non-compiled inputs outside its explicit header subset
+(`h`, `H`, `hh`, `hpp`, `hxx`, `h++`, `inc`, `inl`, `ipp`, `tpp`). Compile-group
+indices must name a captured group; arbitrary documentation or header-only C++
+files never become compiler sources just because they appear in a target.
+Compiler options retain order,
 operands and repetitions during capture. Later native filtering and toolchain
 selection still have the semantic limits described in the roadmap; this is not
 a general compiler-equivalence guarantee. File API test import remains unimplemented.
@@ -48,7 +53,8 @@ editing requirement exceeds it.
 Buildport is a separate Go research prototype with configured capture, ordered
 compiler interpretation, explicit verification claims and pilot CMake/Bazel
 lowering. The owner's `cmake-file-api-go` SDK preserves captured raw JSON alongside
-typed configured observations; CMake/Starlark CST libraries supply syntax and rewrite operations.
+typed configured observations. CMake/Starlark CST libraries supply syntax and
+rewrite operations.
 Those libraries are not Rust runtime dependencies. The SDK's successful capture
 or matching query identity is not a successful configure, build or test result.
 

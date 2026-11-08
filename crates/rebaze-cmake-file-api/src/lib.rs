@@ -31,6 +31,21 @@ pub enum FileApiError {
     BuildDirectoryInclude { target: String, path: PathBuf },
 
     #[error(
+        "target {target:?} contains non-compiled input {path:?}; native migration cannot preserve this input role yet"
+    )]
+    UncompiledInput { target: String, path: PathBuf },
+
+    #[error(
+        "target {target:?} input {path:?} references compile group {index}, but only {groups} groups were captured"
+    )]
+    InvalidCompileGroup {
+        target: String,
+        path: PathBuf,
+        index: usize,
+        groups: usize,
+    },
+
+    #[error(
         "target {target:?} has {groups} compile groups; per-source compile settings are not supported by native migration"
     )]
     MultipleCompileGroups { target: String, groups: usize },
@@ -291,6 +306,35 @@ fn validate_target_capture(
             path: source.path.clone(),
         });
     }
+    for source in &target.sources {
+        if let Some(index) = source.compile_group_index
+            && index >= target.compile_groups.len()
+        {
+            return Err(FileApiError::InvalidCompileGroup {
+                target: target.name.clone(),
+                path: source.path.clone(),
+                index,
+                groups: target.compile_groups.len(),
+            });
+        }
+    }
+    // CMake lists IDE/documentation inputs alongside actual compiler inputs.
+    // Only the explicit header subset can currently keep its non-compiled role
+    // in the target model; never turn arbitrary metadata into a compiler source.
+    if let Some(source) = target.sources.iter().find(|source| {
+        source.compile_group_index.is_none()
+            && !source.path.extension().is_some_and(|extension| {
+                matches!(
+                    extension.to_str(),
+                    Some("h" | "H" | "hh" | "hpp" | "hxx" | "h++" | "inc" | "inl" | "ipp" | "tpp")
+                )
+            })
+    }) {
+        return Err(FileApiError::UncompiledInput {
+            target: target.name.clone(),
+            path: source.path.clone(),
+        });
+    }
     // The current model has one option list per target. Combining groups would
     // apply one source's settings to another, so require a representable capture.
     if target.compile_groups.len() > 1 {
@@ -463,6 +507,7 @@ mod tests {
 
         let mut lib_source = objects::codemodel_v2::Source::default();
         lib_source.path = PathBuf::from("/repo/src/lib.cpp");
+        lib_source.compile_group_index = Some(0);
 
         let mut include = Include::default();
         include.path = PathBuf::from("/repo/include");
@@ -488,6 +533,7 @@ mod tests {
 
         let mut exe_source = objects::codemodel_v2::Source::default();
         exe_source.path = PathBuf::from("/repo/src/main.cpp");
+        exe_source.compile_group_index = Some(0);
 
         let mut dep = Dependency::default();
         dep.id = "lib-id".to_string();
@@ -498,6 +544,7 @@ mod tests {
         exe_target.type_name = "EXECUTABLE".to_string();
         exe_target.paths = exe_paths;
         exe_target.sources = vec![exe_source];
+        exe_target.compile_groups = vec![CompileGroup::default()];
         exe_target.dependencies = vec![dep];
 
         let mut min_version = MinimumCmakeVersion::default();
@@ -620,6 +667,59 @@ mod tests {
             Err(FileApiError::GeneratedInput { target, path })
                 if target == "zlib" && path == Path::new("/build/zconf.h")
         ));
+    }
+
+    #[test]
+    fn uncompiled_metadata_is_not_emitted_as_a_compiler_source() {
+        for filename in ["ChangeLog.md", "header_only.cpp"] {
+            let mut source = objects::codemodel_v2::Source::default();
+            source.path = PathBuf::from(filename);
+            let mut target = Target::default();
+            target.name = "fmt".into();
+            target.type_name = "STATIC_LIBRARY".into();
+            target.sources = vec![source];
+            assert!(matches!(
+                project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()),
+                Err(FileApiError::UncompiledInput { target, path })
+                    if target == "fmt" && path == Path::new(filename)
+            ));
+        }
+    }
+
+    #[test]
+    fn supported_uncompiled_headers_remain_available() {
+        let mut source = objects::codemodel_v2::Source::default();
+        source.path = PathBuf::from("tinyxml2.h");
+        let mut target = Target::default();
+        target.name = "tinyxml2".into();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.sources = vec![source];
+        let project =
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()).unwrap();
+        assert_eq!(project.libraries[0].sources, ["tinyxml2.h"]);
+    }
+
+    #[test]
+    fn explicit_compiled_members_require_a_valid_group_index() {
+        for index in [0, 1, usize::MAX] {
+            let mut source = objects::codemodel_v2::Source::default();
+            source.path = PathBuf::from("format.cc");
+            source.compile_group_index = Some(index);
+            let mut target = Target::default();
+            target.type_name = "STATIC_LIBRARY".into();
+            target.sources = vec![source];
+            target.compile_groups = vec![CompileGroup::default()];
+            let result =
+                project_from_codemodel(&target_codemodel(target), &FileApiOptions::default());
+            if index == 0 {
+                assert_eq!(result.unwrap().libraries[0].sources, ["format.cc"]);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(FileApiError::InvalidCompileGroup { .. })
+                ));
+            }
+        }
     }
 
     #[test]
