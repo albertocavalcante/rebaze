@@ -326,7 +326,7 @@ fn validate_target_capture(
             && !source.path.extension().is_some_and(|extension| {
                 matches!(
                     extension.to_str(),
-                    Some("h" | "H" | "hh" | "hpp" | "hxx" | "h++" | "inc" | "inl" | "ipp" | "tpp")
+                    Some("h" | "H" | "hh" | "hpp" | "hxx" | "h++" | "inc" | "inl" | "ipp")
                 )
             })
     }) {
@@ -671,7 +671,7 @@ mod tests {
 
     #[test]
     fn uncompiled_metadata_is_not_emitted_as_a_compiler_source() {
-        for filename in ["ChangeLog.md", "header_only.cpp"] {
+        for filename in ["ChangeLog.md", "header_only.cpp", "template.tpp"] {
             let mut source = objects::codemodel_v2::Source::default();
             source.path = PathBuf::from(filename);
             let mut target = Target::default();

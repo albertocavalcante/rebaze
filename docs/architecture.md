@@ -35,7 +35,7 @@ The current target model has one compile-option list per target. File API captur
 rejects multiple compile groups and generated target inputs rather than merging
 per-source settings or dropping generated headers. It also rejects build-directory
 include roots and non-compiled inputs outside its explicit header subset
-(`h`, `H`, `hh`, `hpp`, `hxx`, `h++`, `inc`, `inl`, `ipp`, `tpp`). Compile-group
+(`h`, `H`, `hh`, `hpp`, `hxx`, `h++`, `inc`, `inl`, `ipp`). Compile-group
 indices must name a captured group; arbitrary documentation or header-only C++
 files never become compiler sources just because they appear in a target.
 Compiler options retain order,
