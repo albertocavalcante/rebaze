@@ -1,12 +1,18 @@
-//! Opt-in guarded single-file application on Linux and macOS.
+//! Opt-in guarded single-file and batch application on Linux and macOS.
 //!
 //! The legacy bundle writer is unchanged. Callers explicitly choose the limited
 //! POSIX metadata contract. Original entries are retained even after success;
 //! recovery never overwrites a recreated destination. See the application guide
 //! for filesystem, concurrency and metadata assumptions.
 
+mod batch;
 mod fs;
 mod guard;
+
+pub use batch::{
+    BatchEditPlan, BatchOutcome, BatchReceipt, ConflictReason, OutputDisposition, OutputReport,
+    recover_bundle,
+};
 
 use std::fs::Permissions;
 use std::io::{self, Write};
@@ -117,6 +123,12 @@ pub enum ApplyOutcome {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApplyError {
+    #[error("output {path}: {source}")]
+    Output {
+        path: OutputPath,
+        #[source]
+        source: Box<Self>,
+    },
     #[error("invalid application plan or recovery record: {0}")]
     Invalid(&'static str),
     #[error("invalid recovery record: {reason}; recovery data retained at {retained}")]
@@ -244,33 +256,13 @@ impl FileEditPlan {
         }
         guard.io(hook(Point::BaselineChecked))?;
         let active = guard.io(guard.directory.make_child("active"))?;
-        let mut staged = guard.io(active.create("after"))?;
-        guard.io(staged.write_all(self.content.as_bytes()))?;
-        {
-            let attributes = self.manifest.attributes;
-            let metadata = guard.io(staged.metadata())?;
-            if metadata.uid() != attributes.uid {
-                return Err(guard.conflict("staging cannot preserve the destination owner"));
-            }
-            if metadata.gid() != attributes.gid {
-                guard.io(rustix::fs::fchown(
-                    &staged,
-                    None,
-                    Some(rustix::fs::Gid::from_raw(attributes.gid)),
-                )
-                .map_err(Into::into))?;
-            }
-            guard.io(staged.set_permissions(Permissions::from_mode(attributes.mode)))?;
-        }
-        guard.io(hook(Point::StageSync))?;
-        guard.io(staged.sync_all())?;
-        drop(staged);
-        let staged = guard
-            .io(active.fingerprint("after"))?
-            .ok_or_else(|| guard.conflict("staged file disappeared"))?;
-        if !matches_intent(&self.manifest, &staged) {
-            return Err(guard.conflict("staged bytes or metadata differ from the captured intent"));
-        }
+        let staged = stage_file(
+            &guard,
+            &active,
+            &self.manifest,
+            self.content.as_bytes(),
+            hook,
+        )?;
         let plan_identity = manifest_digest(&self.manifest)?;
         let journal = Journal {
             plan: self.manifest,
@@ -307,6 +299,43 @@ impl FileEditPlan {
     }
 }
 
+fn stage_file(
+    guard: &Guard,
+    active: &Directory,
+    manifest: &Manifest,
+    content: &[u8],
+    hook: &mut impl FnMut(Point) -> io::Result<()>,
+) -> Result<Fingerprint, ApplyError> {
+    let mut staged = guard.io(active.create("after"))?;
+    guard.io(staged.write_all(content))?;
+    {
+        let attributes = manifest.attributes;
+        let metadata = guard.io(staged.metadata())?;
+        if metadata.uid() != attributes.uid {
+            return Err(guard.conflict("staging cannot preserve the destination owner"));
+        }
+        if metadata.gid() != attributes.gid {
+            guard.io(rustix::fs::fchown(
+                &staged,
+                None,
+                Some(rustix::fs::Gid::from_raw(attributes.gid)),
+            )
+            .map_err(Into::into))?;
+        }
+        guard.io(staged.set_permissions(Permissions::from_mode(attributes.mode)))?;
+    }
+    guard.io(hook(Point::StageSync))?;
+    guard.io(staged.sync_all())?;
+    drop(staged);
+    let staged = guard
+        .io(active.fingerprint("after"))?
+        .ok_or_else(|| guard.conflict("staged file disappeared"))?;
+    if !matches_intent(manifest, &staged) {
+        return Err(guard.conflict("staged bytes or metadata differ from the captured intent"));
+    }
+    Ok(staged)
+}
+
 /// Reconcile the one active transaction using actual file identities and bytes.
 /// No active transaction returns `None`; completed archives are never removed.
 pub fn recover(root: &Path) -> Result<Option<ApplyReceipt>, ApplyError> {
@@ -322,6 +351,18 @@ fn recover_with(
         return Ok(None);
     }
     let active = guard.io(guard.directory.child("active"))?;
+    for name in guard.io(active.entry_names(256))? {
+        if !matches!(
+            name.as_str(),
+            "after" | "before" | "manifest.json" | "restore.json"
+        ) && !pending_record(&name, "manifest.json")
+            && !pending_record(&name, "restore.json")
+        {
+            return Err(guard.invalid(
+                "unrecognized single-file layout; batch journals require recover_bundle",
+            ));
+        }
+    }
     if !guard.io(active.exists("manifest.json"))? {
         if guard.io(active.exists("before"))? {
             return Err(guard.conflict("backup exists without durable intent"));
@@ -379,6 +420,17 @@ fn restore(
     changed: bool,
     hook: &mut impl FnMut(Point) -> io::Result<()>,
 ) -> Result<ApplyReceipt, ApplyError> {
+    let outcome = restore_entry(guard, active, journal, changed, hook)?;
+    finish(guard, active, journal, outcome, hook)
+}
+
+fn restore_entry(
+    guard: &Guard,
+    active: &Directory,
+    journal: &Journal,
+    changed: bool,
+    hook: &mut impl FnMut(Point) -> io::Result<()>,
+) -> Result<ApplyOutcome, ApplyError> {
     let (parent, name) = guard.parent(&journal.plan)?;
     if !guard.io(active.exists("restore.json"))? {
         let record = RestoreRecord {
@@ -402,7 +454,7 @@ fn restore(
     } else {
         ApplyOutcome::Restored
     };
-    finish(guard, active, journal, outcome, hook)
+    Ok(outcome)
 }
 
 fn finish(
@@ -433,6 +485,15 @@ fn archive(
     outcome: ApplyOutcome,
     hook: &mut impl FnMut(Point) -> io::Result<()>,
 ) -> Result<ApplyReceipt, ApplyError> {
+    let retained = archive_directory(guard, active, hook)?;
+    Ok(ApplyReceipt { outcome, retained })
+}
+
+fn archive_directory(
+    guard: &Guard,
+    active: &Directory,
+    hook: &mut impl FnMut(Point) -> io::Result<()>,
+) -> Result<PathBuf, ApplyError> {
     guard.io(hook(Point::BeforeArchive))?;
     // Retain originals, staged files and intent even on success. Never unlink
     // recovery content merely because a mutable destination looked correct once.
@@ -448,7 +509,20 @@ fn archive(
             retained: retained.clone(),
             source,
         })?;
-    Ok(ApplyReceipt { outcome, retained })
+    Ok(retained)
+}
+
+fn pending_record(name: &str, record: &str) -> bool {
+    let Some(suffix) = name
+        .strip_prefix(".pending-")
+        .and_then(|part| part.strip_prefix(record))
+        .and_then(|part| part.strip_prefix('-'))
+    else {
+        return false;
+    };
+    suffix
+        .parse::<u8>()
+        .is_ok_and(|attempt| attempt < 64 && attempt.to_string() == suffix)
 }
 
 fn validate_path(path: &str) -> Result<(), ApplyError> {
@@ -514,6 +588,10 @@ fn matches_intent(plan: &Manifest, staged: &Fingerprint) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Point {
+    Batch {
+        file: Option<usize>,
+        phase: batch::Phase,
+    },
     Record(RecordKind, fs::RecordPoint),
     BaselineChecked,
     StageSync,
@@ -535,6 +613,11 @@ enum RecordKind {
     Intent,
     Restore,
 }
+
+#[cfg(test)]
+// A fork briefly inherits unrelated flock descriptors until exec. Tests that
+// create processes take the write guard; filesystem-only cases stay parallel.
+static PROCESS_SPAWN: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 #[cfg(test)]
 mod tests;

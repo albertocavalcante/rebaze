@@ -7,11 +7,6 @@ use std::process::Command;
 use super::fs::MAX_RECORD_BYTES;
 use super::*;
 
-// A fork can briefly retain another thread's flock descriptor before exec
-// closes CLOEXEC handles. Keep subprocess creation outside other tests' lock
-// lifetimes; ordinary filesystem tests remain parallel under a shared guard.
-static PROCESS_SPAWN: std::sync::RwLock<()> = std::sync::RwLock::new(());
-
 fn plan(root: &Path, content: &str) -> FileEditPlan {
     FileEditPlan::capture(
         root,
@@ -355,6 +350,34 @@ fn exposed_metadata_directory_and_hard_linked_lock_are_rejected() {
     assert!(plan(root.path(), "generated").apply().is_err());
     assert_eq!(fs::read_to_string(outside).unwrap(), "outside");
     assert!(!root.path().join("BUILD.bazel").exists());
+}
+
+#[test]
+fn single_file_recovery_never_abandons_an_unrecognized_batch_backup() {
+    let _spawn_guard = PROCESS_SPAWN.read().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let destination = root.path().join("BUILD.bazel");
+    fs::write(&destination, "baseline").unwrap();
+    let guard = Guard::open(root.path()).unwrap();
+    let active = guard.directory.make_child("active").unwrap();
+    let entries = active.make_child("entries").unwrap();
+    let entry = entries.make_child("0000").unwrap();
+    fs::rename(
+        &destination,
+        root.path().join(".rebaze-apply/active/entries/0000/before"),
+    )
+    .unwrap();
+    drop(entry);
+    drop(guard);
+    assert!(matches!(
+        recover(root.path()),
+        Err(ApplyError::InvalidRecord { .. })
+    ));
+    assert!(!destination.exists());
+    assert_eq!(
+        fs::read_to_string(root.path().join(".rebaze-apply/active/entries/0000/before")).unwrap(),
+        "baseline"
+    );
 }
 
 #[test]
