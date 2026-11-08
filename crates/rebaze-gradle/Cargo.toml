@@ -11,9 +11,9 @@ description = "Gradle build file parser for rebaze"
 workspace = true
 
 [dependencies]
+rebaze-input.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
-serde.workspace = true
-walkdir.workspace = true
-tracing.workspace = true
-globset.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

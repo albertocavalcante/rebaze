@@ -343,6 +343,15 @@ semantics fail visibly. See [architecture](docs/architecture.md) for the exact
 source/test subset. Normal CLI validation remains build-only; the harness runs
 Gradle/Bazel tests explicitly.
 
+Gradle capture shares validated file/aggregate/attempt/operation/depth budgets and
+an 8,192-entry directory budget across all modules. Module expansion is capped at
+1,024 paths, including implicit ancestors; borrowed Gradle/Java source is capped at
+1 MiB. `rebaze_gradle::parse_with_limits` accepts an explicit IO profile. Traversal
+rejects descendant symlinks/special files and does not silently default on read
+errors. Module-relative source paths are preserved; Unix filenames with literal
+backslashes require explicit mapping. See the architecture guide for bounds and
+remaining capture/snapshot limits.
+
 ## Core report consumers
 
 For opt-in single-file and existing-parent batch application, see the

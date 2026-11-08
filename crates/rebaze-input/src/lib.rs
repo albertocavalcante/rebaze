@@ -5,7 +5,7 @@
 //! authoritative across nominal pathname changes; it is not an input snapshot.
 //!
 //! Defaults: 1 MiB per file, 64 MiB total consumed bytes, 4,096 file attempts,
-//! 65,536 logical operations and 64 relative path components. Oversize proof
+//! 65,536 logical operations, 8,192 directory entries and 64 relative path components. Oversize proof
 //! bytes and invalid UTF-8 remain charged. Callers can choose validated limits.
 //! Symlink policy is explicit; absolute link targets are unsupported. Capabilities
 //! do not establish hard-link/mount provenance or deadlines for regular-file IO.
@@ -29,4 +29,4 @@ mod limits;
 mod reader;
 
 pub use limits::{LimitKind, ReadLimits, ReadLimitsError, Usage};
-pub use reader::{EntryKind, ReadError, RootReader, SymlinkPolicy};
+pub use reader::{DirectoryEntry, EntryKind, ReadError, RootReader, SymlinkPolicy};

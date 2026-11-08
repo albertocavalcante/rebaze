@@ -36,7 +36,6 @@ toml = "0.8"
 
 # File system
 walkdir = "2"
-globset = "0.4"
 
 # Terminal
 colored = "3"

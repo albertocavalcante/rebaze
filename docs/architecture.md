@@ -14,7 +14,7 @@ work; this page describes the implementation that exists now.
 | `rebaze-cmake-file-api` | Adapt existing CMake File API replies into the shared CMake project model                  |
 | `rebaze-gradle`         | Extract project information from supported Gradle Groovy/Kotlin forms                      |
 | `rebaze-bazel`          | Map projects/configuration to generated files and write output files                       |
-| `rebaze-input`          | Counted text reads, shared IO budgets and explicit project-root capabilities                |
+| `rebaze-input`          | Counted text/directory reads, shared IO budgets and explicit project-root capabilities                |
 | `rebaze-starlark`       | Typed Serde rule models, identifiers/references, and Starlark file composition             |
 | `rebaze-bcr`            | Built-in mappings from known C/C++ packages to Bazel Central Registry modules              |
 | `rebaze-bzlmod`         | Standalone MODULE parsing, registry access, dependency resolution, and graph APIs          |
@@ -24,8 +24,8 @@ does not currently use it as a complete Bazel resolver. Its lockfile API is
 reserved, and several override/resolution modes return explicit errors.
 
 `rebaze-input` is a leaf IO library; `rebaze-cmake` has a versioned dependency on
-it. A registry release must make that input version available before publishing
-CMake. Local archive-consumer checks use an explicit local patch for this
+it, as does `rebaze-gradle`. A registry release must make that input version
+available before publishing either frontend. Local archive-consumer checks use an explicit local patch for this
 unpublished dependency; they do not establish crates.io readiness for all
 workspace libraries or authorize publication.
 
@@ -182,8 +182,9 @@ reader to a replacement directory. Windows capability handles instead prevent
 renaming the live root; native Windows behavior has not been executed here.
 This is neither an immutable snapshot nor proof of
 hard-link/mount provenance. Nonblocking open avoids a FIFO replacement hang; it
-does not give regular/network files a deadline. Gradle, File API, lock/network
-readers, directory enumeration, expansion and output budgets remain R07–R09 work.
+does not give regular/network files a deadline. Gradle capture also uses this
+reader, as described below. File API and other lock/network readers, expansion,
+diagnostics and output budgets remain R07–R09 work.
 This does not claim a process deadline or a bound on all parser work. Chumsky's
 existing stack-growth support remains enabled; a reproduced stack overflow is
 not the basis for these limits.
@@ -394,6 +395,34 @@ destination-availability validation; complete native link semantics remain R10
 work.
 
 ## Gradle Java generation
+
+Gradle capture opens its selected root once and shares `ReadLimits` across
+settings, build files, complete Java test sources, the Maven lock and source
+traversal. The defaults are 1 MiB/file, 64 MiB consumed bytes, 4,096 file attempts,
+65,536 logical operations, 8,192 directory entries and 64 relative path components.
+`parse_with_limits` selects validated IO limits. The pure shared Gradle/Java lexer
+independently rejects source above 1 MiB before token allocation. Module expansion
+is capped at 1,024 paths including root and implicit ancestors; normalized project
+paths cannot exceed 4,096 bytes.
+
+Traversal is iterative. Every streamed entry, including ignored files and errors,
+is charged before filtering or sorting. The first over-budget proof entry remains
+charged. Returned directory entries own names/kinds, not directory handles; queued
+paths reopen through strict nofollow traversal. Module and source descendants,
+including internal module aliases, reject symlinks and special files. Only a
+missing current optional source prefix means an empty source tree; unreadable,
+non-directory or broken-link prefixes are errors. Missing build files retain
+module defaults and simultaneous Groovy/Kotlin files remain ambiguous.
+
+Reader paths are root-relative; module source/resource strings stay module-relative.
+Ignored non-Java file names remain native strings through filtering. Selected paths
+must be UTF-8, and Unix filenames containing literal backslashes are rejected rather
+than silently changed into different path components. Enumeration records current
+entry kinds; it does not make source files immutable for later builds. Windows
+and junction behavior still require native qualification. Library archives use a
+versioned input dependency; unpublished-input consumer checks require an explicit
+local patch. These checks do not establish registry publication readiness.
+
 
 Gradle input now has one `GradleModule` per declared project, including implicit
 parents of nested `include` paths. Discovery reads settings/build files and
