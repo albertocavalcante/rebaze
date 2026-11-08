@@ -505,7 +505,7 @@
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "REPO_MAPPING:rules_rust+,rules_rust rules_rust+",
           "FILE:@@//Cargo.lock 56819da016aecc0ffe7eccc2f8e55ef59910f967c9b3e200565664e77d938e6e",
-          "FILE:@@//Cargo.toml f07927e32346031b9fb4e10fe543980dd1d8874dd630c883247bf7db75accd05",
+          "FILE:@@//Cargo.toml b42bb8bc6b0f22859e56279f31165c27488d4d6a6476ffc33d24dfa64744abe8",
           "FILE:@@//crates/rebaze-bazel/Cargo.toml 71733323ddb4f786f816392df0d71e2ba1dd744d0d875692eb0eeebd258115fc",
           "FILE:@@//crates/rebaze-bcr/Cargo.toml 915a8a25e9d54ea417b3288c162337782efdaa7f4cec6637e2c1016cbbf06cad",
           "FILE:@@//crates/rebaze-bzlmod/Cargo.toml ce9ac1bfac9011f594cf2d923ce915707882bb65e6e414a8067a5514b9358586",

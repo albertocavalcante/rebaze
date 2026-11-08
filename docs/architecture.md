@@ -23,6 +23,12 @@ work; this page describes the implementation that exists now.
 does not currently use it as a complete Bazel resolver. Its lockfile API is
 reserved, and several override/resolution modes return explicit errors.
 
+`rebaze-input` is a leaf IO library; `rebaze-cmake` has a versioned dependency on
+it. A registry release must make that input version available before publishing
+CMake. Local archive-consumer checks use an explicit local patch for this
+unpublished dependency; they do not establish crates.io readiness for all
+workspace libraries or authorize publication.
+
 ## Native migration path
 
 1. The CLI loads explicit or discovered configuration and calls `rebaze-core`.
@@ -171,8 +177,10 @@ before and after reading; detected length/modification changes fail explicitly.
 Relative CMake symlinks may resolve beneath the original root, including internal
 `../` link targets. Absolute link targets, escapes, lexical parent components and
 special files are rejected. Canonical relative paths detect repeated directories;
-they are not inode identities. Root renames do not redirect the opened reader to
-a replacement directory. This is neither an immutable snapshot nor proof of
+they are not inode identities. On Unix, root renames do not redirect the opened
+reader to a replacement directory. Windows capability handles instead prevent
+renaming the live root; native Windows behavior has not been executed here.
+This is neither an immutable snapshot nor proof of
 hard-link/mount provenance. Nonblocking open avoids a FIFO replacement hang; it
 does not give regular/network files a deadline. Gradle, File API, lock/network
 readers, directory enumeration, expansion and output budgets remain R07–R09 work.

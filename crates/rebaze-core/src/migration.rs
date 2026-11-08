@@ -487,7 +487,7 @@ mod tests {
                 outcome: StageOutcome::Failed { .. }
             })
         ));
-        assert!(failure.report.outputs.is_empty());
+        assert_eq!(failure.report.outputs, []);
         assert_eq!(std::fs::read_to_string(output).unwrap(), "user output");
         assert!(!temp.path().join("MODULE.bazel").exists());
         assert!(!temp.path().join(".rebaze-apply").exists());

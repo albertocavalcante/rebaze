@@ -11,7 +11,7 @@ use crate::{LimitKind, ReadLimits, Usage};
 pub enum SymlinkPolicy {
     /// Relative links may resolve only within the original opened root.
     WithinRoot,
-    /// Every ancestor and the final file must be free of symlinks.
+    /// Every descendant component, including the final file, rejects symlinks.
     Reject,
 }
 
@@ -25,6 +25,8 @@ pub enum EntryKind {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReadError {
+    #[error("relative input path is too long: limit 4096 bytes, observed {bytes}")]
+    PathTooLong { bytes: usize },
     #[error("invalid relative input path: {0:?}")]
     InvalidPath(PathBuf),
     #[error("input {path:?} exceeds {kind} budget: limit {limit}, observed {observed}")]
@@ -57,7 +59,7 @@ impl ReadError {
         let kind = match &self {
             Self::Io { source, .. } => source.kind(),
             Self::Limit { .. } => io::ErrorKind::FileTooLarge,
-            Self::InvalidPath(_) => io::ErrorKind::InvalidInput,
+            Self::InvalidPath(_) | Self::PathTooLong { .. } => io::ErrorKind::InvalidInput,
             Self::NotRegular(_) | Self::Changed(_) | Self::Utf8 { .. } => {
                 io::ErrorKind::InvalidData
             }
@@ -301,9 +303,16 @@ impl RootReader {
     }
 
     fn begin(&mut self, path: &Path, directory: bool) -> Result<(), ReadError> {
+        charge(
+            &mut self.usage.operations,
+            self.limits.operations,
+            path,
+            LimitKind::Operations,
+        )?;
         let mut depth = 0_usize;
-        if path.as_os_str().as_encoded_bytes().len() > 4096 {
-            return Err(ReadError::InvalidPath(path.into()));
+        let path_bytes = path.as_os_str().as_encoded_bytes().len();
+        if path_bytes > 4096 {
+            return Err(ReadError::PathTooLong { bytes: path_bytes });
         }
         for component in path.components() {
             match component {
@@ -325,12 +334,7 @@ impl RootReader {
                 depth as u64,
             ));
         }
-        charge(
-            &mut self.usage.operations,
-            self.limits.operations,
-            path,
-            LimitKind::Operations,
-        )
+        Ok(())
     }
 
     fn file_metadata(&self, path: &Path) -> Result<Metadata, ReadError> {
@@ -388,16 +392,23 @@ fn entry_kind(metadata: &Metadata) -> EntryKind {
 }
 fn io_error(path: &Path, source: io::Error) -> ReadError {
     ReadError::Io {
-        path: path.into(),
+        path: error_path(path),
         source,
     }
 }
 fn limit(path: &Path, kind: LimitKind, bound: usize, observed: u64) -> ReadError {
     ReadError::Limit {
-        path: path.into(),
+        path: error_path(path),
         kind,
         limit: bound as u64,
         observed,
+    }
+}
+fn error_path(path: &Path) -> PathBuf {
+    if path.as_os_str().as_encoded_bytes().len() > 4096 {
+        PathBuf::from("<oversized input path>")
+    } else {
+        path.into()
     }
 }
 fn charge(value: &mut usize, bound: usize, path: &Path, kind: LimitKind) -> Result<(), ReadError> {

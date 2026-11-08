@@ -92,7 +92,7 @@ fn failed_probes_attempts_depth_and_operation_limits_are_charged() {
     ));
     let limits = ReadLimits::new(4, 8, 2)
         .unwrap()
-        .with_traversal(2, 1)
+        .with_traversal(3, 1)
         .unwrap();
     let mut input = RootReader::open(root.path(), limits, SymlinkPolicy::Reject).unwrap();
     assert!(matches!(
@@ -161,6 +161,7 @@ fn actual_read_counts_bound_growing_streams_and_interrupted_reads() {
 }
 
 #[test]
+#[cfg(unix)]
 fn opened_root_survives_rename_without_reading_a_replacement_root() {
     let parent = tempfile::tempdir().unwrap();
     let root = parent.path().join("root");
@@ -171,6 +172,44 @@ fn opened_root_survives_rename_without_reading_a_replacement_root() {
     fs::create_dir(&root).unwrap();
     fs::write(root.join("file"), "new").unwrap();
     assert_eq!(input.read_text(Path::new("file")).unwrap(), "old");
+}
+
+#[test]
+#[cfg(windows)]
+fn live_windows_root_rejects_rename_and_reads_the_original() {
+    let parent = tempfile::tempdir().unwrap();
+    let root = parent.path().join("root");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("file"), "old").unwrap();
+    let mut input = reader(&root, 4, 8, 2);
+    assert!(fs::rename(&root, parent.path().join("moved")).is_err());
+    assert_eq!(input.read_text(Path::new("file")).unwrap(), "old");
+}
+
+#[test]
+fn rejected_paths_are_charged_without_copying_oversized_diagnostics() {
+    let root = tempfile::tempdir().unwrap();
+    let limits = ReadLimits::default().with_traversal(2, 1).unwrap();
+    let mut input = RootReader::open(root.path(), limits, SymlinkPolicy::Reject).unwrap();
+    assert!(matches!(
+        input.read_text(Path::new("../escape")),
+        Err(ReadError::InvalidPath(_))
+    ));
+    let oversized = "x".repeat(1024 * 1024);
+    let error = input.read_text(Path::new(&oversized)).unwrap_err();
+    assert!(matches!(error, ReadError::PathTooLong { bytes: 1_048_576 }));
+    assert!(format!("{error:?}").len() < 128);
+    let error = input.kind(Path::new(&oversized)).unwrap_err();
+    assert!(matches!(
+        error,
+        ReadError::Limit {
+            kind: LimitKind::Operations,
+            ..
+        }
+    ));
+    assert!(format!("{error:?}").len() < 256);
+    assert_eq!(input.usage().operations(), 2);
+    assert_eq!(input.usage().file_attempts(), 0);
 }
 
 #[test]
