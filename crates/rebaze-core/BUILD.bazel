@@ -10,6 +10,7 @@ rust_library(
         "//crates/rebaze-cmake",
         "//crates/rebaze-cmake-file-api",
         "//crates/rebaze-gradle",
+        "//crates/rebaze-input",
         "@crates//:anyhow",
         "@crates//:serde",
         "@crates//:serde_json",

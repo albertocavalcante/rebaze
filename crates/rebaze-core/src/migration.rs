@@ -435,10 +435,7 @@ mod tests {
     #[test]
     fn source_budget_rejections_preserve_existing_output_before_application() {
         for (source, reason) in [
-            (
-                format!("#{}", "x".repeat(1024 * 1024)),
-                "source byte budget",
-            ),
+            (format!("#{}", "x".repeat(1024 * 1024)), "file bytes"),
             (
                 format!("message({}leaf{})", "(".repeat(33), ")".repeat(33)),
                 "nesting budget",
@@ -462,6 +459,38 @@ mod tests {
             assert!(!temp.path().join(".rebaze-apply").exists());
             assert!(!temp.path().join("MODULE.bazel").exists());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn escaped_cmake_child_preserves_existing_output() {
+        let temp = input();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(
+            outside.path().join("CMakeLists.txt"),
+            "add_library(escaped escaped.c)",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(outside.path(), temp.path().join("child")).unwrap();
+        std::fs::write(
+            temp.path().join("CMakeLists.txt"),
+            "project(example)\nadd_subdirectory(child)",
+        )
+        .unwrap();
+        let output = temp.path().join("BUILD.bazel");
+        std::fs::write(&output, "user output").unwrap();
+        let failure = migrate_with_report(&options(temp.path(), false, true)).unwrap_err();
+        assert!(matches!(
+            failure.report.stages.last(),
+            Some(StageRecord {
+                stage: Stage::Capture,
+                outcome: StageOutcome::Failed { .. }
+            })
+        ));
+        assert!(failure.report.outputs.is_empty());
+        assert_eq!(std::fs::read_to_string(output).unwrap(), "user output");
+        assert!(!temp.path().join("MODULE.bazel").exists());
+        assert!(!temp.path().join(".rebaze-apply").exists());
     }
 
     #[test]

@@ -185,7 +185,9 @@ all declarations so preparation can reject duplicates. Recursive source extracti
 preserves child-directory aliases.
 
 Configuration project loaders now return `Result`; only an absent file selects
-defaults. Malformed/unreadable files, broken symlinks, unknown keys and mixed
+defaults. TOML file reads are limited to 64 KiB and reject special files and all
+configuration-file symlinks, including valid links. Malformed/unreadable files,
+unknown keys and mixed
 flat/nested sections are errors. Handle `Config::load_from_project(path)?` and
 `MigrationConfig::load_from_project(path)?` explicitly. Core's `Config` loader
 accepts flat or nested files; the target-specific `MigrationConfig` loader accepts

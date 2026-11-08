@@ -1,0 +1,20 @@
+[package]
+name = "rebaze-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Bounded capability-based project input for rebaze"
+
+[lints]
+workspace = true
+
+[dependencies]
+cap-std = { version = "4.0.3", default-features = false }
+cap-fs-ext = { version = "4.0.3", default-features = false, features = ["std"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+

@@ -149,6 +149,7 @@ the destination implement it. Full bidirectional synchronization remains deferre
 
 | Candidate                            | Decision for this milestone                               | Extraction gate                                                                                                                 |
 | ------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `rebaze-input`                       | Shared counted IO and root authority for CMake/configuration. | Multiple real readers share validated budgets and capability policies; parsing remains a separate pure boundary. |
 | `rebaze-output`                      | Define bundle/apply boundaries in existing modules first. | Native and Java callers share a stable tested recovery API; extraction removes coupling without importing parsers or renderers. |
 | `rebaze-bazel-types`                 | Conditional small shared library.                         | Generation and standalone Bzlmod need identical validated primitives without pulling HTTP/runtime dependencies into rendering.  |
 | `rebaze-process`                     | Start as `rebaze-core::process`.                          | Multiple consumers demonstrably need the same stable process contract.                                                          |
@@ -171,7 +172,16 @@ Do not change the compiler floor merely to follow an upstream release.
 | 4. Stronger native evidence | R10–R11       | Usage and compiler intent survive a real downstream consumer.      | Independent build/capture tests detect deliberate semantic damage.             |
 | 5. Repeatable delivery      | D01–D03       | Local, CI, docs, and release evidence agree.                       | A clean checkout reproduces checks and packages the selected tested revision.  |
 
-R01–R03 and R04a have landed. R04b is the active stage/evidence boundary slice.
+R01–R04 have landed, as have R05's single-file protocol and R06a's existing-parent
+batch library. These application APIs remain opt-in: missing-parent handling,
+qualified metadata and core integration still gate R06 completion. R07a's borrowed
+CMake parser limits have landed in [#21](https://github.com/albertocavalcante/rebaze/pull/21).
+R07b adds the shared bounded input reader and CMake/configuration consumers;
+remaining readers, evaluation, output and whole-operation limits are still open.
+D01's documentation/compiled-input routing correction landed in
+[#19](https://github.com/albertocavalcante/rebaze/pull/19); local-tool alignment and
+the broader delivery gates remain open.
+
 R05 needs R04; R06 needs R05. R07/R08 can start after R04 but must land without
 invalidating the apply protocol. R09 is an independent standalone-library slice.
 R10 uses R03/R04 and the process/budget contracts from R07/R08. R11 begins with
@@ -331,8 +341,11 @@ report recovery options; never silently restore over subsequent edits.
 The borrowed CMake parser now has validated byte/recursive-scope profiles and
 explicit exhaustion diagnostics. Grammar scopes are shared across recursive
 families and released on backtracking. This initial slice does not complete R07:
-counted project reads, confinement, aggregate traversal, evaluation/expansion,
-diagnostics and output budgets remain open. Native syntax and recorded corpus
+CMake source capture now has counted reads, root confinement and shared byte,
+file-attempt, operation and path-depth budgets through `rebaze-input`. Both TOML
+configuration loaders also use bounded regular-file reads. Other readers,
+directory enumeration, evaluation/expansion, diagnostics and output budgets
+remain open. Native syntax and recorded corpus
 comparisons are separate from migration or compiler-equivalence claims.
 
 **Work:** add typed limits for file and aggregate bytes, file/project count,

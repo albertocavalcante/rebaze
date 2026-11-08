@@ -20,7 +20,7 @@ pub use parser::{ParseLimits, ParseLimitsError};
 pub use project::{
     CMakeProject, CMakeTest, EvaluationReason, Executable, ExtractError, Library, LibraryKind,
     Package, PkgConfigModule, SourceIssue, TargetAlias, TestEvaluation, Testing, extract_project,
-    extract_project_from_path, extract_project_with_context,
+    extract_project_from_path, extract_project_from_path_with_limits, extract_project_with_context,
 };
 
 /// Parse a CMake project at the given path.
@@ -28,16 +28,11 @@ pub use project::{
 /// Recursively parses CMakeLists.txt in the given directory and all
 /// subdirectories referenced via add_subdirectory() commands.
 pub fn parse(path: &Path) -> Result<CMakeProject> {
-    let cmake_file = path.join("CMakeLists.txt");
-
-    if !cmake_file.exists() {
-        anyhow::bail!("No CMakeLists.txt found at {}", path.display());
-    }
-
     tracing::debug!("Parsing CMake project at {}", path.display());
 
     // Use recursive parsing to follow add_subdirectory() calls
     let project = project::extract_project_from_path(path).map_err(|e| match e {
+        project::ExtractError::Input(error) => anyhow::Error::new(error),
         project::ExtractError::ReadFile { path: p, source } => {
             anyhow::anyhow!("Failed to read {}: {}", p.display(), source)
         }

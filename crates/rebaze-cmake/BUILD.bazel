@@ -6,6 +6,7 @@ rust_library(
     edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
+        "//crates/rebaze-input",
         "@crates//:anyhow",
         "@crates//:ariadne",
         "@crates//:chumsky",
@@ -19,6 +20,7 @@ rust_test(
     name = "rebaze-cmake_test",
     crate = ":rebaze-cmake",
     edition = "2024",
+    deps = ["@crates//:tempfile"],
 )
 
 rust_binary(

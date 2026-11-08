@@ -45,6 +45,28 @@ pub struct Config {
     pub bazel: Option<BazelConfig>,
 }
 
+// Configuration is deliberately small and does not follow descendant symlinks.
+fn read_configuration(path: &Path) -> std::io::Result<Option<String>> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "configuration path has no filename",
+        )
+    })?;
+    let limits =
+        rebaze_input::ReadLimits::new(64 * 1024, 64 * 1024, 1).map_err(std::io::Error::other)?;
+    let mut reader =
+        rebaze_input::RootReader::open(parent, limits, rebaze_input::SymlinkPolicy::Reject)
+            .map_err(rebaze_input::ReadError::into_io_error)?;
+    reader
+        .read_optional_text(Path::new(name))
+        .map_err(rebaze_input::ReadError::into_io_error)
+}
+
 impl Config {
     /// Load configuration from a TOML file.
     ///
@@ -52,11 +74,23 @@ impl Config {
     /// 1. Nested: `[bazel.versions]` - explicit target sections
     /// 2. Flat: `[versions]` - legacy format, interpreted as Bazel config
     pub fn load_from_file(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.into(),
-            source,
-        })?;
-        Self::parse_toml(&content).map_err(|source| ConfigError::File {
+        let content = read_configuration(path)
+            .map_err(|source| ConfigError::Read {
+                path: path.into(),
+                source,
+            })?
+            .ok_or_else(|| ConfigError::Read {
+                path: path.into(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "required configuration file is absent",
+                ),
+            })?;
+        Self::parse_file(&content, path)
+    }
+
+    fn parse_file(content: &str, path: &Path) -> Result<Self> {
+        Self::parse_toml(content).map_err(|source| ConfigError::File {
             path: path.into(),
             source: Box::new(source),
         })
@@ -104,13 +138,10 @@ impl Config {
             Ok(config)
         } else {
             let path = project_dir.join("rebaze.toml");
-            match std::fs::symlink_metadata(&path) {
-                Ok(_) => Self::load_from_file(&path),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-                Err(error) => Err(ConfigError::Read {
-                    path,
-                    source: error,
-                }),
+            match read_configuration(&path) {
+                Ok(Some(content)) => Self::parse_file(&content, &path),
+                Ok(None) => Ok(Self::default()),
+                Err(source) => Err(ConfigError::Read { path, source }),
             }
         }
     }
@@ -126,6 +157,34 @@ impl Config {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_readers_bound_bytes_and_reject_nonregular_inputs() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rebaze.toml");
+        std::fs::write(&path, format!("#{}", "x".repeat(64 * 1024 - 1))).unwrap();
+        assert!(Config::load_from_file(&path).is_ok());
+        assert!(BazelConfig::load_from_file(&path).is_ok());
+        std::fs::write(&path, format!("#{}", "x".repeat(64 * 1024))).unwrap();
+        assert!(
+            matches!(Config::load_from_file(&path), Err(ConfigError::Read {source, ..}) if source.kind() == std::io::ErrorKind::FileTooLarge)
+        );
+        assert!(BazelConfig::load_from_file(&path).is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(Config::load_from_project(root.path()).is_err());
+        assert!(BazelConfig::load_from_project(root.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configuration_symlinks_are_not_followed_even_when_target_is_valid() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("real.toml"), "").unwrap();
+        std::os::unix::fs::symlink("real.toml", root.path().join("rebaze.toml")).unwrap();
+        assert!(Config::load_from_project(root.path()).is_err());
+        assert!(BazelConfig::load_from_project(root.path()).is_err());
+    }
 
     #[test]
     fn unknown_or_mixed_configuration_fields_are_rejected() {

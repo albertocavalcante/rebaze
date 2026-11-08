@@ -16,6 +16,7 @@ rust_library(
         "//crates/rebaze-bcr",
         "//crates/rebaze-cmake",
         "//crates/rebaze-gradle",
+        "//crates/rebaze-input",
         "//crates/rebaze-starlark",
         "@crates//:anyhow",
         "@crates//:serde",

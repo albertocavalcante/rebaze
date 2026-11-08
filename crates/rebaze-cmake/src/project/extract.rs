@@ -13,6 +13,7 @@ use super::target_props;
 use super::types::{CMakeProject, EvaluationReason, ExtractError};
 use crate::ast::CMakeFile;
 use crate::eval::EvalContext;
+use rebaze_input::{ReadLimits, RootReader, SymlinkPolicy};
 
 /// Extract project information from a parsed CMake file.
 pub fn extract_project(file: &CMakeFile, path: PathBuf) -> CMakeProject {
@@ -157,38 +158,48 @@ fn extract_with_subdirectories(
 /// # Errors
 /// Returns an error if the CMakeLists.txt cannot be read or parsed.
 pub fn extract_project_from_path(root: &Path) -> Result<CMakeProject, ExtractError> {
-    let mut visited = HashSet::new();
-    extract_recursive(root, &mut visited, &mut EvalContext::new())
+    extract_project_from_path_with_limits(root, ReadLimits::default())
 }
+
+/// Extract using one shared IO budget for the complete source tree.
+///
+/// Syntax has its own default `ParseLimits`; increasing IO limits does not increase it.
+/// Child directories and relative symlinks must remain beneath the opened root.
+pub fn extract_project_from_path_with_limits(
+    root: &Path,
+    limits: ReadLimits,
+) -> Result<CMakeProject, ExtractError> {
+    let mut reader = RootReader::open(root, limits, SymlinkPolicy::WithinRoot)?;
+    extract_recursive(
+        root,
+        Path::new(""),
+        &mut reader,
+        &mut HashSet::new(),
+        &mut EvalContext::new(),
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod input_tests;
 
 /// Recursively extract project information from a directory.
 fn extract_recursive(
-    dir: &Path,
+    root: &Path,
+    relative: &Path,
+    reader: &mut RootReader,
     visited: &mut HashSet<PathBuf>,
     ctx: &mut EvalContext,
 ) -> Result<CMakeProject, ExtractError> {
-    // Canonicalize to avoid visiting the same directory twice via symlinks
-    let canonical = dir.canonicalize().map_err(|e| ExtractError::Canonicalize {
-        path: dir.to_path_buf(),
-        source: e,
-    })?;
-
-    // Skip if already visited (prevents infinite loops)
+    let dir = root.join(relative);
+    let canonical = reader.canonical_dir(relative)?;
     if !visited.insert(canonical) {
-        return Err(ExtractError::RepeatedDirectory(dir.to_path_buf()));
+        return Err(ExtractError::RepeatedDirectory(dir));
     }
-
-    let cmake_path = dir.join("CMakeLists.txt");
-    if !cmake_path.exists() {
-        return Err(ExtractError::NotFound(cmake_path));
-    }
-
+    let relative_file = relative.join("CMakeLists.txt");
+    let cmake_path = root.join(&relative_file);
     tracing::debug!("Parsing CMakeLists.txt at {}", cmake_path.display());
-
-    let source = std::fs::read_to_string(&cmake_path).map_err(|e| ExtractError::ReadFile {
-        path: cmake_path.clone(),
-        source: e,
-    })?;
+    let source = reader.read_text(&relative_file)?;
 
     let (file, errors) = crate::parser::parse(&source);
 
@@ -205,15 +216,21 @@ fn extract_recursive(
         message: "Parse returned no file".to_string(),
     })?;
 
-    let (mut project, subdirectories) = extract_with_subdirectories(&file, dir.to_path_buf(), ctx);
+    let (mut project, subdirectories) = extract_with_subdirectories(&file, dir, ctx);
     let mut has_target_standards = !project.executables.is_empty() || !project.libraries.is_empty();
 
     // Each child receives the variable state observed at its call, with isolated
     // local mutations. Parent-scope/cache effects are rejected by the profile.
     for mut subdirectory in subdirectories {
         let subdir_name = &subdirectory.name;
-        let subdir_path = dir.join(subdir_name);
-        let subproject = extract_recursive(&subdir_path, visited, &mut subdirectory.context)?;
+        let subdir_path = project.path.join(subdir_name);
+        let subproject = extract_recursive(
+            root,
+            &relative.join(subdir_name),
+            reader,
+            visited,
+            &mut subdirectory.context,
+        )?;
         project
             .requires_evaluation
             .extend(subproject.requires_evaluation);

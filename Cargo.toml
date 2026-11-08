@@ -8,6 +8,7 @@ members = [
     "crates/rebaze-cmake",
     "crates/rebaze-cmake-file-api",
     "crates/rebaze-gradle",
+    "crates/rebaze-input",
     "crates/rebaze-bazel",
     "crates/rebaze-starlark",
 ]
@@ -56,6 +57,7 @@ rebaze-cmake = { path = "crates/rebaze-cmake" }
 rebaze-cmake-file-api = { path = "crates/rebaze-cmake-file-api" }
 rebaze-core = { path = "crates/rebaze-core" }
 rebaze-gradle = { path = "crates/rebaze-gradle" }
+rebaze-input = { path = "crates/rebaze-input" }
 rebaze-bazel = { path = "crates/rebaze-bazel" }
 rebaze-starlark = { path = "crates/rebaze-starlark" }
 

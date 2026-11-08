@@ -11,6 +11,7 @@ description = "Bazel file generator for rebaze"
 workspace = true
 
 [dependencies]
+rebaze-input.workspace = true
 rebaze-bcr.workspace = true
 rebaze-cmake.workspace = true
 rebaze-gradle.workspace = true

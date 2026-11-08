@@ -14,6 +14,7 @@ work; this page describes the implementation that exists now.
 | `rebaze-cmake-file-api` | Adapt existing CMake File API replies into the shared CMake project model                  |
 | `rebaze-gradle`         | Extract project information from supported Gradle Groovy/Kotlin forms                      |
 | `rebaze-bazel`          | Map projects/configuration to generated files and write output files                       |
+| `rebaze-input`          | Counted text reads, shared IO budgets and explicit project-root capabilities                |
 | `rebaze-starlark`       | Typed Serde rule models, identifiers/references, and Starlark file composition             |
 | `rebaze-bcr`            | Built-in mappings from known C/C++ packages to Bazel Central Registry modules              |
 | `rebaze-bzlmod`         | Standalone MODULE parsing, registry access, dependency resolution, and graph APIs          |
@@ -62,6 +63,10 @@ not be assumed to apply to that separate path.
 ## Configuration intent
 
 Configuration loading distinguishes an absent file from read/parse failures.
+Both file loaders cap TOML at 64 KiB, require a regular UTF-8 file and reject
+configuration-file symlinks, including valid links. The explicitly selected parent
+is opened once for the read; this policy does not reject symlinks in its ambient
+root selection or promise a snapshot across separate configuration loads.
 Both project convenience loaders return typed errors; a malformed file never
 silently selects defaults. Core's loader accepts either flat native settings or
 one `[bazel]` tree, rejects unknown fields recursively, and rejects mixed formats.
@@ -154,8 +159,23 @@ recursive syntax. Scopes are released on success, failure and backtracking;
 exhaustion returns an explicit diagnostic instead of a partial AST. Each parse
 owns its state, without filesystem, SDK or environment access.
 
-These are parser-allocation/recursion bounds for already borrowed text. Project
-readers still need counted IO, aggregate traversal and expansion budgets in R07.
+These are parser-allocation/recursion bounds for already borrowed text. Recursive
+CMake source capture also uses `rebaze-input`: one opened root, 1 MiB per file,
+64 MiB aggregate consumed bytes, 4,096 file attempts, 65,536 logical operations
+and 64 relative path components by default. `extract_project_from_path_with_limits`
+accepts validated `ReadLimits`; increasing its IO allowance leaves syntax limits
+unchanged. File and operation attempts are charged on failure; bytes consumed by
+invalid UTF-8 and oversize proof reads remain charged. Reads check the opened file
+before and after reading; detected length/modification changes fail explicitly.
+
+Relative CMake symlinks may resolve beneath the original root, including internal
+`../` link targets. Absolute link targets, escapes, lexical parent components and
+special files are rejected. Canonical relative paths detect repeated directories;
+they are not inode identities. Root renames do not redirect the opened reader to
+a replacement directory. This is neither an immutable snapshot nor proof of
+hard-link/mount provenance. Nonblocking open avoids a FIFO replacement hang; it
+does not give regular/network files a deadline. Gradle, File API, lock/network
+readers, directory enumeration, expansion and output budgets remain R07–R09 work.
 This does not claim a process deadline or a bound on all parser work. Chumsky's
 existing stack-growth support remains enabled; a reproduced stack overflow is
 not the basis for these limits.

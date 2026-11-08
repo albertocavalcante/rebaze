@@ -1,0 +1,21 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+exports_files(["Cargo.toml"])
+
+rust_library(
+    name = "rebaze-input",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@crates//:cap-fs-ext",
+        "@crates//:cap-std",
+        "@crates//:thiserror",
+    ],
+)
+
+rust_test(
+    name = "rebaze-input_test",
+    crate = ":rebaze-input",
+    deps = ["@crates//:tempfile"],
+)
