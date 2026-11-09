@@ -288,7 +288,9 @@ origins remain explicitly unknown rather than fabricated locations.
 
 `OutputPath` uses a conservative ASCII component grammar, excluding traversal,
 empty components, Windows-invalid characters, reserved device stems and trailing
-dots/spaces. Bundles reject duplicate paths, ASCII case aliases and file/ancestor
+dots/spaces. Each component also excludes `.git`, `.hg`, `.svn` and
+`.rebaze-apply`, including ASCII case variants, so generated intent cannot target
+version-control metadata or recovery records. Bundles reject duplicate paths, ASCII case aliases and file/ancestor
 conflicts under that same case folding. Their paths and bytes iterate in lexical
 order. This narrows accepted output names (including Gradle module directories);
 Unicode remains supported in serialized content and input data. The filename rules
@@ -307,8 +309,14 @@ below; lowering does not promote either kind of evidence.
 compatibility wrappers with identical successful bytes; their iteration order is
 not guaranteed. `write_files` validates through an owned bundle and delegates to
 `write_bundle`; use the bundle API to avoid cloning a legacy map. Empty/invalid
-legacy batches now fail before writes. Application retains the existing per-file
-replacement contract, partial-batch failure behavior and concurrency limitations;
+legacy batches now fail before writes. Before any output or parent creation, the
+legacy writer also refuses any `.rebaze-apply/active` entry and rejects a symlink
+or non-directory recovery namespace. Inspection failures propagate; it never
+parses, deletes or automatically recovers the pending state. Completed archives
+without an active entry do not block writing. This preflight observes existing
+state; it does not acquire the guarded lock or exclude a transaction starting
+afterward. Application retains the existing per-file replacement contract,
+partial-batch failure behavior and concurrency limitations;
 journaled batch integration remains R06 work. The opt-in Linux/macOS
 [`apply` API](guarded-application.md) implements guarded single-file and
 existing-parent batch application
@@ -512,8 +520,9 @@ not arbitrary Gradle/Kotlin/Android or complete dependency-resolution equivalenc
 ## Failure and compatibility evidence
 
 Native generation completes before output writing. The writer rejects traversal,
-conflicting output paths, and symlink destinations during preflight. It assumes
-callers prevent concurrent destination-directory changes. An I/O failure after
+reserved metadata paths, conflicting output paths, pending guarded application,
+and symlink destinations during preflight. It assumes callers prevent concurrent
+application and destination-directory changes. An I/O failure after
 some replacements can leave a partial batch; preserve the original project in
 version control or a disposable workspace.
 

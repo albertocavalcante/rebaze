@@ -396,7 +396,8 @@ fn find_sandbox_root(path: &str) -> Option<String> {
 ///
 /// Each file is staged and atomically replaced, preserving the original on write
 /// failure. The batch is not a transaction: an IO error can leave earlier files
-/// updated. Callers must prevent concurrent changes to destination directories.
+/// updated. Pending guarded recovery blocks writing. Callers must exclude
+/// concurrent application and changes to destination directories.
 pub fn write_files<S: std::hash::BuildHasher>(
     root: &Path,
     files: &HashMap<String, String, S>,
@@ -411,7 +412,11 @@ pub fn write_files<S: std::hash::BuildHasher>(
 
 /// Apply validated intent with the existing per-file replacement contract.
 /// Destination state is observed here, never during bundle construction.
+///
+/// Any pending guarded transaction blocks the complete write before mutation.
+/// This preflight does not lock: callers must exclude concurrent application.
 pub fn write_bundle(root: &Path, bundle: &OutputBundle) -> Result<()> {
+    ensure_no_pending_application(root)?;
     // Inspect the complete destination set before changing any generated file.
     for (path, _) in bundle.iter() {
         let relative = path.as_path();
@@ -472,6 +477,40 @@ pub fn write_bundle(root: &Path, bundle: &OutputBundle) -> Result<()> {
     Ok(())
 }
 
+fn ensure_no_pending_application(root: &Path) -> Result<()> {
+    let directory = root.join(".rebaze-apply");
+    match std::fs::symlink_metadata(&directory) {
+        Ok(metadata) => anyhow::ensure!(
+            metadata.is_dir(),
+            "Recovery namespace must be a directory, not a symlink or other entry: {}",
+            directory.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to inspect recovery namespace {}",
+                    directory.display()
+                )
+            });
+        }
+    }
+    let active = directory.join("active");
+    match std::fs::symlink_metadata(&active) {
+        Ok(_) => anyhow::bail!(
+            "Guarded application is pending at {}; explicitly recover or inspect the retained data before writing generated output",
+            active.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "Failed to inspect guarded application state {}",
+                active.display()
+            )
+        }),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -503,6 +542,153 @@ mod tests {
             assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
         }
         assert!(!temp.path().join("escaped").exists());
+    }
+
+    #[test]
+    fn reserved_namespaces_are_preserved_before_any_write() {
+        for name in [".git", ".HG", ".SvN", ".ReBaZe-ApPlY"] {
+            for prefix in ["", "nested/"] {
+                let root = tempfile::tempdir().unwrap();
+                let reserved = format!("{prefix}{name}/config");
+                let metadata = root.path().join(&reserved);
+                std::fs::create_dir_all(metadata.parent().unwrap()).unwrap();
+                std::fs::write(&metadata, "private baseline").unwrap();
+                let destination = root.path().join("BUILD.bazel");
+                std::fs::write(&destination, "user baseline").unwrap();
+                let result = write_files(
+                    root.path(),
+                    &HashMap::from([
+                        ("BUILD.bazel".into(), "generated".into()),
+                        ("new/BUILD.bazel".into(), "new file".into()),
+                        (reserved.clone(), "replacement".into()),
+                    ]),
+                );
+                assert!(result.is_err(), "accepted {reserved}");
+                assert_eq!(std::fs::read(&destination).unwrap(), b"user baseline");
+                assert_eq!(std::fs::read(&metadata).unwrap(), b"private baseline");
+                assert!(!root.path().join("new").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn pending_application_entries_block_the_entire_bundle() {
+        for kind in ["empty", "unknown", "file"] {
+            let root = tempfile::tempdir().unwrap();
+            let active = root.path().join(".rebaze-apply/active");
+            std::fs::create_dir(active.parent().unwrap()).unwrap();
+            if kind == "file" {
+                std::fs::write(&active, "private record").unwrap();
+            } else {
+                std::fs::create_dir(&active).unwrap();
+                if kind == "unknown" {
+                    std::fs::write(active.join("manifest.json"), "{malformed").unwrap();
+                }
+            }
+            let destination = root.path().join("BUILD.bazel");
+            std::fs::write(&destination, "baseline").unwrap();
+            let bundle = OutputBundle::new([
+                ("BUILD.bazel".into(), "replacement".into()),
+                ("new/BUILD.bazel".into(), "new file".into()),
+            ])
+            .unwrap();
+            let error = write_bundle(root.path(), &bundle).unwrap_err();
+            assert!(format!("{error:#}").contains("pending"), "{error:#}");
+            assert!(format!("{error:#}").contains(&active.display().to_string()));
+            assert_eq!(std::fs::read(&destination).unwrap(), b"baseline");
+            assert!(!root.path().join("new").exists());
+            if kind == "file" {
+                assert_eq!(std::fs::read(&active).unwrap(), b"private record");
+            } else if kind == "unknown" {
+                assert_eq!(
+                    std::fs::read(active.join("manifest.json")).unwrap(),
+                    b"{malformed"
+                );
+            } else {
+                assert_eq!(std::fs::read_dir(&active).unwrap().count(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_recovery_directory_blocks_output() {
+        let root = tempfile::tempdir().unwrap();
+        let private = root.path().join(".rebaze-apply");
+        std::fs::write(&private, "private baseline").unwrap();
+        assert!(
+            write_files(
+                root.path(),
+                &HashMap::from([("BUILD.bazel".into(), "generated".into())]),
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&private).unwrap(), b"private baseline");
+        assert!(!root.path().join("BUILD.bazel").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_symlinks_block_output_without_following_them() {
+        use std::os::unix::fs::symlink;
+        for private_symlink in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let private = root.path().join(".rebaze-apply");
+            if private_symlink {
+                symlink(outside.path(), &private).unwrap();
+            } else {
+                std::fs::create_dir(&private).unwrap();
+                symlink(outside.path().join("absent"), private.join("active")).unwrap();
+            }
+            assert!(
+                write_files(
+                    root.path(),
+                    &HashMap::from([("new/BUILD.bazel".into(), "generated".into())]),
+                )
+                .is_err()
+            );
+            assert!(!root.path().join("new").exists());
+            assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+            let link = if private_symlink {
+                private
+            } else {
+                private.join("active")
+            };
+            assert_eq!(
+                std::fs::read_link(link).unwrap(),
+                if private_symlink {
+                    outside.path().to_path_buf()
+                } else {
+                    outside.path().join("absent")
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn saved_recovery_archives_and_ordinary_dotfiles_remain_usable() {
+        let root = tempfile::tempdir().unwrap();
+        let saved = root.path().join(".rebaze-apply/saved-old/before");
+        std::fs::create_dir_all(saved.parent().unwrap()).unwrap();
+        std::fs::write(&saved, "archived original").unwrap();
+        let bundle = OutputBundle::new([
+            (".bazelrc".into(), "build --jobs=2".into()),
+            (".gitignore".into(), "bazel-*".into()),
+            (".gitattributes".into(), "* text=auto".into()),
+            (
+                ".rebaze-apply-backup/BUILD.bazel".into(),
+                "# valid sibling".into(),
+            ),
+        ])
+        .unwrap();
+        write_bundle(root.path(), &bundle).unwrap();
+        for (path, content) in bundle.iter() {
+            assert_eq!(
+                std::fs::read_to_string(root.path().join(path.as_path())).unwrap(),
+                content
+            );
+        }
+        assert_eq!(std::fs::read(&saved).unwrap(), b"archived original");
     }
 
     #[cfg(unix)]

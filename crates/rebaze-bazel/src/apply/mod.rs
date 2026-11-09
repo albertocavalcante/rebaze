@@ -1,6 +1,6 @@
 //! Opt-in guarded single-file and batch application on Linux and macOS.
 //!
-//! The legacy bundle writer is unchanged. Callers explicitly choose the limited
+//! Core still uses the legacy per-file bundle writer. Callers choose the limited
 //! POSIX metadata contract. Original entries are retained even after success;
 //! recovery never overwrites a recreated destination. See the application guide
 //! for filesystem, concurrency and metadata assumptions.
@@ -529,12 +529,6 @@ fn validate_path(path: &str) -> Result<(), ApplyError> {
     if path.len() > 4096
         || path.split('/').count() > 64
         || OutputPath::new(path.to_owned()).is_err()
-        || path.split('/').any(|part| {
-            matches!(
-                part.to_ascii_lowercase().as_str(),
-                ".rebaze-apply" | ".git" | ".hg" | ".svn"
-            )
-        })
     {
         return Err(ApplyError::Invalid(
             "invalid, reserved or overlong output path",

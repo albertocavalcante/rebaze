@@ -35,6 +35,40 @@ fn fail_at(point: Point) -> impl FnMut(Point) -> io::Result<()> {
 }
 
 #[test]
+fn legacy_writer_cannot_bypass_pending_single_file_recovery() {
+    let _spawn_guard = PROCESS_SPAWN.read().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let destination = root.path().join("BUILD.bazel");
+    fs::write(&destination, "baseline").unwrap();
+    assert!(
+        plan(root.path(), "guarded output")
+            .apply_with(&mut fail_at(Point::IntentDurable))
+            .is_err()
+    );
+    let active = root.path().join(".rebaze-apply/active");
+    let manifest = fs::read(active.join("manifest.json")).unwrap();
+    let original = fs::metadata(&destination).unwrap();
+    assert!(
+        crate::write_files(
+            root.path(),
+            &std::collections::HashMap::from([("BUILD.bazel".into(), "unguarded output".into())]),
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(&destination).unwrap(), b"baseline");
+    assert_eq!(fs::metadata(&destination).unwrap().ino(), original.ino());
+    assert_eq!(fs::read(active.join("manifest.json")).unwrap(), manifest);
+    let recovered = recover(root.path()).unwrap().unwrap();
+    assert_eq!(recovered.outcome, ApplyOutcome::Restored);
+    assert_eq!(fs::read(&destination).unwrap(), b"baseline");
+    assert_eq!(
+        fs::read(recovered.retained.join("after")).unwrap(),
+        b"guarded output"
+    );
+    assert!(recover(root.path()).unwrap().is_none());
+}
+
+#[test]
 fn applies_absent_and_existing_files_and_retains_original_mode_and_bytes() {
     let _spawn_guard = PROCESS_SPAWN.read().unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -463,15 +497,8 @@ fn input_limits_and_reserved_names_are_explicit() {
     let _spawn_guard = PROCESS_SPAWN.read().unwrap();
     let root = tempfile::tempdir().unwrap();
     for path in [".rebaze-apply/file", ".GIT/file", "child/.svn/file"] {
-        assert!(
-            FileEditPlan::capture(
-                root.path(),
-                &OutputPath::new(path.into()).unwrap(),
-                "text".into(),
-                MetadataPolicy::PosixModeAndOwner
-            )
-            .is_err()
-        );
+        // Recovery decodes raw journal paths and must revalidate them too.
+        assert!(validate_path(path).is_err());
     }
     assert!(
         FileEditPlan::capture(

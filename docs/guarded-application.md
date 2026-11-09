@@ -7,6 +7,30 @@ uses the legacy per-file bundle writer. Batch application is also opt-in and
 requires existing parent directories. Core integration and CLI recovery remain
 R06 work; these APIs do not yet protect ordinary migrations.
 
+## Ordinary writes while recovery is pending
+
+The ordinary `write_bundle` / `write_files` path refuses any
+`.rebaze-apply/active` entry before changing an output or creating a parent.
+This includes empty directories, malformed journals, regular files and dangling
+symlinks. A symlink or non-directory at `.rebaze-apply` also blocks writing;
+inspection errors fail visibly. Completed archives alone do not block it.
+
+Inspect the reported location and use the matching recovery API below. The
+ordinary writer does not parse, delete or automatically recover pending state.
+A successful recovery receipt still needs its outcome inspected. Never delete
+`active` to make migration proceed without accounting for retained originals.
+
+Native/JVM migration uses this preflight; a refusal fails its application stage.
+Preview remains read-only and does not require recovery. This check does not
+acquire the cooperative lock or prevent a guarded transaction starting afterward.
+Callers must exclude concurrent writers. The external Bazelle writer has its
+separate contract and is not protected by this preflight.
+
+All `OutputPath` / `OutputBundle` constructors reject `.git`, `.hg`, `.svn` and
+`.rebaze-apply` components, including ASCII case variants at any depth. Ordinary
+configuration files such as `.bazelrc`, `.gitignore` and `.gitattributes` remain
+valid output paths. This restriction protects both ordinary and guarded writers.
+
 ## Capture and apply
 
 ```rust
