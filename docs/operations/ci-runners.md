@@ -162,11 +162,72 @@ ephemeral and non-root, with isolation checked by runmux; App credentials remain
 on the host. Workflow token permissions stay read-only and checkout credentials
 are not persisted. Privileged PR/workflow-run events remain denied by the pool.
 
+### Queued jobs
+
 If jobs queue, check App grant, explicit pool scope/policy, label, host/engine
 headroom, operator pauses, capacity, service state, and concurrency independently.
 A running service or successful doctor alone does not prove workload compatibility.
 After a reboot, verify the user session, engine, daemon and scope health again;
 do not treat a saved plist as a running service.
+
+### Lost runners and orphaned GitHub jobs
+
+GitHub can retain an `in_progress` job after runmux removes its sandbox.
+Compare both systems before deciding whether work is executing:
+
+1. Record the repository, run/attempt, head SHA, job/runner identity, selected
+   labels, completed steps and missing results. Preserve failed attempts and
+   unavailable-log errors. Completed steps do not establish a completed job.
+2. Inspect the selected runmux instance's slot state and teardown reason.
+   Confirm sandbox absence against the healthy engine. An unreachable engine
+   or generic inspection error does not prove the container is gone.
+3. Treat `isolation_lost` as failed verification, including possible transport
+   or helper failures. It does not prove firewall rules changed. Capture the
+   deployed controller/helper identity and bounded phase/timing diagnostics.
+   Later healthy status does not complete the interrupted job.
+
+For a confirmed abandoned attempt owned by this operation, verify the expected
+head and that no job in the attempt is still executing. Triage actual test or
+build failures separately. Set `REPOSITORY` to its verified `owner/repo` and
+`RUN_ID` to that run before requesting cancellation:
+
+```bash
+gh run cancel "$RUN_ID" --repo "$REPOSITORY"
+```
+
+A successful request is not terminal cancellation. Inspect the run again and
+wait within a bounded observation window. If ordinary cancellation does not
+respond, GitHub provides a
+[force-cancel endpoint](https://docs.github.com/en/rest/actions/workflow-runs#force-cancel-a-workflow-run).
+Use it only after rechecking ownership and absence of execution:
+
+```bash
+gh api --method POST "repos/$REPOSITORY/actions/runs/$RUN_ID/force-cancel"
+```
+
+Wait for terminal cancellation before retrying. After checking current admission
+and the intended revision, retry only unsuccessful jobs:
+
+```bash
+gh run rerun "$RUN_ID" --repo "$REPOSITORY" --failed
+```
+
+The attempt counter can update after the request returns. Poll until the new
+attempt is observable; do not reissue merely because the first read is stale.
+Retain same-head successful checks and distinguish them from newly executed jobs.
+If the retry also loses its runner, stop the retry loop and diagnose the fault.
+Missing required coverage remains a readiness gap.
+
+Coordinate live changes with other operators. For an idle diagnostic window,
+snapshot pause states and configuration identity, drain without killing foreign
+jobs, and use bounded read-only probes. Restore only operation-owned pauses on
+success, failure or timeout, then verify every affected pool. Detect intervening
+configuration changes before restoration. Reconcile with the other operator
+before restoring from a stale snapshot. Do not lower isolation/storage gates
+or lengthen deadlines merely to obtain a pass. A controlled successful workload
+is evidence for that run, not proof that a historical fault is repaired.
+
+### Restore hosted routing
 
 Restore hosted routing for future job evaluation with:
 
