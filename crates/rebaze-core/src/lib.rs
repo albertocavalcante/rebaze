@@ -134,7 +134,14 @@ fn parse_cmake_project(
                 ))
             }
             Err(err) => {
-                if cmake_file_api_only {
+                // A present reply is selected evidence: never hide invalid or
+                // unsupported configured semantics behind a source-only model.
+                if cmake_file_api_only
+                    || !matches!(
+                        err,
+                        rebaze_cmake_file_api::FileApiError::NotGenerated { .. }
+                    )
+                {
                     return Err(err.into());
                 }
                 tracing::warn!(
@@ -490,6 +497,103 @@ fn run_command(mut cmd: Command, label: &str) -> Result<()> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_file_api_can_fallback_but_present_invalid_reply_cannot() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("CMakeLists.txt"),
+            "project(example)\nadd_library(core STATIC core.c)",
+        )
+        .unwrap();
+        let build = temp.path().join("build");
+        let build_dir = build.to_str().unwrap();
+        let (project, evidence) =
+            parse_cmake_project(temp.path(), Some(build_dir), None, false).unwrap();
+        assert_eq!(project.libraries[0].name, "core");
+        assert!(matches!(evidence, report::SourceEvidence::CMakeSource));
+        assert!(parse_cmake_project(temp.path(), Some(build_dir), None, true).is_err());
+
+        let reply = build.join(".cmake/api/v1/reply");
+        std::fs::create_dir_all(&reply).unwrap();
+        std::fs::write(reply.join("index-test.json"), "{").unwrap();
+        assert!(parse_cmake_project(temp.path(), Some(build_dir), None, false).is_err());
+    }
+
+    #[test]
+    fn unsupported_file_api_preserves_outputs_even_with_fallback_enabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(
+            root.join("CMakeLists.txt"),
+            "project(example)\nadd_library(core STATIC core.c)",
+        )
+        .unwrap();
+        std::fs::write(root.join("BUILD.bazel"), "# existing output\n").unwrap();
+        let build = root.join("build");
+        let reply = build.join(".cmake/api/v1/reply");
+        std::fs::create_dir_all(&reply).unwrap();
+        let index = serde_json::json!({
+            "cmake": {
+                "version": {"major": 3, "minor": 27, "patch": 0, "suffix": "", "string": "3.27.0", "isDirty": false},
+                "paths": {"cmake": "cmake", "ctest": "ctest", "cpack": "cpack", "root": "."},
+                "generator": {"multiConfig": false, "name": "Ninja"}
+            },
+            "objects": [{"kind": "codemodel", "version": {"major": 2, "minor": 0}, "jsonFile": "model.json"}],
+            "reply": {}
+        });
+        let model = serde_json::json!({
+            "kind": "codemodel", "version": {"major": 2, "minor": 0},
+            "paths": {"source": root, "build": build},
+            "configurations": [{
+                "name": "Debug", "projects": [{"name": "example", "directoryIndexes": []}],
+                "directories": [],
+                "targets": [{"name": "core", "id": "core", "directoryIndex": 0, "projectIndex": 0, "jsonFile": "target.json"}]
+            }]
+        });
+        let target = serde_json::json!({
+            "name": "core", "id": "core", "type": "STATIC_LIBRARY",
+            "paths": {"source": ".", "build": "."},
+            "sources": [{"path": "ChangeLog.md"}],
+            "backtraceGraph": {"commands": [], "files": [], "nodes": []}
+        });
+        for (name, value) in [
+            ("index-test.json", index),
+            ("model.json", model),
+            ("target.json", target),
+        ] {
+            std::fs::write(reply.join(name), serde_json::to_vec(&value).unwrap()).unwrap();
+        }
+        for file_api_only in [false, true] {
+            let options = MigrateOptions {
+                path: root.to_str().unwrap(),
+                from: Some("cmake"),
+                dry_run: false,
+                cmake_build_dir: Some(build.to_str().unwrap()),
+                cmake_config: Some("Debug"),
+                cmake_file_api_only: file_api_only,
+                build_generator: BuildGenerator::Native,
+                bazelle_root: None,
+                bazelle_bin: None,
+                unsafe_mode: true,
+                config: None,
+            };
+            let error = migrate(&options).unwrap_err();
+            assert!(
+                matches!(
+                    error.downcast_ref::<rebaze_cmake_file_api::FileApiError>(),
+                    Some(rebaze_cmake_file_api::FileApiError::UncompiledInput { target, path })
+                        if target == "core" && path == Path::new("ChangeLog.md")
+                ),
+                "{error:#}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("BUILD.bazel")).unwrap(),
+                "# existing output\n"
+            );
+            assert!(!root.join("MODULE.bazel").exists());
+        }
+    }
 
     #[test]
     fn unpinned_java_migration_requires_explicit_build_free_preparation() {

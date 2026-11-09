@@ -20,6 +20,36 @@ pub enum FileApiError {
     #[error("cmake-file-api configuration '{name}' not found")]
     UnknownConfiguration { name: String },
 
+    #[error(
+        "target {target:?} contains generated input {path:?}; native migration cannot preserve generated inputs yet"
+    )]
+    GeneratedInput { target: String, path: PathBuf },
+
+    #[error(
+        "target {target:?} reads build-directory include {path:?}; native migration cannot preserve generated build inputs yet"
+    )]
+    BuildDirectoryInclude { target: String, path: PathBuf },
+
+    #[error(
+        "target {target:?} contains non-compiled input {path:?}; native migration cannot preserve this input role yet"
+    )]
+    UncompiledInput { target: String, path: PathBuf },
+
+    #[error(
+        "target {target:?} input {path:?} references compile group {index}, but only {groups} groups were captured"
+    )]
+    InvalidCompileGroup {
+        target: String,
+        path: PathBuf,
+        index: usize,
+        groups: usize,
+    },
+
+    #[error(
+        "target {target:?} has {groups} compile groups; per-source compile settings are not supported by native migration"
+    )]
+    MultipleCompileGroups { target: String, groups: usize },
+
     #[error("cmake-file-api query error: {0}")]
     Query(#[from] query::WriterError),
 
@@ -153,6 +183,8 @@ pub fn capture_from_codemodel(
             continue;
         };
 
+        validate_target_capture(target, &build_root)?;
+
         match kind {
             TargetKind::Executable => {
                 let exe = Executable {
@@ -226,9 +258,6 @@ fn collect_sources(
 ) -> Vec<String> {
     let mut set = HashSet::new();
     for source in &target.sources {
-        if source.is_generated {
-            continue;
-        }
         if let Some(path) = normalize_source_path(&source.path, source_root, build_root) {
             set.insert(path);
         }
@@ -267,8 +296,70 @@ fn collect_defines(target: &objects::codemodel_v2::Target) -> Vec<String> {
     sorted_vec(set)
 }
 
+fn validate_target_capture(
+    target: &objects::codemodel_v2::Target,
+    build_root: &Path,
+) -> Result<(), FileApiError> {
+    if let Some(source) = target.sources.iter().find(|source| source.is_generated) {
+        return Err(FileApiError::GeneratedInput {
+            target: target.name.clone(),
+            path: source.path.clone(),
+        });
+    }
+    for source in &target.sources {
+        if let Some(index) = source.compile_group_index
+            && index >= target.compile_groups.len()
+        {
+            return Err(FileApiError::InvalidCompileGroup {
+                target: target.name.clone(),
+                path: source.path.clone(),
+                index,
+                groups: target.compile_groups.len(),
+            });
+        }
+    }
+    // CMake lists IDE/documentation inputs alongside actual compiler inputs.
+    // Only the explicit header subset can currently keep its non-compiled role
+    // in the target model; never turn arbitrary metadata into a compiler source.
+    if let Some(source) = target.sources.iter().find(|source| {
+        source.compile_group_index.is_none()
+            && !source.path.extension().is_some_and(|extension| {
+                matches!(
+                    extension.to_str(),
+                    Some("h" | "H" | "hh" | "hpp" | "hxx" | "h++" | "inc" | "inl" | "ipp")
+                )
+            })
+    }) {
+        return Err(FileApiError::UncompiledInput {
+            target: target.name.clone(),
+            path: source.path.clone(),
+        });
+    }
+    // The current model has one option list per target. Combining groups would
+    // apply one source's settings to another, so require a representable capture.
+    if target.compile_groups.len() > 1 {
+        return Err(FileApiError::MultipleCompileGroups {
+            target: target.name.clone(),
+            groups: target.compile_groups.len(),
+        });
+    }
+    // A generated header may be used only through an include root, without a
+    // sources[] entry. Dropping that root would also drop required build input.
+    for group in &target.compile_groups {
+        if let Some(include) = group.includes.iter().find(|include| {
+            !build_root.as_os_str().is_empty() && include.path.starts_with(build_root)
+        }) {
+            return Err(FileApiError::BuildDirectoryInclude {
+                target: target.name.clone(),
+                path: include.path.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn collect_compile_options(target: &objects::codemodel_v2::Target) -> Vec<String> {
-    let mut set = HashSet::new();
+    let mut options = Vec::new();
     for group in &target.compile_groups {
         let mut skip_next = false;
         for flag in group.flags() {
@@ -284,11 +375,13 @@ fn collect_compile_options(target: &objects::codemodel_v2::Target) -> Vec<String
                 continue;
             }
             if !flag.is_empty() {
-                set.insert(flag);
+                // Compiler operands, repeated flags and last-wins overrides are
+                // ordered data. Sorting or deduplicating changes their meaning.
+                options.push(flag);
             }
         }
     }
-    sorted_vec(set)
+    options
 }
 
 fn collect_dependencies(
@@ -391,6 +484,16 @@ mod tests {
     };
     use cmake_file_api::objects::{MajorMinor, ObjectKind};
 
+    fn target_codemodel(target: Target) -> objects::CodeModelV2 {
+        let mut configuration = Configuration::default();
+        configuration.targets = vec![target];
+        let mut codemodel = objects::CodeModelV2::default();
+        codemodel.paths.source = PathBuf::from("/repo");
+        codemodel.paths.build = PathBuf::from("/repo/build");
+        codemodel.configurations = vec![configuration];
+        codemodel
+    }
+
     #[test]
     // Test setup requires many mock objects to simulate realistic CMake codemodel
     #[allow(clippy::too_many_lines)]
@@ -404,6 +507,7 @@ mod tests {
 
         let mut lib_source = objects::codemodel_v2::Source::default();
         lib_source.path = PathBuf::from("/repo/src/lib.cpp");
+        lib_source.compile_group_index = Some(0);
 
         let mut include = Include::default();
         include.path = PathBuf::from("/repo/include");
@@ -429,6 +533,7 @@ mod tests {
 
         let mut exe_source = objects::codemodel_v2::Source::default();
         exe_source.path = PathBuf::from("/repo/src/main.cpp");
+        exe_source.compile_group_index = Some(0);
 
         let mut dep = Dependency::default();
         dep.id = "lib-id".to_string();
@@ -439,6 +544,7 @@ mod tests {
         exe_target.type_name = "EXECUTABLE".to_string();
         exe_target.paths = exe_paths;
         exe_target.sources = vec![exe_source];
+        exe_target.compile_groups = vec![CompileGroup::default()];
         exe_target.dependencies = vec![dep];
 
         let mut min_version = MinimumCmakeVersion::default();
@@ -519,6 +625,130 @@ mod tests {
             project.executables[0].link_libraries,
             vec!["mylib".to_string()]
         );
+    }
+
+    #[test]
+    fn compiler_options_preserve_operand_order_and_repetitions() {
+        let mut fragment = CompileCommandFragment::default();
+        fragment.fragment =
+            "-arch arm64 -fvisibility=hidden -std=c++11 -std=c++20 -arch arm64".into();
+        let mut group = CompileGroup::default();
+        group.compile_command_fragments = vec![fragment];
+        let mut target = Target::default();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.compile_groups = vec![group];
+        let project =
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()).unwrap();
+        assert_eq!(
+            project.libraries[0].compile_options,
+            [
+                "-arch",
+                "arm64",
+                "-fvisibility=hidden",
+                "-std=c++11",
+                "-std=c++20",
+                "-arch",
+                "arm64"
+            ]
+        );
+    }
+
+    #[test]
+    fn generated_headers_are_refused_instead_of_dropped() {
+        let mut source = objects::codemodel_v2::Source::default();
+        source.path = PathBuf::from("/build/zconf.h");
+        source.is_generated = true;
+        let mut target = Target::default();
+        target.name = "zlib".into();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.sources = vec![source];
+        assert!(matches!(
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()),
+            Err(FileApiError::GeneratedInput { target, path })
+                if target == "zlib" && path == Path::new("/build/zconf.h")
+        ));
+    }
+
+    #[test]
+    fn uncompiled_metadata_is_not_emitted_as_a_compiler_source() {
+        for filename in ["ChangeLog.md", "header_only.cpp", "template.tpp"] {
+            let mut source = objects::codemodel_v2::Source::default();
+            source.path = PathBuf::from(filename);
+            let mut target = Target::default();
+            target.name = "fmt".into();
+            target.type_name = "STATIC_LIBRARY".into();
+            target.sources = vec![source];
+            assert!(matches!(
+                project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()),
+                Err(FileApiError::UncompiledInput { target, path })
+                    if target == "fmt" && path == Path::new(filename)
+            ));
+        }
+    }
+
+    #[test]
+    fn supported_uncompiled_headers_remain_available() {
+        let mut source = objects::codemodel_v2::Source::default();
+        source.path = PathBuf::from("tinyxml2.h");
+        let mut target = Target::default();
+        target.name = "tinyxml2".into();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.sources = vec![source];
+        let project =
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()).unwrap();
+        assert_eq!(project.libraries[0].sources, ["tinyxml2.h"]);
+    }
+
+    #[test]
+    fn explicit_compiled_members_require_a_valid_group_index() {
+        for index in [0, 1, usize::MAX] {
+            let mut source = objects::codemodel_v2::Source::default();
+            source.path = PathBuf::from("format.cc");
+            source.compile_group_index = Some(index);
+            let mut target = Target::default();
+            target.type_name = "STATIC_LIBRARY".into();
+            target.sources = vec![source];
+            target.compile_groups = vec![CompileGroup::default()];
+            let result =
+                project_from_codemodel(&target_codemodel(target), &FileApiOptions::default());
+            if index == 0 {
+                assert_eq!(result.unwrap().libraries[0].sources, ["format.cc"]);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(FileApiError::InvalidCompileGroup { .. })
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn per_source_compile_groups_are_refused_instead_of_merged() {
+        let mut target = Target::default();
+        target.name = "mixed".into();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.compile_groups = vec![CompileGroup::default(), CompileGroup::default()];
+        assert!(matches!(
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()),
+            Err(FileApiError::MultipleCompileGroups { target, groups: 2 }) if target == "mixed"
+        ));
+    }
+
+    #[test]
+    fn generated_include_roots_are_refused_without_a_generated_source_entry() {
+        let mut include = Include::default();
+        include.path = PathBuf::from("/repo/build/generated");
+        let mut group = CompileGroup::default();
+        group.includes = vec![include];
+        let mut target = Target::default();
+        target.name = "zlib".into();
+        target.type_name = "STATIC_LIBRARY".into();
+        target.compile_groups = vec![group];
+        assert!(matches!(
+            project_from_codemodel(&target_codemodel(target), &FileApiOptions::default()),
+            Err(FileApiError::BuildDirectoryInclude { target, path })
+                if target == "zlib" && path == Path::new("/repo/build/generated")
+        ));
     }
 
     #[test]
