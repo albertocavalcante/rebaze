@@ -413,6 +413,35 @@ mod tests {
     }
 
     #[test]
+    fn pending_application_blocks_migration_but_not_preview() {
+        let root = input();
+        let active = root.path().join(".rebaze-apply/active");
+        std::fs::create_dir_all(&active).unwrap();
+        std::fs::write(active.join("before"), "recoverable original").unwrap();
+        let destination = root.path().join("BUILD.bazel");
+        std::fs::write(&destination, "user output").unwrap();
+
+        let preview = migrate_with_report(&options(root.path(), true, false)).unwrap();
+        assert!(matches!(preview.preview, Some(MigrationPreview::Files(_))));
+        let failure = migrate_with_report(&options(root.path(), false, true)).unwrap_err();
+        assert!(format!("{:#}", failure.source).contains(&active.display().to_string()));
+        assert!(matches!(
+            failure.report.stages.last(),
+            Some(StageRecord {
+                stage: Stage::Application,
+                outcome: StageOutcome::Failed { .. }
+            })
+        ));
+        assert_eq!(std::fs::read(destination).unwrap(), b"user output");
+        assert_eq!(
+            std::fs::read(active.join("before")).unwrap(),
+            b"recoverable original"
+        );
+        assert!(!root.path().join("MODULE.bazel").exists());
+        assert_eq!(std::fs::read_dir(active).unwrap().count(), 1);
+    }
+
+    #[test]
     fn failed_preparation_keeps_completed_stages_and_precise_diagnostic() {
         let temp = input();
         std::fs::write(

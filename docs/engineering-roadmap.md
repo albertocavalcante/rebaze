@@ -405,6 +405,18 @@ forward recovery with per-output conflict evidence; see the
 safe default metadata policy, post-build reports and external Bazelle boundaries
 remain open. The complete R06 gate is not met by the library slice alone.
 
+The ordinary writer now refuses existing pending guarded state before creating
+parents or changing outputs. Shared output intent also rejects VCS/recovery
+namespace components. These safeguards prevent known pending-state bypass and
+metadata replacement; they do not integrate guarded batch application. The
+remaining writer risk belongs to `rebaze-bazel` / core: a transaction starting
+after preflight is not excluded, and an IO failure can still leave a partial
+batch. Missing-parent ownership and a safe metadata policy block enabling the
+existing protocol by default. Next, implement those prerequisites and wire native
+and JVM application through the guarded lock and receipts. The fault/recovery
+gate below, including concurrent edits and both CLI paths, must pass before
+claiming R06 complete. External Bazelle writes retain a separate narrower scope.
+
 **Work:** stage the complete bundle before the first destination change. Record
 per-file progress durably and reconcile journal plus filesystem after a crash.
 Define allowed stopping outcomes: all intended files applied, baseline restored,

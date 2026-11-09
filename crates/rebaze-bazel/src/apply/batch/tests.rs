@@ -63,6 +63,39 @@ fn intended(root: &Path) {
 }
 
 #[test]
+fn legacy_writer_cannot_bypass_pending_batch_recovery() {
+    let _spawn_guard = PROCESS_SPAWN.read().unwrap();
+    let root = fixture();
+    assert!(
+        plan(root.path())
+            .apply_with(&mut fail(point(None, Phase::IntentDurable)))
+            .is_err()
+    );
+    let active = root.path().join(".rebaze-apply/active");
+    let manifest = fs::read(active.join("batch.json")).unwrap();
+    let original = fs::metadata(root.path().join("a.bzl")).unwrap();
+    let replacement = OutputBundle::new([
+        ("a.bzl".into(), "unguarded output".into()),
+        ("new/BUILD.bazel".into(), "new file".into()),
+    ])
+    .unwrap();
+    assert!(crate::write_bundle(root.path(), &replacement).is_err());
+    baseline(root.path());
+    assert!(!root.path().join("new").exists());
+    assert_eq!(
+        fs::metadata(root.path().join("a.bzl")).unwrap().ino(),
+        original.ino()
+    );
+    assert_eq!(fs::read(active.join("batch.json")).unwrap(), manifest);
+    assert_eq!(
+        recover_bundle(root.path()).unwrap().unwrap().outcome,
+        BatchOutcome::Applied
+    );
+    intended(root.path());
+    assert!(recover_bundle(root.path()).unwrap().is_none());
+}
+
+#[test]
 fn complete_staging_precedes_every_move_and_receipt_retains_originals() {
     let _spawn_guard = PROCESS_SPAWN.read().unwrap();
     let root = fixture();

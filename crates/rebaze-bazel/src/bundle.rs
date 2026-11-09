@@ -21,7 +21,8 @@ pub enum BundleError {
 }
 
 /// An ASCII slash-separated relative output path. Construction performs no IO.
-/// Components exclude reserved device names and ambiguous trailing dots/spaces.
+/// Components exclude VCS/recovery namespaces, reserved device names and
+/// ambiguous trailing dots/spaces.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct OutputPath(String);
 
@@ -44,6 +45,9 @@ impl OutputPath {
 
 fn valid_component(part: &str) -> bool {
     if part.is_empty()
+        || [".git", ".hg", ".svn", ".rebaze-apply"]
+            .iter()
+            .any(|reserved| part.eq_ignore_ascii_case(reserved))
         || part.ends_with(['.', ' '])
         || part.chars().any(|c| {
             !c.is_ascii()
@@ -227,6 +231,31 @@ mod tests {
             ]),
             Err(BundleError::FileAncestor { .. })
         ));
+    }
+
+    #[test]
+    fn reserved_namespaces_cannot_become_output_intent() {
+        for name in [".git", ".hg", ".svn", ".rebaze-apply"] {
+            for spelling in [name.to_owned(), name.to_ascii_uppercase()] {
+                for path in [
+                    spelling.clone(),
+                    format!("{spelling}/config"),
+                    format!("module/{spelling}/config"),
+                ] {
+                    assert_eq!(
+                        OutputPath::new(path.clone()),
+                        Err(BundleError::InvalidPath(path.clone()))
+                    );
+                    assert_eq!(
+                        OutputBundle::new([
+                            ("BUILD.bazel".into(), "generated".into()),
+                            (path.clone(), "metadata replacement".into()),
+                        ]),
+                        Err(BundleError::InvalidPath(path))
+                    );
+                }
+            }
+        }
     }
 
     #[test]
