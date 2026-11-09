@@ -488,6 +488,12 @@ Keep standalone consumers independent of migration CLI dependencies.
 
 ### R10 — Preserve native usage requirements and compiler intent
 
+Partially implemented in [PR #24](https://github.com/albertocavalcante/rebaze/pull/24):
+File API capture preserves compile-option order and refuses unrepresentable
+generated inputs, source roles and per-source groups. Final reviewed-head CI
+passed, including required CMake/Java fixtures. These safeguards do not complete
+usage propagation, generated-action lowering, test import or compiler equivalence.
+
 Split into a model/lowering PR and an oracle PR if review scope becomes too large.
 Preserve public/private/interface requirements, target ownership, per-configuration
 settings, and relevant per-source distinctions. Diagnose unsupported generated
