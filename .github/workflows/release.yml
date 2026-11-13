@@ -110,11 +110,17 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # Inline so every platform and any tag commit can run it without repository scripts.
       - name: Verify release source
         shell: bash
         env:
           EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: bash .github/scripts/release-source.sh verify-head "$EXPECTED_SHA"
+        run: |
+          actual="$(git rev-parse --verify HEAD)"
+          if [ "$actual" != "$EXPECTED_SHA" ]; then
+            echo "::error::checked out $actual but the release tag resolves to $EXPECTED_SHA"
+            exit 1
+          fi
 
       - name: Set up pinned Rust toolchain
         run: rustup toolchain install --no-self-update
