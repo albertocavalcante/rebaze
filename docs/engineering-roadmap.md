@@ -211,7 +211,7 @@ Allow not-applicable only when the selected profile justifies it.
 
 ### Buildport and IR research
 
-The comparison baseline defines observation, fact, decision, lowering and
+Buildport, the comparison baseline, defines observation, fact, decision, lowering and
 verification layers; rebaze keeps observations and policy separate without adopting
 that model.
 
@@ -450,9 +450,9 @@ shares the reader across modules, source enumeration, complete test sources and
 its Maven lock. Directory entry and module-count budgets bound wide projects;
 borrowed Gradle/Java lexing has an independent byte cap. File API/other readers,
 evaluation/expansion, diagnostics and output budgets remain open. Remaining
-unbounded readers: the CMake File API reply reader (a third-party reader), the
-`.bazelversion` read in `rebaze-core`, and the Gradle lexer token and nesting
-budgets. Native syntax and recorded corpus
+unbounded inputs: the CMake File API reply reader (a third-party reader) and the
+`.bazelversion` read in `rebaze-core`; the Gradle lexer also has no token or
+nesting budget. Native syntax and recorded corpus
 comparisons are separate from migration or compiler-equivalence claims.
 
 **Work:** add typed limits for file and aggregate bytes, file/project count,
@@ -518,8 +518,8 @@ usage propagation, generated-action lowering, test import or compiler equivalenc
 
 | Site (public repo file) | Current behavior | Owning slice |
 | --- | --- | --- |
-| Compile-option filter, `crates/rebaze-bazel/src/filters.rs` `filter_copts` | Drops optimization and debug flags, `-D` in options, `-march`/`-mtune`/`-mcpu`, `-f[no-]exceptions`, `-f[no-]rtti`, `-l`/`-L`/`-Wl,` in compile options, and `/`-prefixed tokens without diagnostics. Drops `-std=` per target; only the project-wide C++ standard is written to `.bazelrc`, so other per-target standards are lost. | R10 |
-| Define filter, `crates/rebaze-bazel/src/filters.rs` `filter_defines` | Drops platform, `HAVE_*`, architecture and MSVC defines. | R10 |
+| Compile-option filter, `crates/rebaze-bazel/src/filters.rs` `filter_copts` | Drops optimization and debug flags, `-D` in options, `-march`/`-mtune`/`-mcpu`, `-f[no-]exceptions`, `-f[no-]rtti`, `-l`/`-L`/`-Wl,` in compile options, `-q`-prefixed options, and `/`-prefixed tokens without diagnostics. Also removes `-I`/`-isystem` tokens from options. Drops `-std=` per target; only the project-wide C and C++ standards are written to `.bazelrc`, so other per-target standards are lost. | R10 |
+| Define filter, `crates/rebaze-bazel/src/filters.rs` `filter_defines` | Drops, without diagnostics: empty defines and any define containing a space; Windows, macOS, Linux/Unix and architecture macros; MSVC runtime defines (`_HAS_*`, `_CRT_*`, `_SCL_*`, `_ITERATOR_DEBUG_LEVEL*`, `_SECURE_SCL*`); `HAVE_PTHREAD_*` and `*_UNLOCKED` feature macros; `DEBUG`, `_DEBUG`, `NDEBUG` and `_NDEBUG`; DLL export/import macros (`*_EXPORTS`, `*_EXPORT`, `*_DLL`, `*_SHARED`, and names containing `DLL_EXPORT`, `DLL_IMPORT` or `DECLSPEC`); and `*_EXTERNAL`/`*_USE_EXTERNAL` preference defines. | R10 |
 | Library and binary lowering, `crates/rebaze-bazel/src/cmake_generator.rs`, `crates/rebaze-starlark/src/lib.rs` | Library defines are always public `defines` and `local_defines` is never emitted. `CcLibrary` `linkopts` is always empty and `CcBinary` has no `linkopts` field. | R10 |
 | File API capture, `crates/rebaze-cmake-file-api/src/lib.rs` | Sorts and deduplicates includes and defines, drops system include paths, and records dependencies as sorted build-order names. | R10 |
 | Configuration selection, `crates/rebaze-cmake-file-api/src/lib.rs` `select_configuration` | A multi-configuration reply without a requested configuration silently uses the first configuration. | R10 |
