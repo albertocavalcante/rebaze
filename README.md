@@ -74,4 +74,5 @@ and run `cargo build --release --locked -p rebaze-cli`.
 
 ## License
 
-The workspace declares Apache-2.0 in [Cargo.toml](Cargo.toml).
+rebaze is licensed under the [Apache License 2.0](LICENSE). Release archives
+include the license text.
