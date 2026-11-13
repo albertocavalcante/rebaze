@@ -48,6 +48,7 @@ resolve() {
   esac
 
   valid_tag "$tag" || die "invalid release tag '$tag' (expected vMAJOR.MINOR.PATCH[-PRERELEASE])"
+  git check-ref-format "refs/tags/$tag" || die "release tag '$tag' is not a valid git ref name"
   git fetch --quiet --no-tags --depth=1 origin "+refs/tags/$tag:refs/tags/$tag" ||
     die "release tag $tag was not found on origin"
   sha=$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}") ||

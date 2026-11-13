@@ -89,12 +89,15 @@ reject() {
 reject "a branch push" EVENT_NAME=push REF_TYPE=branch REF_NAME=main
 reject "an unsupported event" EVENT_NAME=pull_request INPUT_TAG=v1.2.3
 reject "a missing tag" EVENT_NAME=workflow_dispatch INPUT_TAG=v9.9.9
+grep -q 'was not found on origin' "$fixture/log" || fail "a missing tag was rejected for another reason"
 reject "an empty tag" EVENT_NAME=workflow_dispatch INPUT_TAG=
 reject "a branch name as tag" EVENT_NAME=workflow_dispatch INPUT_TAG=main
 reject "a two-part version" EVENT_NAME=workflow_dispatch INPUT_TAG=v1.2
 reject "a version without v" EVENT_NAME=workflow_dispatch INPUT_TAG=1.2.3
 # shellcheck disable=SC2016 # The literal $(...) must reach the script unexpanded.
 reject "shell metacharacters" EVENT_NAME=workflow_dispatch 'INPUT_TAG=v1.2.3$(touch pwned)'
+reject "an invalid ref name" EVENT_NAME=workflow_dispatch INPUT_TAG=v1.0.0-a..b
+grep -q 'not a valid git ref name' "$fixture/log" || fail "an invalid ref name was rejected for another reason"
 reject "an invalid publish flag" EVENT_NAME=workflow_dispatch INPUT_TAG=v1.2.3 INPUT_PUBLISH=yes
 [[ ! -e "$fixture/clone/pwned" ]] || fail "shell metacharacters were executed"
 
@@ -120,6 +123,20 @@ git -C "$fixture/work" push --quiet --force origin v1.2.3
 if (cd "$fixture/clone" && bash "$script" verify-remote-tag v1.2.3 "$first") >"$fixture/log" 2>&1; then
   fail "verify-remote-tag accepted a moved tag"
 fi
+grep -q 'now resolves' "$fixture/log" || fail "a moved lightweight tag was rejected for another reason"
+
+# A force-moved annotated tag is detected through its peeled commit.
+git -C "$fixture/work" tag -a v2.0.0 -m "annotated release" "$first"
+git -C "$fixture/work" push --quiet origin v2.0.0
+(cd "$fixture/clone" && bash "$script" verify-remote-tag v2.0.0 "$first") >"$fixture/log" 2>&1 ||
+  fail "verify-remote-tag rejected an unchanged annotated release tag"
+git -C "$fixture/work" tag --force -a v2.0.0 -m "moved release" "$second" >/dev/null
+git -C "$fixture/work" push --quiet --force origin v2.0.0
+if (cd "$fixture/clone" && bash "$script" verify-remote-tag v2.0.0 "$first") >"$fixture/log" 2>&1; then
+  fail "verify-remote-tag accepted a moved annotated tag"
+fi
+grep -q 'now resolves' "$fixture/log" || fail "a moved annotated tag was rejected for another reason"
+
 git -C "$fixture/work" push --quiet origin :refs/tags/v1.3.0-rc.1
 if (cd "$fixture/clone" && bash "$script" verify-remote-tag v1.3.0-rc.1 "$first") >"$fixture/log" 2>&1; then
   fail "verify-remote-tag accepted a deleted tag"
