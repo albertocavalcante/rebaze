@@ -114,9 +114,9 @@ one platform/configuration, not a completed compatibility matrix.
 | fmt, compiled library; tests/docs/install disabled | Original library builds. The initial generated `//...` encounters an unresolved `@platforms` reference in upstream `support/bazel`; selecting only `//:fmt` then exposes non-compiled `ChangeLog.md` in compiler sources. Patched capture refuses that unrepresented input role before application. | Source-role lowering and pre-existing Bazel package scope need separate fixes. Tests were disabled; no full migration or test pass is established. |
 | zlib, policy floor 3.5 | Original build and one CTest pass. The baseline preview omitted build-directory inputs; patched capture refuses the required build include and preserves an existing output sentinel. | Generated-header/build-input lowering remains unsupported. CMake configure itself renames the upstream source `zconf.h`; that input change is recorded separately from CLI output writes. |
 
-Buildport's current SDK-backed reader captures all three profiles. For zlib it
-leaves 30 multiply-owned compile entries unassigned rather than guessing a target.
-That successful capture is not a verified migration. The pinned any2bazel
+An independent private experiment reported captures of these profiles in a session
+whose logs were not retained; treat that as an observation, not comparison evidence.
+The pinned any2bazel
 extractor also captures all three. Its TinyXML2 diff requires explicit executable
 identity mapping; after that mapping it still reports link-flag differences and
 extra macro warnings. No ignores or agent repairs were used. Comparison warnings,
@@ -211,12 +211,9 @@ Allow not-applicable only when the selected profile justifies it.
 
 ### Buildport and IR research
 
-Buildport's observation, fact, decision, lowering, and verification layers are the
-comparison baseline. Its inspected prototype contains a pilot CMake-to-Bazel
-generator and recorded Debug/Release results despite stale overview text claiming
-otherwise. Its broader interchange design remains partly proposed. Recorded
-single-project/macOS results do not establish general portability, and its
-implemented guarded apply is single-file; complete-batch recovery is modeled.
+The comparison baseline defines observation, fact, decision, lowering and
+verification layers; rebaze keeps observations and policy separate without adopting
+that model.
 
 Rebaze remains a Rust converter with its documented source subsets. Use Buildport
 as an explicit independent comparison experiment, not a production subprocess
@@ -238,6 +235,7 @@ the destination implement it. Full bidirectional synchronization remains deferre
 | `rebaze-input`                       | Shared counted IO and root authority for CMake/configuration. | Multiple real readers share validated budgets and capability policies; parsing remains a separate pure boundary. |
 | `rebaze-output`                      | Define bundle/apply boundaries in existing modules first. | Native and Java callers share a stable tested recovery API; extraction removes coupling without importing parsers or renderers. |
 | `rebaze-bazel-types`                 | Conditional small shared library.                         | Generation and standalone Bzlmod need identical validated primitives without pulling HTTP/runtime dependencies into rendering.  |
+| `rebaze-bzlmod`                      | No workspace crate consumes it; planned move to its own repository. | R09 moves with it; the move keeps its standalone limits and tests intact. |
 | `rebaze-process`                     | Start as `rebaze-core::process`.                          | Multiple consumers demonstrably need the same stable process contract.                                                          |
 | `rebaze-ir`                          | Deferred.                                                 | Field comparison and real consumers show duplicated semantics that a shared model actually removes.                             |
 | Another Starlark serializer/full AST | Deferred.                                                 | A concrete required expression or preservation/editing operation exceeds existing typed Serde models.                           |
@@ -263,9 +261,13 @@ batch library. These application APIs remain opt-in: missing-parent handling,
 qualified metadata and core integration still gate R06 completion. R07a's borrowed
 CMake parser limits have landed in [#21](https://github.com/albertocavalcante/rebaze/pull/21).
 R07b's shared bounded input reader and CMake/configuration consumers landed in
-[#22](https://github.com/albertocavalcante/rebaze/pull/22). R07c adds counted directory
+[#22](https://github.com/albertocavalcante/rebaze/pull/22). R07c landed in
+[#23](https://github.com/albertocavalcante/rebaze/pull/23) with counted directory
 traversal and Gradle consumers. Remaining readers, evaluation, output and
-whole-operation limits are still open.
+whole-operation limits are still open. R10 is partially implemented in
+[#24](https://github.com/albertocavalcante/rebaze/pull/24). [#26](https://github.com/albertocavalcante/rebaze/pull/26)
+added a pending-state preflight for output recovery; it does not integrate guarded
+application into the core CLI path.
 D01's documentation/compiled-input routing correction landed in
 [#19](https://github.com/albertocavalcante/rebaze/pull/19); local-tool alignment and
 the broader delivery gates remain open.
@@ -447,7 +449,10 @@ configuration loaders also use bounded regular-file reads. Gradle capture now
 shares the reader across modules, source enumeration, complete test sources and
 its Maven lock. Directory entry and module-count budgets bound wide projects;
 borrowed Gradle/Java lexing has an independent byte cap. File API/other readers,
-evaluation/expansion, diagnostics and output budgets remain open. Native syntax and recorded corpus
+evaluation/expansion, diagnostics and output budgets remain open. Remaining
+unbounded readers: the CMake File API reply reader (a third-party reader), the
+`.bazelversion` read in `rebaze-core`, and the Gradle lexer token and nesting
+budgets. Native syntax and recorded corpus
 comparisons are separate from migration or compiler-equivalence claims.
 
 **Work:** add typed limits for file and aggregate bytes, file/project count,
@@ -484,6 +489,9 @@ from changing selected tools. Existing required build fixtures still pass.
 
 ### R09 — Standalone Bzlmod network and graph limits
 
+No workspace crate consumes `rebaze-bzlmod`. It is planned to move to its own
+repository, and R09 moves with it.
+
 **Work:** cap decompressed response bytes and cache entries/bytes. Bound total
 resolution nodes/edges/requests/time as well as request timeout and concurrency.
 Validate coordinate components before URL construction. Replace unbounded
@@ -505,6 +513,17 @@ File API capture preserves compile-option order and refuses unrepresentable
 generated inputs, source roles and per-source groups. Final reviewed-head CI
 passed, including required CMake/Java fixtures. These safeguards do not complete
 usage propagation, generated-action lowering, test import or compiler equivalence.
+
+#### Known silent-loss sites
+
+| Site (public repo file) | Current behavior | Owning slice |
+| --- | --- | --- |
+| Compile-option filter, `crates/rebaze-bazel/src/filters.rs` `filter_copts` | Drops optimization and debug flags, `-D` in options, `-march`/`-mtune`/`-mcpu`, `-f[no-]exceptions`, `-f[no-]rtti`, `-l`/`-L`/`-Wl,` in compile options, and `/`-prefixed tokens without diagnostics. Drops `-std=` per target; only the project-wide C++ standard is written to `.bazelrc`, so other per-target standards are lost. | R10 |
+| Define filter, `crates/rebaze-bazel/src/filters.rs` `filter_defines` | Drops platform, `HAVE_*`, architecture and MSVC defines. | R10 |
+| Library and binary lowering, `crates/rebaze-bazel/src/cmake_generator.rs`, `crates/rebaze-starlark/src/lib.rs` | Library defines are always public `defines` and `local_defines` is never emitted. `CcLibrary` `linkopts` is always empty and `CcBinary` has no `linkopts` field. | R10 |
+| File API capture, `crates/rebaze-cmake-file-api/src/lib.rs` | Sorts and deduplicates includes and defines, drops system include paths, and records dependencies as sorted build-order names. | R10 |
+| Configuration selection, `crates/rebaze-cmake-file-api/src/lib.rs` `select_configuration` | A multi-configuration reply without a requested configuration silently uses the first configuration. | R10 |
+| Post-generation validation, `crates/rebaze-core/src/lib.rs` | Builds `//...` instead of the generated targets. | R10 |
 
 Split into a model/lowering PR and an oracle PR if review scope becomes too large.
 Preserve public/private/interface requirements, target ownership, per-configuration
@@ -530,6 +549,10 @@ Continue complete-file parser checks and real Bazel builds. A full AST rewrite
 and automatic support for all configurations are outside this PR.
 
 ### R11 — Compare the native slice with Buildport
+
+The comparison oracle must not normalize away optimization, language-standard or
+ordering differences. Equivalence rules and tolerated differences are typed records
+(target, configuration, slot, reason, evidence).
 
 **Work:** first map fields and evidence levels between native source models,
 prepared plans, explicit observations, and Buildport captures. Distinguish
@@ -569,6 +592,7 @@ Do not remove required integration coverage to make the command cheaper.
 
 ### D02 — Documentation and consumer drift gates
 
+Add a check that the embedded BCR catalog parses and stays internally consistent.
 Pin the Bun runtime, build site changes on PRs, and check repository Markdown
 links and executable first-run examples. Keep README support claims concise and
 link to contributor procedures. Update architecture only when behavior lands;
