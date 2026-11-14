@@ -7,15 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v0.1.0)"
+        description: "Existing tag to build (e.g., v0.1.0)"
         required: true
         type: string
+      publish:
+        description: "Publish the GitHub release and update the Homebrew tap"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -23,7 +28,37 @@ env:
   BINARY_NAME: rebaze
 
 jobs:
+  resolve:
+    name: Resolve release source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      publish: ${{ steps.resolve.outputs.publish }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Builds and publication use this immutable commit, never the dispatching ref.
+      - name: Resolve tag to commit
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: bash .github/scripts/release-source.sh resolve
+
   build:
+    needs: resolve
     strategy:
       fail-fast: false
       matrix:
@@ -71,8 +106,21 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      # Inline so every platform and any tag commit can run it without repository scripts.
+      - name: Verify release source
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          actual="$(git rev-parse --verify HEAD)"
+          if [ "$actual" != "$EXPECTED_SHA" ]; then
+            echo "::error::checked out $actual but the release tag resolves to $EXPECTED_SHA"
+            exit 1
+          fi
 
       - name: Set up pinned Rust toolchain
         run: rustup toolchain install --no-self-update
@@ -115,11 +163,11 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} dist/
+          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} LICENSE dist/
           cd dist
-          tar -czvf ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz ${{ env.BINARY_NAME }}
+          tar -czvf ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz ${{ env.BINARY_NAME }} LICENSE
           shasum -a 256 ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz > ${{ env.BINARY_NAME }}-${{ matrix.name }}.tar.gz.sha256
-          rm ${{ env.BINARY_NAME }}
+          rm ${{ env.BINARY_NAME }} LICENSE
 
       - name: Prepare artifact (Windows)
         if: runner.os == 'Windows'
@@ -127,11 +175,12 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist
           Copy-Item "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe" -Destination "dist/"
+          Copy-Item "LICENSE" -Destination "dist/"
           Set-Location dist
-          Compress-Archive -Path "${{ env.BINARY_NAME }}.exe" -DestinationPath "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip"
+          Compress-Archive -Path "${{ env.BINARY_NAME }}.exe", "LICENSE" -DestinationPath "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip"
           $hash = (Get-FileHash -Algorithm SHA256 "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip").Hash.ToLower()
           "$hash  ${{ env.BINARY_NAME }}-${{ matrix.name }}.zip" | Out-File -Encoding ASCII "${{ env.BINARY_NAME }}-${{ matrix.name }}.zip.sha256"
-          Remove-Item "${{ env.BINARY_NAME }}.exe"
+          Remove-Item "${{ env.BINARY_NAME }}.exe", "LICENSE"
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -142,21 +191,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  release:
-    needs: build
+  # Assembles assets and notes for every run, including non-publishing rehearsals.
+  assemble:
+    needs: [resolve, build]
     runs-on: ubuntu-24.04
-    name: Create Release
-    timeout-minutes: 15
+    name: Assemble release
+    timeout-minutes: 10
     permissions:
-      contents: write
-    if: needs.build.result == 'success'
+      contents: read
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
       - name: Download all artifacts
         uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
@@ -170,21 +214,15 @@ jobs:
           echo "=== Release assets ==="
           ls -la release-assets/
 
-      - name: Determine tag
-        id: tag
-        run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Generate release notes
-        id: notes
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
         run: |
-          cat > release-notes.md << 'EOF'
-          ## rebaze ${{ steps.tag.outputs.tag }}
-
+          {
+            printf '## rebaze %s\n\n' "$TAG"
+            printf 'Built from commit %s.\n\n' "$SHA"
+            cat << 'EOF'
           CLI tool to migrate projects from other build systems (Gradle, Maven, CMake) to Bazel.
 
           ### Installation
@@ -200,22 +238,76 @@ jobs:
           ### Checksums
 
           EOF
-
-          {
             echo '```'
             cat release-assets/*.sha256
             echo '```'
-          } >> release-notes.md
+          } > release-notes.md
 
-          echo "notes-file=release-notes.md" >> "$GITHUB_OUTPUT"
+      - name: Record release summary
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          PUBLISH: ${{ needs.resolve.outputs.publish }}
+        run: |
+          {
+            printf '### Release %s\n\n' "$TAG"
+            printf -- '- Source commit: %s\n' "$SHA"
+            printf -- '- Publish: %s\n\n' "$PUBLISH"
+            echo '```'
+            (cd release-assets && ls -l)
+            echo
+            cat release-assets/*.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-bundle
+          path: |
+            release-assets/
+            release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [resolve, assemble]
+    if: needs.resolve.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    name: Publish release
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify release source
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          bash .github/scripts/release-source.sh verify-head "$EXPECTED_SHA"
+          bash .github/scripts/release-source.sh verify-remote-tag "$TAG" "$EXPECTED_SHA"
+
+      - name: Download release bundle
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: release-bundle
+          path: .
 
       - name: Create Release
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          target_commitish: ${{ needs.resolve.outputs.sha }}
+          name: Release ${{ needs.resolve.outputs.tag }}
           draft: false
-          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          prerelease: ${{ needs.resolve.outputs.prerelease == 'true' }}
           body_path: release-notes.md
           generate_release_notes: true
           append_body: true
@@ -235,13 +327,13 @@ jobs:
           repositories: homebrew-tap
 
       - name: Update Homebrew tap
-        if: steps.eukia.outcome == 'success' && !contains(steps.tag.outputs.tag, '-')
+        if: steps.eukia.outcome == 'success' && needs.resolve.outputs.prerelease != 'true'
         uses: albertocavalcante/actions/update-homebrew-tap@15b779ac6b45f756c3579473fd1a9dce71f93fe3 # No corresponding version tag
         continue-on-error: true
         with:
           tap-repo: albertocavalcante/homebrew-tap
           formula-name: rebaze
-          version: ${{ steps.tag.outputs.tag }}
+          version: ${{ needs.resolve.outputs.tag }}
           template: packaging/homebrew/rebaze.rb.in
           github-token: ${{ steps.eukia.outputs.token }}
           git-user-name: "Eukia[bot]"
@@ -249,15 +341,15 @@ jobs:
           assets: |
             {
               "darwin-arm64": {
-                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ steps.tag.outputs.tag }}/rebaze-darwin-arm64.tar.gz"
+                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ needs.resolve.outputs.tag }}/rebaze-darwin-arm64.tar.gz"
               },
               "darwin-x64": {
-                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ steps.tag.outputs.tag }}/rebaze-darwin-amd64.tar.gz"
+                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ needs.resolve.outputs.tag }}/rebaze-darwin-amd64.tar.gz"
               },
               "linux-arm64": {
-                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ steps.tag.outputs.tag }}/rebaze-linux-aarch64.tar.gz"
+                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ needs.resolve.outputs.tag }}/rebaze-linux-aarch64.tar.gz"
               },
               "linux-x64": {
-                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ steps.tag.outputs.tag }}/rebaze-linux-amd64.tar.gz"
+                "url": "https://github.com/albertocavalcante/rebaze/releases/download/${{ needs.resolve.outputs.tag }}/rebaze-linux-amd64.tar.gz"
               }
             }

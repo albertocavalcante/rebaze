@@ -97,6 +97,9 @@ jobs:
       - name: Test tool bootstrap failure handling
         run: bash .github/scripts/setup-tools.test.sh
 
+      - name: Test release source resolution
+        run: bash .github/scripts/release-source.test.sh
+
       - name: Set up pinned Rust toolchain
         run: bash .github/scripts/setup-rust.sh
 
